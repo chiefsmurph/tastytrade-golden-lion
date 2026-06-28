@@ -8,6 +8,7 @@ import {
   getOptionHealthForSymbol,
   resetOptionMarketSnapshotCacheStats,
   getTopOptionCandidateForSymbol,
+  getMarginTargetCallDelta,
 } from "./bot/get-option-candidates-for-symbol";
 import { getPositionsAndBalances } from "./core/get-positions-and-balances";
 import {
@@ -102,10 +103,14 @@ const commandHandlers: Record<string, CommandHandler> = {
     const normalizedSide = side === "put" ? "put" : "call";
     return getOptionCandidates(symbol, normalizedSide);
   },
-  "bot:getTopOptionCandidateForSymbol": async ([symbol, side]) => {
+  "bot:getTopOptionCandidateForSymbol": async ([symbol, side, accountType]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";
-    return getTopOptionCandidateForSymbol(symbol, normalizedSide);
+    const selectionOptions =
+      accountType === "cash"
+        ? undefined
+        : { strikeTarget: "otm" as const, targetDelta: getMarginTargetCallDelta() };
+    return getTopOptionCandidateForSymbol(symbol, normalizedSide, undefined, selectionOptions);
   },
   "bot:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
     assertArg(symbol, "symbol");
