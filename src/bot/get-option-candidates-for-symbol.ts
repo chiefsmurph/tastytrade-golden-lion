@@ -1,4 +1,5 @@
 import tastytradeApi from "~/core/tastytrade-client";
+import { getUnderlyingIvMetrics } from "~/core/market-metrics";
 import {
   chooseOptionCandidates,
   getOptionCandidateVolume,
@@ -50,6 +51,8 @@ export interface TopOptionCandidateForSymbolResult {
   "call-streamer-symbol"?: string;
   call?: string;
   dte?: number;
+  ivRank?: number;   // underlying IV rank 0–100 at time of selection
+  ivx?: number;      // per-contract implied volatility of the chosen option (decimal)
   maxAllowedSpreadPct?: number;
   maxDTE?: number;
   meetsSpreadRequirement?: boolean;
@@ -144,6 +147,15 @@ function getResolvedSelectionOptions(
     preferredDTE,
     resolvedSelectionOptions,
   };
+}
+
+const DEFAULT_MIN_IV_RANK_PCT = 20;
+
+function getMinIvRankPct(): number {
+  const raw = process.env.BOT_MIN_IV_RANK_PCT;
+  if (!raw) return DEFAULT_MIN_IV_RANK_PCT;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIN_IV_RANK_PCT;
 }
 
 function getMaxOptionSpreadPct(): number {
@@ -304,6 +316,9 @@ function sanitizeTopCandidateResponse(
   return sanitized;
 }
 
+// Within this many DTE days, prefer the expiration with higher per-contract IVX
+const IVX_TIEBREAK_DTE_WINDOW = 3;
+
 async function buildTopOptionCandidateResult(
   symbol: string,
   side: "call" | "put",
@@ -334,6 +349,15 @@ async function buildTopOptionCandidateResult(
     const aDteDelta = preferredDTE == null ? 0 : Math.abs(Number(a.dte) - preferredDTE);
     const bDteDelta = preferredDTE == null ? 0 : Math.abs(Number(b.dte) - preferredDTE);
 
+    // Within the IVX tiebreak window, prefer the expiration with richer premium
+    if (Math.abs(aDteDelta - bDteDelta) <= IVX_TIEBREAK_DTE_WINDOW) {
+      const aIvx = side === "call" ? (a.callIv ?? 0) : (a.putIv ?? 0);
+      const bIvx = side === "call" ? (b.callIv ?? 0) : (b.putIv ?? 0);
+      if (aIvx !== bIvx) {
+        return bIvx - aIvx; // higher IVX preferred
+      }
+    }
+
     if (aDteDelta !== bDteDelta) {
       return aDteDelta - bDteDelta;
     }
@@ -359,9 +383,13 @@ async function buildTopOptionCandidateResult(
     const spreadStats = getSpreadStats(bidAsk?.bid ?? 0, bidAsk?.ask ?? 0);
     const meetsSpreadRequirement = spreadStats.spreadPct <= maxAllowedSpreadPct;
 
+    const candidateIvx =
+      side === "call" ? (candidate.callIv ?? undefined) : (candidate.putIv ?? undefined);
+
     const candidateResult: TopOptionCandidateForSymbolResult = {
       ...normalizedCandidate,
       ...spreadStats,
+      ivx: candidateIvx,
       maxAllowedSpreadPct,
       meetsSpreadRequirement,
       quoteSymbol:
@@ -424,8 +452,24 @@ export async function getTopOptionCandidateForSymbol(
   targetDTE?: number,
   selectionOptions?: OptionCandidateSelectionOptions,
 ): Promise<TopOptionCandidateForSymbolResult | undefined> {
-  const marketSnapshot = await getOptionMarketSnapshot(symbol);
-  return await buildTopOptionCandidateResult(
+  const [marketSnapshot, ivMetrics] = await Promise.all([
+    getOptionMarketSnapshot(symbol),
+    getUnderlyingIvMetrics(symbol),
+  ]);
+
+  const ivRank = ivMetrics?.ivRank ?? undefined;
+
+  if (ivRank != null) {
+    const minIvRank = getMinIvRankPct();
+    if (ivRank < minIvRank) {
+      return {
+        ivRank,
+        skippedReason: `IV rank ${ivRank.toFixed(1)} below minimum ${minIvRank} — low premium environment`,
+      };
+    }
+  }
+
+  const result = await buildTopOptionCandidateResult(
     symbol,
     side,
     marketSnapshot.optionChain,
@@ -433,6 +477,8 @@ export async function getTopOptionCandidateForSymbol(
     targetDTE,
     selectionOptions,
   );
+
+  return result ? { ...result, ivRank } : result;
 }
 
 export async function getOptionHealthForSymbol(

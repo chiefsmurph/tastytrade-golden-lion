@@ -34,7 +34,11 @@ Optional runtime env values:
 - `BOT_CASH_ACCOUNT_SEED_FROM_MARGIN_MAX_ASK_RETURN_PCT` (max ask return percent for the new margin-driven cash seeding path)
 - `BOT_RUN_INTERVAL_MS` (scheduler run interval in milliseconds while market is open)
 - `BOT_RUN_INTERVAL_MINUTES` (scheduler run interval in minutes; used when `BOT_RUN_INTERVAL_MS` is unset)
+- `BOT_MAX_OPTION_SPREAD_PCT` (max bid/ask spread as a fraction of midpoint allowed when selecting an option contract; default `0.3` = 30%)
+- `BOT_GLOBAL_MAX_BUY_EXPOSURE_PCT` (hard cap on total portfolio buy exposure as a fraction of total capital; default `0.16` = 16%)
+- `BOT_MAX_SEED_ORDER_COST` (max estimated cost in dollars for a single seed order; default `500`)
 - `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` (cache TTL for option chain + underlying snapshots used by candidate/health lookups; default `30000`, set `0` to disable cache)
+- `BOT_MIN_IV_RANK_PCT` (minimum IV rank 0–100 required to enter a new position; default `20`; set `0` to disable the gate)
 - `SECRET_SOCKET_URL` (socket URL for the secret feed)
 - `SECRET_SOCKET_TIMEOUT_MS` (secret socket timeout in milliseconds; default `5000`)
 - `SECRET_DATA_UPDATE_POSITIONS_KEY` (positions source key inside secret payloads)
@@ -42,8 +46,10 @@ Optional runtime env values:
 - `SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE` (`true` or `false`, default `false`)
 - `SECRET_AUTO_SEED_START_TIME` (auto-seed window start time in `HH:mm`, default `06:30`)
 - `SECRET_AUTO_SEED_MARGIN_END_TIME` (time when secret auto-seeds stop going to the margin account and begin going to the cash account; default `12:15`)
+- `SECRET_AUTO_SEED_END_TIME` (deprecated alias for `SECRET_AUTO_SEED_MARGIN_END_TIME`; prefer the explicit name)
 - `SECRET_AUTO_SEED_COOLDOWN_MS` (minimum delay between secret auto-seeds for the same symbol; default `600000`)
 - `TASTYTRADE_BOT_SOCKET` (override IPC socket path)
+- `TASTYTRADE_BOT_RUN_HISTORY_DIR` (override directory for run history files; default: `data/`)
 
 3. Type-check the project:
 
@@ -210,5 +216,5 @@ Notes
 - The Tastytrade calls depend on the values in `.env`.
 - The socket path can be overridden with `TASTYTRADE_BOT_SOCKET`.
 - Open-market scheduler run interval can be customized with `BOT_RUN_INTERVAL_MS` or `BOT_RUN_INTERVAL_MINUTES`.
-- Run history path can be overridden with `TASTYTRADE_BOT_RUN_HISTORY_PATH` (default: `data/runs.ndjson`).
+- Run history directory can be overridden with `TASTYTRADE_BOT_RUN_HISTORY_DIR` (default: `data/`).
 - Source imports use extensionless TypeScript paths because runtime execution goes through `tsx` with bundler-style resolution.

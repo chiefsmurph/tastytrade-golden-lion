@@ -150,10 +150,22 @@ function mergeVolumeMaps(
   return merged;
 }
 
+function mergeIvMaps(
+  primary: Record<string, number>,
+  secondary: Record<string, number>,
+): Record<string, number> {
+  return { ...secondary, ...primary }; // primary wins (first sample)
+}
+
+export interface OptionMarketSample {
+  volumes: Record<string, number>;
+  ivBySymbol: Record<string, number>; // streamer symbol → implied volatility (decimal)
+}
+
 export async function fetchOptionVolumes(
   optionChain: TastytradeOptionChain,
   sampleMs = 5000,
-) {
+): Promise<OptionMarketSample> {
   try {
     const streamerSymbols = new Set<string>();
     function collect(obj: any) {
@@ -174,12 +186,13 @@ export async function fetchOptionVolumes(
         "No streamer symbols found in nested option chain for",
         optionChain["underlying-symbol"],
       );
-      return {};
+      return { volumes: {}, ivBySymbol: {} };
     }
 
     await tastytradeApi.quoteStreamer.connect();
 
     const volumes: Record<string, number> = {};
+    const ivBySymbol: Record<string, number> = {};
     let rawEventCount = 0;
 
     function toNumberMaybe(value: any): number | null {
@@ -245,6 +258,19 @@ export async function fetchOptionVolumes(
       return null;
     }
 
+    function extractIvFromEvent(
+      ev: any,
+    ): { symbol?: string; volatility: number } | null {
+      if (!ev) return null;
+      const volatility = toNumberMaybe(
+        ev.volatility ?? ev.impliedVolatility ?? ev["implied-volatility"],
+      );
+      if (volatility == null || volatility <= 0) return null;
+      const symbol =
+        ev.eventSymbol || ev.symbol || ev.s || ev.t || ev.ticker || ev[1];
+      return { symbol, volatility };
+    }
+
     const removeListener = tastytradeApi.quoteStreamer.addEventListener(
       (events: any[]) => {
         const arr = Array.isArray(events) ? events : [events];
@@ -258,6 +284,11 @@ export async function fetchOptionVolumes(
                   volumes[parsed.symbol] || 0,
                   parsed.volume,
                 );
+            }
+
+            const ivParsed = extractIvFromEvent(ev);
+            if (ivParsed?.symbol) {
+              ivBySymbol[ivParsed.symbol] = ivParsed.volatility;
             }
           } catch (e) {}
         }
@@ -286,7 +317,7 @@ export async function fetchOptionVolumes(
       );
     }
 
-    return volumes;
+    return { volumes, ivBySymbol };
   } catch (err: any) {
     console.error("Error collecting option volumes:", err?.message || err);
     restartOnFatalQuoteStreamerError("fetchOptionVolumes", err);
@@ -358,6 +389,47 @@ export function mergeVolumesIntoChain(
   return cloned as TastytradeOptionChainWithVolumes;
 }
 
+export function mergeIvIntoChain(
+  chain: TastytradeOptionChainWithVolumes,
+  ivBySymbol: Record<string, number>,
+): TastytradeOptionChainWithVolumes {
+  if (!chain || typeof chain !== "object") return chain;
+  const hasIvForKey = (key: string) =>
+    Object.prototype.hasOwnProperty.call(ivBySymbol, key);
+
+  function merge(obj: any) {
+    if (!obj || typeof obj !== "object") return;
+    const callStreamer = obj["call-streamer-symbol"];
+    const putStreamer = obj["put-streamer-symbol"];
+
+    if (typeof callStreamer === "string") {
+      for (const c of candidateSymbolsFor(callStreamer)) {
+        if (hasIvForKey(c)) {
+          obj.callIv = ivBySymbol[c];
+          break;
+        }
+      }
+    }
+
+    if (typeof putStreamer === "string") {
+      for (const c of candidateSymbolsFor(putStreamer)) {
+        if (hasIvForKey(c)) {
+          obj.putIv = ivBySymbol[c];
+          break;
+        }
+      }
+    }
+
+    for (const v of Object.values(obj)) {
+      if (typeof v === "object") merge(v);
+    }
+  }
+
+  const cloned = JSON.parse(JSON.stringify(chain));
+  merge(cloned);
+  return cloned as TastytradeOptionChainWithVolumes;
+}
+
 export async function fetchOptionChainWithVolume(symbol: string) {
   const optionChain = await fetchOptionChain(symbol);
   const underlyingPrice = await getUnderlyingPrice(symbol);
@@ -378,12 +450,12 @@ export async function fetchOptionChainWithVolume(symbol: string) {
     (sum, expiration) => sum + expiration.strikes.length,
     0,
   );
-  const optionVolumes = await fetchOptionVolumes(filteredForVolumeSampling, 5000);
-  const mandatoryCandidateVolumes = await fetchOptionVolumes(
-    mandatoryCandidateSamplingChain,
-    7000,
-  );
+  const { volumes: optionVolumes, ivBySymbol: optionIvBySymbol } =
+    await fetchOptionVolumes(filteredForVolumeSampling, 5000);
+  const { volumes: mandatoryCandidateVolumes, ivBySymbol: mandatoryIvBySymbol } =
+    await fetchOptionVolumes(mandatoryCandidateSamplingChain, 7000);
   const mergedOptionVolumes = mergeVolumeMaps(optionVolumes, mandatoryCandidateVolumes);
+  const mergedIvBySymbol = mergeIvMaps(optionIvBySymbol, mandatoryIvBySymbol);
   const merged = mergeVolumesIntoChain(optionChain, mergedOptionVolumes);
-  return merged;
+  return mergeIvIntoChain(merged, mergedIvBySymbol);
 }

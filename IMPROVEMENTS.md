@@ -6,7 +6,7 @@
 - [x] **Bug: Debug log spamming every run cycle** — `console.log({ currentPositions })` removed from `get-position-evaluations.ts`.
 - [x] **Bug: `any` type + status-check inconsistency** — `lastOrderResponse` typed properly; null status check aligned with `close-position.ts` pattern in `manage-allocation.ts`.
 - [ ] **Structured logging** — Replace 103 `console.log` calls with a leveled logger (e.g. `pino`) using `info/warn/error/debug`. Add a `runId` per cycle for traceability.
-- [ ] **Break up `run-cycle.ts`** — At 1,116 lines it handles context-building, diagnostics, budget calculation, seeding, and orchestration. Extract `buildRunContext()`, `logCycleDiagnostics()`, and `seedFromMarginToCache()` into separate modules.
+- [x] **Break up `run-cycle.ts`** — Split into `run-cycle-context.ts` (build), `run-cycle-logging.ts` (log), `run-cycle-seed.ts` (seed). `run-cycle.ts` reduced from 1,116 to 214 lines.
 
 ## Strategy
 
