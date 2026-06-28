@@ -115,7 +115,6 @@ export function chooseOptionCandidates(
 
   const strikeTarget = selectionOptions.strikeTarget ?? "itm";
   const targetDeltaAbs = selectionOptions.targetDelta ?? 0.35;
-  console.log("[chooseOptionCandidates]", { strikeTarget, underlyingPrice, side, expirationCount: expirations.length });
   const candidates: OptionCandidate[] = [];
 
   for (const exp of expirations) {
