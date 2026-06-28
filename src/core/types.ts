@@ -158,8 +158,10 @@ export interface TastytradeStrikeWithVolumes extends TastytradeStrike {
   callVolume?: number;
   putVolume?: number;
   volume?: number; // generic fallback
-  callIv?: number; // implied volatility for call (decimal, e.g. 1.187 = 118.7%)
-  putIv?: number;  // implied volatility for put
+  callIv?: number;    // implied volatility for call (decimal, e.g. 1.187 = 118.7%)
+  putIv?: number;     // implied volatility for put
+  callDelta?: number; // delta for call (0 to 1)
+  putDelta?: number;  // delta for put (-1 to 0)
 }
 
 export interface TastytradeExpirationWithVolumes extends Omit<TastytradeExpiration, 'strikes'> {

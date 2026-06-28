@@ -39,6 +39,7 @@ Optional runtime env values:
 - `BOT_MAX_SEED_ORDER_COST` (max estimated cost in dollars for a single seed order; default `500`)
 - `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` (cache TTL for option chain + underlying snapshots used by candidate/health lookups; default `30000`, set `0` to disable cache)
 - `BOT_MIN_IV_RANK_PCT` (minimum IV rank 0–100 required to enter a new position; default `20`; set `0` to disable the gate)
+- `BOT_MARGIN_TARGET_CALL_DELTA` (target absolute delta for OTM call strike selection on margin accounts; default `0.35`)
 - `SECRET_SOCKET_URL` (socket URL for the secret feed)
 - `SECRET_SOCKET_TIMEOUT_MS` (secret socket timeout in milliseconds; default `5000`)
 - `SECRET_DATA_UPDATE_POSITIONS_KEY` (positions source key inside secret payloads)

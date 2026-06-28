@@ -7,7 +7,7 @@ import {
 } from "~/core/default-account";
 import { CurrentPosition } from "~/core/types";
 import { getUnderlyingSymbolForPosition } from "./evaluate-position";
-import { getTopOptionCandidateForSymbol } from "./get-option-candidates-for-symbol";
+import { getTopOptionCandidateForSymbol, getMarginTargetCallDelta } from "./get-option-candidates-for-symbol";
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
 import { ProgrammaticAction } from "./evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
@@ -219,7 +219,10 @@ export async function seedSymbol(
           minDTE: CASH_ACCOUNT_SEED_MIN_DTE,
           maxDTE: CASH_ACCOUNT_SEED_MAX_DTE,
         }
-      : undefined,
+      : {
+          strikeTarget: "otm",
+          targetDelta: getMarginTargetCallDelta(),
+        },
   );
   const strategy = candidate?.strategy;
   const candidateDte = candidate?.dte != null ? Number(candidate.dte) : undefined;

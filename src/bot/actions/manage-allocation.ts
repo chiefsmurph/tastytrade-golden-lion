@@ -12,6 +12,7 @@ import {
   evaluateOptionHealthForTargetDTE,
   getOptionHealthForSymbol,
   getTopOptionCandidateForSymbol,
+  getMarginTargetCallDelta,
 } from "../get-option-candidates-for-symbol";
 import {
   getGroupMarketValue,
@@ -444,10 +445,14 @@ export async function manageAllocationForGroup(
     };
   }
 
+  const accountMarginOrCash = await getAccountMarginOrCash(accountNumber);
   const candidate = await getTopOptionCandidateForSymbol(
     evaluation.underlyingSymbol,
     optionSide,
     targets.targetDTE,
+    accountMarginOrCash === "margin"
+      ? { strikeTarget: "otm", targetDelta: getMarginTargetCallDelta() }
+      : undefined,
   );
 
   console.log(

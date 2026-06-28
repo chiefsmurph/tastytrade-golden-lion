@@ -14,10 +14,12 @@ export interface OptionCandidateSelectionOptions {
   maxDTE?: number;
   minDTE?: number;
   preferredDTE?: number;
+  strikeTarget?: "itm" | "otm";
+  targetDelta?: number; // absolute value, e.g. 0.35; applied to whichever side is requested
 }
 
 export interface CandidateExpirationSelection {
-  expirations: TastytradeOptionChain["expirations"];
+  expirations: TastytradeOptionChainWithVolumes["expirations"];
   usedDteFallback: boolean;
 }
 
@@ -111,6 +113,8 @@ export function chooseOptionCandidates(
     );
   }
 
+  const strikeTarget = selectionOptions.strikeTarget ?? "itm";
+  const targetDeltaAbs = selectionOptions.targetDelta ?? 0.35;
   const candidates: OptionCandidate[] = [];
 
   for (const exp of expirations) {
@@ -126,21 +130,59 @@ export function chooseOptionCandidates(
       }))
       .sort((a, b) => num(a["strike-price"]) - num(b["strike-price"]));
 
-    // For a call, ITM means strike < underlying price.
-    const itm = strikes.filter((s) => s.strike < underlyingPrice);
+    if (strikeTarget === "otm") {
+      // OTM for calls: strike > underlying; for puts: strike < underlying
+      const otm = strikes.filter((s) =>
+        side === "call" ? s.strike > underlyingPrice : s.strike < underlyingPrice,
+      );
+      if (!otm.length) continue;
 
-    if (!itm.length) continue;
+      const hasDeltaData = otm.some((s) =>
+        (side === "call" ? s.callDelta : s.putDelta) != null,
+      );
 
-    // Closest ITM to ATM = highest strike below current underlying price.
-    const closestItmIndex = itm.length - 1;
+      if (hasDeltaData) {
+        // Pick strikes closest to target delta
+        const sorted = [...otm].sort((a, b) => {
+          const aDelta = Math.abs(
+            (side === "call" ? a.callDelta : a.putDelta) ?? 0,
+          );
+          const bDelta = Math.abs(
+            (side === "call" ? b.callDelta : b.putDelta) ?? 0,
+          );
+          return (
+            Math.abs(aDelta - targetDeltaAbs) -
+            Math.abs(bDelta - targetDeltaAbs)
+          );
+        });
+        candidates.push(...sorted.slice(0, STRIKES_AROUND_ATM + 1));
+      } else {
+        // Fallback: first 1-2 strikes OTM from ATM
+        const sorted =
+          side === "call"
+            ? [...otm].sort((a, b) => a.strike - b.strike)
+            : [...otm].sort((a, b) => b.strike - a.strike);
+        candidates.push(...sorted.slice(0, STRIKES_AROUND_ATM));
+      }
+    } else {
+      // ITM: strike < underlying for calls, strike > underlying for puts
+      const itm = strikes.filter((s) =>
+        side === "call" ? s.strike < underlyingPrice : s.strike > underlyingPrice,
+      );
+      if (!itm.length) continue;
 
-    // Add closest ITM plus 1-2 deeper ITM strikes.
-    for (
-      let i = closestItmIndex;
-      i >= Math.max(0, closestItmIndex - STRIKES_AROUND_ATM);
-      i--
-    ) {
-      candidates.push(itm[i]);
+      // Closest ITM to ATM
+      const closestItmIndex =
+        side === "call" ? itm.length - 1 : 0;
+      const step = side === "call" ? -1 : 1;
+      const limit =
+        side === "call"
+          ? Math.max(0, closestItmIndex - STRIKES_AROUND_ATM)
+          : Math.min(itm.length - 1, closestItmIndex + STRIKES_AROUND_ATM);
+
+      for (let i = closestItmIndex; side === "call" ? i >= limit : i <= limit; i += step) {
+        candidates.push(itm[i]);
+      }
     }
   }
 

@@ -4,6 +4,7 @@ import {
   evaluateOptionHealthForTargetDTE,
   getOptionHealthForSymbol,
   getTopOptionCandidateForSymbol,
+  getMarginTargetCallDelta,
 } from "./get-option-candidates-for-symbol";
 import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import {
@@ -81,7 +82,14 @@ export async function purchaseSymbol(
     };
   }
 
-  const candidate = await getTopOptionCandidateForSymbol(normalizedSymbol, side);
+  const candidate = await getTopOptionCandidateForSymbol(
+    normalizedSymbol,
+    side,
+    undefined,
+    accountType === "margin"
+      ? { strikeTarget: "otm", targetDelta: getMarginTargetCallDelta() }
+      : undefined,
+  );
   const candidateSymbol =
     candidate?.symbol ?? (side === "put" ? candidate?.put : candidate?.call);
   const quoteSymbol =

@@ -150,6 +150,16 @@ function getResolvedSelectionOptions(
 }
 
 const DEFAULT_MIN_IV_RANK_PCT = 20;
+const DEFAULT_MARGIN_TARGET_CALL_DELTA = 0.35;
+
+export function getMarginTargetCallDelta(): number {
+  const raw = process.env.BOT_MARGIN_TARGET_CALL_DELTA;
+  if (!raw) return DEFAULT_MARGIN_TARGET_CALL_DELTA;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 1
+    ? parsed
+    : DEFAULT_MARGIN_TARGET_CALL_DELTA;
+}
 
 function getMinIvRankPct(): number {
   const raw = process.env.BOT_MIN_IV_RANK_PCT;
