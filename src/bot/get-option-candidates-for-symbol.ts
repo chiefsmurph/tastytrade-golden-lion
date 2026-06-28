@@ -126,21 +126,26 @@ function getResolvedSelectionOptions(
   targetDTE?: number,
   selectionOptions?: OptionCandidateSelectionOptions,
 ) {
-  const defaultSelection =
-    targetDTE == null && selectionOptions == null
-      ? getDefaultTopCandidateSelection()
-      : undefined;
+  const hasDtePreference =
+    targetDTE != null ||
+    selectionOptions?.preferredDTE != null ||
+    selectionOptions?.minDTE != null ||
+    selectionOptions?.maxDTE != null;
+  const defaultSelection = !hasDtePreference ? getDefaultTopCandidateSelection() : undefined;
   const preferredDTE =
     selectionOptions?.preferredDTE ?? targetDTE ?? defaultSelection?.preferredDTE;
-  const resolvedSelectionOptions =
-    selectionOptions ??
-    (preferredDTE != null
+  const dteFill =
+    preferredDTE != null
       ? {
           minDTE: Math.max(0, preferredDTE - DEFAULT_TOP_CANDIDATE_DTE_TOLERANCE),
           maxDTE: preferredDTE + DEFAULT_TOP_CANDIDATE_DTE_TOLERANCE,
           preferredDTE,
         }
-      : undefined);
+      : undefined;
+  const resolvedSelectionOptions: OptionCandidateSelectionOptions | undefined =
+    selectionOptions != null
+      ? { ...dteFill, ...selectionOptions }
+      : dteFill;
 
   return {
     defaultSelection,
