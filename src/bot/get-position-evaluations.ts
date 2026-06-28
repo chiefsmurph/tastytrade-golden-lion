@@ -15,8 +15,6 @@ export async function getPositionEvaluations(
       accountNumber,
     );
 
-  console.log({ currentPositions })
-
   const groupedPositions = groupPositionsByUnderlying(currentPositions);
   const groupedEvaluations = await Promise.all(
     Array.from(groupedPositions.values()).map((positions) =>

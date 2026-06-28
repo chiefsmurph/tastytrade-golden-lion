@@ -231,7 +231,7 @@ async function waitForOrderFill(
         return true;
       }
       
-      if (!["Pending", "Open", "Pending Cancel"].includes(order.status || "")) {
+      if (!order.status || !["Pending", "Open", "Pending Cancel"].includes(order.status)) {
         return false;
       }
     } catch (err) {
@@ -284,7 +284,7 @@ export async function placeRouteOrders(
 
     let currentPrice = routeOrder.limitPrice;
     let orderId: string | undefined;
-    let lastOrderResponse: any;
+    let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
     let tickCount = 0;
 
     while (tickCount <= MAX_TICK_UPS) {
@@ -306,7 +306,11 @@ export async function placeRouteOrders(
 
       // If we have an existing order, cancel it first
       if (orderId && TICK_UP_CHASE_ENABLED && tickCount > 0) {
-        await cancelOrderById(accountNumber, orderId);
+        const cancelled = await cancelOrderById(accountNumber, orderId);
+        if (!cancelled) {
+          // Can't confirm cancellation — stop chasing to avoid duplicate live orders
+          break;
+        }
       }
 
       // Place new order
