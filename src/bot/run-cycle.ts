@@ -15,7 +15,7 @@ import {
   logStrategyDecisions,
 } from "./run-cycle-logging";
 import { maybeSeedMarginAccountFromCashAccount } from "./run-cycle-seed";
-import { reconcilePendingCloses, pruneOldEntries } from "./position-registry";
+import { pruneOldEntries } from "./position-registry";
 import { executeOvernightReductions } from "./overnight-position-reduction";
 import { getEffectiveTotalCapital } from "~/core/account-balance";
 
@@ -137,7 +137,6 @@ export default async function runBotCycle(
   }
 
   await cancelAllLiveOrders(accountNumber);
-  await reconcilePendingCloses(accountNumber);
   await pruneOldEntries();
 
   const context = await buildRunCycleContext(accountNumber);
@@ -237,13 +236,5 @@ export default async function runBotCycle(
 
   // Second pass: if close orders were placed this cycle, try to reconcile fills
   // immediately so EOD closes aren't left pending until next morning.
-  const placedCloseOrdersThisCycle = [
-    ...executionResults.closeOrders,
-    ...overnightReductionOrders,
-  ].some((o) => o.placedOrder);
-  if (placedCloseOrdersThisCycle) {
-    await reconcilePendingCloses(accountNumber);
-  }
-
   return runHistoryEntry;
 }

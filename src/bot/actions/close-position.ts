@@ -353,6 +353,25 @@ export async function closePosition(
       tickMoveCount += 1;
     }
 
+    // Fetch final order state to capture fills for JSONL — createOrder response
+    // typically doesn't include fills, but a subsequent getOrder does.
+    if (activeOrderId) {
+      try {
+        const numericId = Number(activeOrderId);
+        if (Number.isFinite(numericId)) {
+          const finalOrder = await tastytradeApi.orderService.getOrder(
+            accountNumber,
+            numericId,
+          );
+          if (lastOrderResponse) {
+            lastOrderResponse = { ...lastOrderResponse, order: finalOrder };
+          }
+        }
+      } catch {
+        // use lastOrderResponse as-is
+      }
+    }
+
     remainingToClose -= qtyToClose;
     results.push({
       accountNumber,

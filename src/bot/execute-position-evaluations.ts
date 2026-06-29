@@ -15,7 +15,7 @@ import {
   getTimeOfDayExecutionTargets,
 } from "./evaluate-trading-strategy";
 import { closePosition, ClosePositionResult } from "./actions/close-position";
-import { recordPositionClosing } from "./position-registry";
+import { recordPositionClosed } from "./position-registry";
 import {
   selectManageEvaluationsByBuyingPower,
 } from "./group-allocation-priority";
@@ -251,12 +251,7 @@ export async function executePositionEvaluations(
       ? placedResult.orderResponse?.order?.id
       : undefined;
     if (orderId) {
-      const waf = evaluation.metrics.weightedAverageFill;
-      const totalQuantityWeight = evaluation.positionSnapshots.reduce(
-        (sum, snap) => sum + snap.quantityWeight,
-        0,
-      );
-      await recordPositionClosing(accountNumber, symbol, String(orderId), waf, totalQuantityWeight);
+      await recordPositionClosed(accountNumber, symbol, String(orderId));
     }
   }
 
