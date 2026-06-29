@@ -170,9 +170,9 @@ export default async function runBotCycle(
     context.accountMarginOrCash === "margin"
       ? await withOvernightCloseOverrides(
           context.preview.accountNumber,
-          context.completedEvaluations,
+          context.evaluationsWithGroupTargets,
         )
-      : context.completedEvaluations;
+      : context.evaluationsWithGroupTargets;
 
   const executionResults = await executePositionEvaluations(
     context.preview.accountNumber,
