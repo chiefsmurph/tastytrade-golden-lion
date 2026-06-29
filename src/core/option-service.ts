@@ -446,6 +446,16 @@ export function mergeGreeksIntoChain(
 
 export async function fetchOptionChainWithVolume(symbol: string) {
   const optionChain = await fetchOptionChain(symbol);
+  if (!optionChain) {
+    console.warn(`No option chain found for ${symbol} — returning empty chain`);
+    return {
+      'underlying-symbol': symbol.toUpperCase(),
+      'root-symbol': symbol.toUpperCase(),
+      'option-chain-type': '',
+      'shares-per-contract': 100,
+      expirations: [],
+    } satisfies TastytradeOptionChainWithVolumes;
+  }
   const underlyingPrice = await getUnderlyingPrice(symbol);
   const resolvedUnderlyingPrice = underlyingPrice?.underlyingPrice || 0;
   const filteredForVolumeSampling = filterOptionChainForVolumeSampling(
