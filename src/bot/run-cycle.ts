@@ -15,11 +15,34 @@ import {
   logStrategyDecisions,
 } from "./run-cycle-logging";
 import { maybeSeedMarginAccountFromCashAccount } from "./run-cycle-seed";
-import { pruneOldEntries } from "./position-registry";
+import { pruneOldEntries, isOvernightPosition } from "./position-registry";
 import { executeOvernightReductions } from "./overnight-position-reduction";
+import { PositionGroupEvaluation } from "./evaluate-position";
 import { getEffectiveTotalCapital } from "~/core/account-balance";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
+
+async function withOvernightCloseOverrides(
+  accountNumber: string,
+  evaluations: PositionGroupEvaluation[],
+): Promise<PositionGroupEvaluation[]> {
+  return Promise.all(
+    evaluations.map(async (evaluation) => {
+      if (evaluation.strategy.action !== "MANAGE_ALLOCATION") return evaluation;
+      const symbol = String(evaluation.underlyingSymbol ?? "").toUpperCase();
+      if (!symbol) return evaluation;
+      const overnight = await isOvernightPosition(accountNumber, symbol);
+      if (!overnight) return evaluation;
+      return {
+        ...evaluation,
+        strategy: {
+          action: "CLOSE_POSITION" as const,
+          reason: "overnight margin position — force-close at open",
+        },
+      };
+    }),
+  );
+}
 
 function parseOptionalNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -143,10 +166,18 @@ export default async function runBotCycle(
   console.log({ accountNumber: context.preview.accountNumber, run: "bot-cycle" });
   logCycle(context);
 
+  const evaluationsForExecution =
+    context.accountMarginOrCash === "margin"
+      ? await withOvernightCloseOverrides(
+          context.preview.accountNumber,
+          context.completedEvaluations,
+        )
+      : context.completedEvaluations;
+
   const executionResults = await executePositionEvaluations(
     context.preview.accountNumber,
     context.accountBalances,
-    context.completedEvaluations,
+    evaluationsForExecution,
     context.runExecutionTargets,
   );
 
