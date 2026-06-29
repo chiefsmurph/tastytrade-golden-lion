@@ -58,23 +58,6 @@ function normalizeSideForSeed(
   return null;
 }
 
-function hasBuyEligible(position: SecretSourcePosition): boolean {
-  const raw = position.buyEligible;
-
-  if (typeof raw === "boolean") {
-    return raw;
-  }
-
-  if (typeof raw === "number") {
-    return raw === 1;
-  }
-
-  const normalized = String(raw ?? "")
-    .trim()
-    .toLowerCase();
-  return normalized === "true" || normalized === "1" || normalized === "yes";
-}
-
 function toBooleanFlag(raw: unknown): boolean {
   if (typeof raw === "boolean") {
     return raw;
@@ -164,7 +147,7 @@ export async function maybeAutoSeedFromSecretPositions(
       continue;
     }
 
-    if (!hasBuyEligible(position)) {
+    if (!toBooleanFlag(position.qualityToBuy)) {
       continue;
     }
 
@@ -178,7 +161,7 @@ export async function maybeAutoSeedFromSecretPositions(
       scope: "secret-auto-seed-cash",
       accountNumber: cashAccountNumber,
       cooldownMap: lastCashAutoSeedAtBySymbol,
-      triggerReason: "secret-positions-update: buyEligible",
+      triggerReason: "secret-positions-update: qualityToBuy",
       goodBooleanScore,
       booleanSurplusPct,
     });

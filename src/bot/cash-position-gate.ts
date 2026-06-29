@@ -166,8 +166,8 @@ export function getBooleanSurplusPct(goodBooleanScore: number): number {
   return 0;
 }
 
-function isBuyEligible(position: SecretSourcePosition | undefined): boolean {
-  return position != null && toBooleanFlag(position.buyEligible);
+function isQualityToBuy(position: SecretSourcePosition | undefined): boolean {
+  return position != null && toBooleanFlag(position.qualityToBuy);
 }
 
 export function computeCashPositionGate(options: {
@@ -180,7 +180,7 @@ export function computeCashPositionGate(options: {
     options.marginAskReturnFraction !== null &&
     options.marginAskReturnFraction < -marginYesThreshold;
 
-  const buyEligible = isBuyEligible(options.secretPosition);
+  const qualityToBuy = isQualityToBuy(options.secretPosition);
   const percentOfBalance = Number(options.secretPosition?.percentOfBalance ?? 0);
   const rawDaytradeScore = options.secretPosition?.daytradeScore;
   const daytradeScore =
@@ -193,12 +193,12 @@ export function computeCashPositionGate(options: {
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
   const allBooleansGood = goodBooleanScore === 10;
 
-  // basic: just buyEligible
-  const basicStockYes = buyEligible;
+  // basic: just qualityToBuy
+  const basicStockYes = qualityToBuy;
 
-  // strong: buyEligible + pct or daytradeScore crosses time-scaled threshold
+  // strong: qualityToBuy + pct or daytradeScore crosses time-scaled threshold
   const strongStockYes =
-    buyEligible &&
+    qualityToBuy &&
     (percentOfBalance > thresholds.pct ||
       (daytradeScore !== null && daytradeScore < thresholds.daytradeScore));
 

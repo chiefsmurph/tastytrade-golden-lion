@@ -3,6 +3,7 @@ export interface SecretSourcePosition {
   buyWeight?: number;
   daytradeScore?: number;
   buyEligible?: boolean | string | number;
+  qualityToBuy?: boolean | string | number;
   returnPerc?: number;
   superRecScore?: number;
   distanceToAsk?: number;
