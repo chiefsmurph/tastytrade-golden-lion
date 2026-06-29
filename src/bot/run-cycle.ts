@@ -16,6 +16,8 @@ import {
 } from "./run-cycle-logging";
 import { maybeSeedMarginAccountFromCashAccount } from "./run-cycle-seed";
 import { reconcilePendingCloses, pruneOldEntries } from "./position-registry";
+import { executeOvernightReductions } from "./overnight-position-reduction";
+import { getEffectiveTotalCapital } from "~/core/account-balance";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
 
@@ -155,6 +157,19 @@ export default async function runBotCycle(
       .map((order) => String(order.underlyingSymbol ?? "").toUpperCase())
       .filter((symbol) => symbol.length > 0),
   );
+
+  const overnightReductionOrders =
+    context.accountMarginOrCash === "cash"
+      ? await executeOvernightReductions(
+          context.preview.accountNumber,
+          context.completedEvaluations,
+          context.runExecutionTargets,
+          getEffectiveTotalCapital(context.accountBalances),
+          closedUnderlyingSymbolsThisRun,
+          new Date(),
+        )
+      : [];
+
   if (recentlyClosedByAccount) {
     recentlyClosedByAccount.set(
       context.preview.accountNumber,
@@ -188,6 +203,8 @@ export default async function runBotCycle(
       (order) => order.cancelled,
     ).length,
     closeOrderCount: executionResults.closeOrders.length,
+    overnightReductionOrderCount: overnightReductionOrders.length,
+    overnightReductionPlacedCount: overnightReductionOrders.filter((o) => o.placedOrder).length,
     seedEstimatedTotal: cashAccountSeedResults.reduce(
       (sum, order) => sum + (order.estimatedOrderCost ?? 0),
       0,
@@ -198,7 +215,10 @@ export default async function runBotCycle(
 
   const runHistoryEntry = await appendRunHistory({
     accountNumber: context.preview.accountNumber,
-    closeOrders: mapCloseOrdersForRunHistory(executionResults.closeOrders),
+    closeOrders: mapCloseOrdersForRunHistory([
+      ...executionResults.closeOrders,
+      ...overnightReductionOrders,
+    ]),
     executionSummary,
     groups: context.preview.groups,
     plan: context.preview.plan,

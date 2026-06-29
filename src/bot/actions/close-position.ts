@@ -29,6 +29,8 @@ export interface ClosePositionDependencies {
   tickChaseEnabled?: boolean;
   tickIntervalMs?: number;
   maxTickMoves?: number;
+  // Partial close: stop after closing this many total contracts across all snapshots
+  maxQuantityToClose?: number;
 }
 
 function getMidpointPrice(bid: number, ask: number): number {
@@ -238,6 +240,7 @@ export async function closePosition(
     0,
     dependencies.maxTickMoves ?? MAX_CLOSE_TICK_MOVES,
   );
+  let remainingToClose = dependencies.maxQuantityToClose ?? Infinity;
 
   const morningSpreadGate = shouldSkipClosePositionForMorningSpread(evaluation);
   if (morningSpreadGate.shouldSkip) {
@@ -252,7 +255,18 @@ export async function closePosition(
   }
 
   for (const snapshot of evaluation.positionSnapshots) {
-    const baseOrder = buildClosingOrderPayload(snapshot, targets);
+    if (remainingToClose <= 0) break;
+
+    const snapshotQty = Math.abs(Number(snapshot.position.quantity) || 0);
+    const qtyToClose = Math.min(snapshotQty, remainingToClose);
+
+    let baseOrder = buildClosingOrderPayload(snapshot, targets);
+    if (qtyToClose < snapshotQty && baseOrder) {
+      baseOrder = {
+        ...baseOrder,
+        legs: baseOrder.legs.map((leg) => ({ ...leg, quantity: qtyToClose })),
+      };
+    }
     if (!baseOrder) {
       results.push({
         accountNumber,
@@ -339,6 +353,7 @@ export async function closePosition(
       tickMoveCount += 1;
     }
 
+    remainingToClose -= qtyToClose;
     results.push({
       accountNumber,
       action: "CLOSE_POSITION",

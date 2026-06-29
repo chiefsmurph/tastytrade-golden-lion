@@ -44,6 +44,7 @@ Optional runtime env values:
 - `BOT_MARGIN_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital that can be deployed in a single margin allocation action; default `0.012` = 1.2%)
 - `BOT_CASH_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital that can be deployed in a single cash allocation action; default `0.05` = 5%)
 - `BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` (max fraction of cash account buying power to deploy per day to avoid GFV; default `0.6` = 60%; capped at 0.9)
+- `BOT_CASH_OVERNIGHT_REDUCTION_FLOOR_PCT` (cash account: minimum position exposure fraction to target when gradually selling down overnight positions; default `0.08` = 8%; reduction runs from 7:30am–11:30am PT, paused if marginYes or strongStockYes signals return)
 - `BOT_MAX_SEED_ORDER_COST` (max estimated cost in dollars for a single seed order; default `500`)
 - `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` (cache TTL for option chain + underlying snapshots used by candidate/health lookups; default `30000`, set `0` to disable cache)
 - `BOT_MIN_IV_RANK_PCT` (minimum IV rank 0–100 required to enter a new position; default `20`; set `0` to disable the gate)

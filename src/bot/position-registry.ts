@@ -197,6 +197,16 @@ function todayIso(): string {
   return new Date().toISOString();
 }
 
+export async function isOvernightPosition(
+  accountNumber: string,
+  symbol: string,
+): Promise<boolean> {
+  const data = await readRegistry();
+  const entry = data[registryKey(accountNumber, symbol)];
+  if (!entry) return false;
+  return !isSameCalendarDay(entry.openedAt, todayIso());
+}
+
 export async function isOpenedToday(
   accountNumber: string,
   symbol: string,
