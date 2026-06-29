@@ -235,7 +235,7 @@ export function logExecutionTargetsByGroup(
         const { signals } = gate;
         const surplusStr = surplusPct > 0 ? ` +${(surplusPct * 100).toFixed(0)}% surplus` : "";
         console.log(
-          `  Cash Gate:          marginYes=${signals.marginYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/6${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
+          `  Cash Gate:          marginYes=${signals.marginYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/10${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
         );
       }
       const baseBuyPct = getMaxBuyExposurePctForAccountType(accountType === "unknown" ? "cash" : accountType);

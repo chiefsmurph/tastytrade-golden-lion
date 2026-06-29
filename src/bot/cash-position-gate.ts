@@ -109,9 +109,18 @@ function getStrongStockYesThresholds(currentTime: Date): {
   return { pct, daytradeScore };
 }
 
-// Returns 0–6: count of boolean fields in their "good" state (all 6 counted individually).
-// isAboveMinSinFloor=true, aboveMinSis=true, isAboveStabMin=true,
-// isClearedToBuy=true, currentlyAboveMinBuyWeight=true, willBuy=true
+// daytradeScore: 1 pt per 100 below -50, capped at 3.
+// -50 to -150 → 1, -150 to -250 → 2, -250+ → 3
+function getDaytradeScorePoints(position: SecretSourcePosition | undefined): number {
+  const raw = position?.daytradeScore;
+  if (raw == null) return 0;
+  const score = Number(raw);
+  if (!Number.isFinite(score) || score > -50) return 0;
+  return Math.min(3, Math.floor((Math.abs(score) - 50) / 100) + 1);
+}
+
+// Returns 0–10: 5 state booleans (1pt each) + willBuy (2pts) + daytradeScore points (0–3).
+// Max conviction = all booleans + willBuy + daytradeScore ≤ -250.
 export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
   let count = 0;
@@ -120,7 +129,8 @@ export function countGoodBooleans(position: SecretSourcePosition | undefined): n
   if (toBooleanFlag(position.isAboveStabMin)) count++;
   if (toBooleanFlag(position.isClearedToBuy)) count++;
   if (toBooleanFlag(position.currentlyAboveMinBuyWeight)) count++;
-  if (toBooleanFlag(position.willBuy)) count++;
+  if (toBooleanFlag(position.willBuy)) count += 2;
+  count += getDaytradeScorePoints(position);
   return count;
 }
 
@@ -145,8 +155,10 @@ export function shouldSeedMarginFromBooleans(
 }
 
 // Per-action buy exposure surplus added on top of the account-type base for both accounts.
-// Uses all 6 individual booleans (not merged).
+// Score is 0–10 (willBuy=2pts, daytradeScore up to 3pts).
 export function getBooleanSurplusPct(goodBooleanScore: number): number {
+  if (goodBooleanScore >= 8) return 0.30;
+  if (goodBooleanScore >= 7) return 0.25;
   if (goodBooleanScore >= 6) return 0.20;
   if (goodBooleanScore >= 5) return 0.15;
   if (goodBooleanScore >= 4) return 0.10;
@@ -179,7 +191,7 @@ export function computeCashPositionGate(options: {
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
-  const allBooleansGood = goodBooleanScore === 6;
+  const allBooleansGood = goodBooleanScore === 10;
 
   // basic: just buyEligible
   const basicStockYes = buyEligible;
