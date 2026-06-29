@@ -274,6 +274,7 @@ export async function executePositionEvaluations(
       evaluation,
       budget,
       groupsRemainingForAllocation,
+      { accountMarginOrCash: accountMarginOrCash === "unknown" ? undefined : accountMarginOrCash },
     );
     allocationOrders.push(result);
     budget = getUpdatedBudgetAfterAllocation(budget, evaluation, result);

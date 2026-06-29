@@ -22,7 +22,7 @@ import {
   roundOrderPrice,
 } from "./order-utils";
 import { ExecutionTargets } from "../evaluate-trading-strategy";
-import { GLOBAL_MAX_BUY_EXPOSURE_PCT } from "../risk-limits";
+import { getMaxBuyExposurePctForAccountType } from "../risk-limits";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 
 const DEFAULT_CONTRACT_MULTIPLIER = 100;
@@ -66,6 +66,7 @@ export interface AllocationBudget {
 
 interface ManageAllocationOptions {
   dryRun?: boolean;
+  accountMarginOrCash?: "margin" | "cash";
 }
 
 function getCandidateSide(evaluation: PositionGroupEvaluation): "call" | "put" {
@@ -388,7 +389,7 @@ export async function manageAllocationForGroup(
   const targetExposure = budget.totalCapital * effectiveTargetAccountExposure;
   const exposureHeadroom = targetExposure - budget.portfolioExposure;
   const maxBuyAmountPerAction =
-    budget.totalCapital * GLOBAL_MAX_BUY_EXPOSURE_PCT;
+    budget.totalCapital * getMaxBuyExposurePctForAccountType(options.accountMarginOrCash ?? "cash");
   const normalizedGroupsRemaining = Math.max(1, groupsRemainingForAllocation);
   const perGroupExposureHeadroom = exposureHeadroom / normalizedGroupsRemaining;
   const perGroupMaxBuyAmount = maxBuyAmountPerAction / normalizedGroupsRemaining;

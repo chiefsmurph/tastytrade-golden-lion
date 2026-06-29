@@ -7,6 +7,10 @@ export interface SecretSourcePosition {
   superRecScore?: number;
   distanceToAsk?: number;
   percentOfBalance?: number;
+  isAboveMinSinFloor?: boolean | string | number;
+  aboveMinSis?: boolean | string | number;
+  isAboveStabMin?: boolean | string | number;
+  isClearedToBuy?: boolean | string | number;
   [key: string]: unknown;
 }
 

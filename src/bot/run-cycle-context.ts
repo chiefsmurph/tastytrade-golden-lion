@@ -107,10 +107,6 @@ export type RunCycleContext = {
   strategyDecisions: RunStrategyDecision[];
 };
 
-function parseOptionalNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
 
 function toRunPlanSelectedGroup(
   evaluation: PositionGroupEvaluation,
@@ -395,6 +391,7 @@ export async function buildRunCycleContext(
     const gate = computeCashPositionGate({
       marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
       secretPosition,
+      currentTime,
     });
 
     const cappedTargetAccountExposure = Math.min(
@@ -408,6 +405,8 @@ export async function buildRunCycleContext(
         symbol,
         marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
         signals: gate.signals,
+        strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
+        strongStockYesScoreThreshold: gate.strongStockYesScoreThreshold,
         maxTargetPct: gate.maxTargetPct,
         originalTargetPct: finalTargets.targetAccountExposure,
         effectiveTargetPct: cappedTargetAccountExposure,

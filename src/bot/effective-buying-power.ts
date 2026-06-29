@@ -1,7 +1,7 @@
 import { getCurrentAllocationBudget } from "./actions/manage-allocation";
 import { getTimeOfDayExecutionTargets } from "./evaluate-trading-strategy";
 import { getAccountMarginOrCash } from "~/core/default-account";
-import { GLOBAL_MAX_BUY_EXPOSURE_PCT } from "./risk-limits";
+import { getMaxBuyExposurePctForAccountType } from "./risk-limits";
 
 export interface EffectiveBuyingPowerSummary {
   buyingPowerRemaining: number;
@@ -31,7 +31,7 @@ export async function getEffectiveBuyingPowerSummary(
   );
   const maxBuyAmountPerAction = Math.max(
     0,
-    budget.totalCapital * GLOBAL_MAX_BUY_EXPOSURE_PCT,
+    budget.totalCapital * getMaxBuyExposurePctForAccountType(accountType === "unknown" ? "cash" : accountType),
   );
   const effectiveBuyingPower = Math.max(
     0,
