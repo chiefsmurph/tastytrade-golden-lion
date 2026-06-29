@@ -12,6 +12,7 @@ export interface ExecutionTargets {
   bidWeight: number;
   midWeight: number;
   askWeight: number;
+  maxTargetAccountExposure?: number;
 }
 
 function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {

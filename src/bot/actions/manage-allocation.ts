@@ -381,7 +381,11 @@ export async function manageAllocationForGroup(
     };
   }
 
-  const targetExposure = budget.totalCapital * targets.targetAccountExposure;
+  const effectiveTargetAccountExposure =
+    targets.maxTargetAccountExposure != null
+      ? Math.min(targets.targetAccountExposure, targets.maxTargetAccountExposure)
+      : targets.targetAccountExposure;
+  const targetExposure = budget.totalCapital * effectiveTargetAccountExposure;
   const exposureHeadroom = targetExposure - budget.portfolioExposure;
   const maxBuyAmountPerAction =
     budget.totalCapital * GLOBAL_MAX_BUY_EXPOSURE_PCT;
@@ -389,7 +393,7 @@ export async function manageAllocationForGroup(
   const perGroupExposureHeadroom = exposureHeadroom / normalizedGroupsRemaining;
   const perGroupMaxBuyAmount = maxBuyAmountPerAction / normalizedGroupsRemaining;
 
-  if (targets.targetAccountExposure <= 0) {
+  if (effectiveTargetAccountExposure <= 0) {
     return {
       accountNumber,
       action: "MANAGE_ALLOCATION",

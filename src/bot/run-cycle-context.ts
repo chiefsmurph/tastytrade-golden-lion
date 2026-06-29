@@ -2,8 +2,11 @@ import tastytradeApi from "~/core/tastytrade-client";
 import {
   getDefaultAccountNumber,
   getAccountMarginOrCash,
+  getCashAccountNumber,
+  getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
+import { computeCashPositionGate } from "./cash-position-gate";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -334,6 +337,31 @@ export async function buildRunCycleContext(
     currentExposurePct,
   );
 
+  // For cash accounts: build a lookup of margin account's ask-return fractions per symbol
+  // used to determine "margin YES" signals for per-position gating.
+  const marginAskReturnBySymbol = new Map<string, number>();
+  if (accountMarginOrCash === "cash") {
+    try {
+      const [cashAccountNumber, marginAccountNumber] = await Promise.all([
+        getCashAccountNumber(),
+        getMarginAccountNumber(),
+      ]);
+      if (marginAccountNumber !== cashAccountNumber && marginAccountNumber !== resolvedAccountNumber) {
+        const marginEvaluations = await getPositionEvaluations(marginAccountNumber);
+        for (const marginEval of marginEvaluations) {
+          const fill = marginEval.metrics.weightedAverageFill;
+          if (fill > 0) {
+            const fraction = (marginEval.metrics.currentAskPrice - fill) / fill;
+            marginAskReturnBySymbol.set(marginEval.underlyingSymbol.toUpperCase(), fraction);
+          }
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[cash-position-gate] failed to fetch margin evaluations: ${message}`);
+    }
+  }
+
   // Calculate per-group execution targets based on position stats
   const evaluationsWithGroupTargets = actionableCompletedEvaluations.map((evaluation) => {
     const weightedAverageFill = evaluation.metrics.weightedAverageFill;
@@ -355,9 +383,44 @@ export async function buildRunCycleContext(
     });
     const finalTargets = groupTargetComponents.finalPostCapsTargets;
 
+    if (accountMarginOrCash !== "cash") {
+      return { ...evaluation, executionTargets: finalTargets };
+    }
+
+    // Cash account: gate per-position allocation based on confirmation signals
+    const symbol = evaluation.underlyingSymbol.toUpperCase();
+    const secretPosition = cachedSecretPositions.find(
+      (p) => String(p.ticker ?? "").trim().toUpperCase() === symbol,
+    );
+    const gate = computeCashPositionGate({
+      marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
+      secretPosition,
+    });
+
+    const cappedTargetAccountExposure = Math.min(
+      finalTargets.targetAccountExposure,
+      gate.maxTargetPct,
+    );
+
+    console.log(
+      JSON.stringify({
+        scope: "cash-position-gate",
+        symbol,
+        marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
+        signals: gate.signals,
+        maxTargetPct: gate.maxTargetPct,
+        originalTargetPct: finalTargets.targetAccountExposure,
+        effectiveTargetPct: cappedTargetAccountExposure,
+      }),
+    );
+
     return {
       ...evaluation,
-      executionTargets: finalTargets,
+      executionTargets: {
+        ...finalTargets,
+        targetAccountExposure: cappedTargetAccountExposure,
+        maxTargetAccountExposure: gate.maxTargetPct,
+      },
     };
   });
 
