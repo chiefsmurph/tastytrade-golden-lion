@@ -88,6 +88,7 @@ export interface MultiAccountRunCyclePreview {
 
 export type RunCycleContext = {
   accountBalances: TastytradeAccountBalance;
+  accountMarginOrCash: "margin" | "cash" | "unknown";
   baseExecutionTargets: {
     askWeight: number;
     bidWeight: number;
@@ -570,6 +571,7 @@ export async function buildRunCycleContext(
 
   return {
     accountBalances,
+    accountMarginOrCash,
     baseExecutionTargets,
     cachedSecretPositions,
     completedEvaluations,

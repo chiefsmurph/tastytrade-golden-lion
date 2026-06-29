@@ -58,6 +58,7 @@ function logCycle(context: Awaited<ReturnType<typeof buildRunCycleContext>>): vo
     context.evaluationsWithGroupTargets,
     context.baseExecutionTargets,
     new Date(),
+    context.accountMarginOrCash,
   );
   logRunPlan(context.preview);
   logStrategyDecisions(context.strategyDecisions);

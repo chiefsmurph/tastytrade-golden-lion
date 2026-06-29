@@ -3,6 +3,8 @@ import { RunGroupReturn, RunStrategyDecision } from "./run-history";
 import { buildGroupExecutionTargets } from "./group-execution-targets";
 import { getSecretSocketStatus } from "./secret";
 import type { RunCyclePreview } from "./run-cycle-context";
+import { getMaxBuyExposurePctForAccountType } from "./risk-limits";
+import type { StrategyAccountType } from "./evaluate-trading-strategy";
 
 type BaseExecutionTargets = {
   askWeight: number;
@@ -155,6 +157,7 @@ export function logExecutionTargetsByGroup(
   evaluations: PositionGroupEvaluation[],
   baseExecutionTargets: BaseExecutionTargets,
   currentTime: Date,
+  accountType: StrategyAccountType = "unknown",
 ): void {
   console.log("\n=== EXECUTION TARGETS BY GROUP ===");
   console.log(
@@ -227,14 +230,20 @@ export function logExecutionTargetsByGroup(
     );
     if (evaluation.executionTargets) {
       const gate = evaluation.executionTargets.cashGate;
+      const surplusPct = evaluation.executionTargets.booleanSurplusPct ?? 0;
       if (gate) {
         const { signals } = gate;
-        const surplusPct = evaluation.executionTargets.booleanSurplusPct ?? 0;
         const surplusStr = surplusPct > 0 ? ` +${(surplusPct * 100).toFixed(0)}% surplus` : "";
         console.log(
           `  Cash Gate:          marginYes=${signals.marginYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/6${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
         );
       }
+      const baseBuyPct = getMaxBuyExposurePctForAccountType(accountType === "unknown" ? "cash" : accountType);
+      const effectiveBuyPct = baseBuyPct + surplusPct;
+      const maxBuyStr = surplusPct > 0
+        ? `${formatPercent(baseBuyPct)} base + ${formatPercent(surplusPct)} surplus = ${formatPercent(effectiveBuyPct)}`
+        : formatPercent(baseBuyPct);
+      console.log(`  Max Buy/Action:     ${maxBuyStr}`);
       console.log(
         `  Final (post-caps):  exp=${formatPercent(evaluation.executionTargets.targetAccountExposure)}, bid=${evaluation.executionTargets.bidWeight.toFixed(2)}/mid=${evaluation.executionTargets.midWeight.toFixed(2)}/ask=${evaluation.executionTargets.askWeight.toFixed(2)}`,
       );
