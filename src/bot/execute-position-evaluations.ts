@@ -15,6 +15,7 @@ import {
   getTimeOfDayExecutionTargets,
 } from "./evaluate-trading-strategy";
 import { closePosition, ClosePositionResult } from "./actions/close-position";
+import { recordPositionClosing } from "./position-registry";
 import {
   selectManageEvaluationsByBuyingPower,
 } from "./group-allocation-priority";
@@ -239,6 +240,25 @@ export async function executePositionEvaluations(
           ),
         )
       ).flat();
+
+  // Record closing orders in the position registry for P&L tracking
+  for (const evaluation of actionableCloseEvaluations) {
+    const symbol = evaluation.underlyingSymbol;
+    const placedResult = closeOrders.find(
+      (r) => r.underlyingSymbol === symbol && r.placedOrder,
+    );
+    const orderId = placedResult && "orderResponse" in placedResult
+      ? placedResult.orderResponse?.order?.id
+      : undefined;
+    if (orderId) {
+      const waf = evaluation.metrics.weightedAverageFill;
+      const totalQuantityWeight = evaluation.positionSnapshots.reduce(
+        (sum, snap) => sum + snap.quantityWeight,
+        0,
+      );
+      await recordPositionClosing(accountNumber, symbol, String(orderId), waf, totalQuantityWeight);
+    }
+  }
 
   let budget = buildInitialBudget(
     spendableFunds,

@@ -4,6 +4,7 @@ import { isWithinSecretAutoSeedWindow } from "../seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
 import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "../cash-position-gate";
+import { recordPositionOpened } from "../position-registry";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
@@ -112,6 +113,9 @@ async function maybeAutoSeedSymbol(options: {
       priceMode: "mid",
     });
     options.cooldownMap.set(options.symbol, now);
+    if (result.placedOrder) {
+      await recordPositionOpened(options.accountNumber, options.symbol, options.side);
+    }
     console.log(
       JSON.stringify({
         scope: options.scope,

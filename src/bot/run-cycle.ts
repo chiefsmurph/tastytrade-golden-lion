@@ -15,6 +15,7 @@ import {
   logStrategyDecisions,
 } from "./run-cycle-logging";
 import { maybeSeedMarginAccountFromCashAccount } from "./run-cycle-seed";
+import { reconcilePendingCloses, pruneOldEntries } from "./position-registry";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
 
@@ -134,6 +135,8 @@ export default async function runBotCycle(
   }
 
   await cancelAllLiveOrders(accountNumber);
+  await reconcilePendingCloses(accountNumber);
+  await pruneOldEntries();
 
   const context = await buildRunCycleContext(accountNumber);
   console.log({ accountNumber: context.preview.accountNumber, run: "bot-cycle" });

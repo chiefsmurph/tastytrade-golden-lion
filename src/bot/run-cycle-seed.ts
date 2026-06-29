@@ -7,6 +7,7 @@ import { MARGIN_SEED_FROM_CASH_ORDER_SOURCE } from "./order-sources";
 import { isWithinCashAccountSeedFromMarginWindow } from "./seeding-windows";
 import type { SecretSourcePosition } from "./secret/types";
 import { countGoodBooleans, getBooleanSurplusPct } from "./cash-position-gate";
+import { recordPositionOpened } from "./position-registry";
 
 export type MarginSeedResult = RunSeedOrder;
 
@@ -106,6 +107,10 @@ export async function maybeSeedMarginAccountFromCashAccount(
     const result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
       orderSource: MARGIN_SEED_FROM_CASH_ORDER_SOURCE,
     });
+
+    if (result.placedOrder) {
+      await recordPositionOpened(accountNumber, symbol, side);
+    }
 
     const seedOrder = mapMarginSeedOrderForRunHistory(
       cashAccountNumber,
