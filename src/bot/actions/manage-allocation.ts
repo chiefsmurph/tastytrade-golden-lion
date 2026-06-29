@@ -388,8 +388,9 @@ export async function manageAllocationForGroup(
       : targets.targetAccountExposure;
   const targetExposure = budget.totalCapital * effectiveTargetAccountExposure;
   const exposureHeadroom = targetExposure - budget.portfolioExposure;
+  const baseBuyExposurePct = getMaxBuyExposurePctForAccountType(options.accountMarginOrCash ?? "cash");
   const maxBuyAmountPerAction =
-    budget.totalCapital * getMaxBuyExposurePctForAccountType(options.accountMarginOrCash ?? "cash");
+    budget.totalCapital * (baseBuyExposurePct + (targets.booleanSurplusPct ?? 0));
   const normalizedGroupsRemaining = Math.max(1, groupsRemainingForAllocation);
   const perGroupExposureHeadroom = exposureHeadroom / normalizedGroupsRemaining;
   const perGroupMaxBuyAmount = maxBuyAmountPerAction / normalizedGroupsRemaining;

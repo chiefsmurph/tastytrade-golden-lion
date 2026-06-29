@@ -6,7 +6,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computeCashPositionGate } from "./cash-position-gate";
+import { computeCashPositionGate, countGoodBooleans, getBooleanSurplusPct } from "./cash-position-gate";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -379,15 +379,22 @@ export async function buildRunCycleContext(
     });
     const finalTargets = groupTargetComponents.finalPostCapsTargets;
 
-    if (accountMarginOrCash !== "cash") {
-      return { ...evaluation, executionTargets: finalTargets };
-    }
-
-    // Cash account: gate per-position allocation based on confirmation signals
+    // Boolean surplus applies to both accounts
     const symbol = evaluation.underlyingSymbol.toUpperCase();
     const secretPosition = cachedSecretPositions.find(
       (p) => String(p.ticker ?? "").trim().toUpperCase() === symbol,
     );
+    const goodBooleanScore = countGoodBooleans(secretPosition);
+    const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
+
+    if (accountMarginOrCash !== "cash") {
+      return {
+        ...evaluation,
+        executionTargets: { ...finalTargets, booleanSurplusPct },
+      };
+    }
+
+    // Cash account: gate per-position allocation based on confirmation signals
     const gate = computeCashPositionGate({
       marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
       secretPosition,
@@ -408,6 +415,7 @@ export async function buildRunCycleContext(
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
         strongStockYesScoreThreshold: gate.strongStockYesScoreThreshold,
         maxTargetPct: gate.maxTargetPct,
+        booleanSurplusPct,
         originalTargetPct: finalTargets.targetAccountExposure,
         effectiveTargetPct: cappedTargetAccountExposure,
       }),
@@ -419,6 +427,7 @@ export async function buildRunCycleContext(
         ...finalTargets,
         targetAccountExposure: cappedTargetAccountExposure,
         maxTargetAccountExposure: gate.maxTargetPct,
+        booleanSurplusPct,
       },
     };
   });

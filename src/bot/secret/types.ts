@@ -11,6 +11,8 @@ export interface SecretSourcePosition {
   aboveMinSis?: boolean | string | number;
   isAboveStabMin?: boolean | string | number;
   isClearedToBuy?: boolean | string | number;
+  currentlyAboveMinBuyWeight?: boolean | string | number;
+  willBuy?: boolean | string | number;
   [key: string]: unknown;
 }
 

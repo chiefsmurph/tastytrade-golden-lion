@@ -8,6 +8,8 @@ export interface CashPositionSignals {
   marginYes: boolean;
   basicStockYes: boolean;
   strongStockYes: boolean;
+  goodBooleanScore: number;
+  allBooleansGood: boolean;
 }
 
 export interface CashPositionGateResult {
@@ -24,20 +26,32 @@ function readEnvPct(key: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toBooleanFlag(raw: unknown): boolean {
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw === 1;
+  return ["true", "1", "yes"].includes(String(raw ?? "").trim().toLowerCase());
+}
+
 function getMarginYesDownPct(): number {
   return readEnvPct("BOT_CASH_MARGIN_YES_DOWN_PCT", 10);
 }
 
-// Max percentOfBalance required at end-of-day for strong YES.
+// Max percentOfBalance required at end-of-day (1pm) for strong YES.
 // At window start (9:30am) the threshold is max/2.
 function getStrongStockYesMaxPct(): number {
   return readEnvPct("BOT_CASH_STRONG_STOCK_YES_MAX_PCT", 30);
 }
 
-// daytradeScore magnitude required at end-of-day: score must be < -max.
-// At window start the threshold is -(max/2).
+// daytradeScore magnitude for strong YES.
+// At window start (9:30am): score must be < -max (strict).
+// At window end (1pm): score must be < -max/2 (relaxed).
 function getStrongDaytradeScoreMax(): number {
   return readEnvPct("BOT_CASH_STRONG_DAYTRADE_SCORE_MAX", 100);
+}
+
+// Additional maxTargetPct added per "good" boolean signal (isAboveMinSinFloor etc.)
+function getBooleanBoostPct(): number {
+  return readEnvPct("BOT_CASH_GOOD_BOOLEAN_BOOST_PCT", 0.03);
 }
 
 export function getSingleYesMaxTargetPct(): number {
@@ -56,7 +70,8 @@ export function getMarginTargetMultiplier(): number {
   return readEnvPct("BOT_MARGIN_MAX_TARGET_MULTIPLIER", 1.33);
 }
 
-// Both thresholds scale linearly from max/2 at window start (9:30am) to max at window end (1pm).
+// percentOfBalance: max/2 at window start → max at window end (gets stricter late)
+// daytradeScore:   -max at window start → -max/2 at window end (relaxes late)
 function getStrongStockYesThresholds(currentTime: Date): {
   pct: number;
   daytradeScore: number;
@@ -73,20 +88,62 @@ function getStrongStockYesThresholds(currentTime: Date): {
   const maxPct = getStrongStockYesMaxPct();
   const maxScore = getStrongDaytradeScoreMax();
 
-  // At t=0: max/2. At t=1: max.
+  // pct: starts at max/2, rises to max
   const pct = (maxPct / 2) * (1 + t);
-  const daytradeScore = -(maxScore / 2) * (1 + t);
+
+  // daytradeScore: starts at -max (strict), relaxes to -max/2
+  const daytradeScore = -(maxScore / 2) * (2 - t);
 
   return { pct, daytradeScore };
 }
 
+// Returns 0–6: count of boolean fields in their "good" state (all 6 counted individually).
+// isAboveMinSinFloor=true, aboveMinSis=true, isAboveStabMin=true,
+// isClearedToBuy=true, currentlyAboveMinBuyWeight=true, willBuy=true
+export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
+  if (!position) return 0;
+  let count = 0;
+  if (toBooleanFlag(position.isAboveMinSinFloor)) count++;
+  if (toBooleanFlag(position.aboveMinSis)) count++;
+  if (toBooleanFlag(position.isAboveStabMin)) count++;
+  if (toBooleanFlag(position.isClearedToBuy)) count++;
+  if (toBooleanFlag(position.currentlyAboveMinBuyWeight)) count++;
+  if (toBooleanFlag(position.willBuy)) count++;
+  return count;
+}
+
+// For the margin seed decision only: isClearedToBuy OR currentlyAboveMinBuyWeight counts as one slot.
+// This gives 5 effective slots; threshold is 4/5.
+function countMergedBooleansForMarginSeed(position: SecretSourcePosition | undefined): number {
+  if (!position) return 0;
+  let count = 0;
+  if (toBooleanFlag(position.isAboveMinSinFloor)) count++;
+  if (toBooleanFlag(position.aboveMinSis)) count++;
+  if (toBooleanFlag(position.isAboveStabMin)) count++;
+  if (toBooleanFlag(position.isClearedToBuy) || toBooleanFlag(position.currentlyAboveMinBuyWeight)) count++;
+  if (toBooleanFlag(position.willBuy)) count++;
+  return count;
+}
+
+// Seed margin when 4 of the 5 effective slots are good (isClearedToBuy||currentlyAboveMinBuyWeight = 1 slot)
+export function shouldSeedMarginFromBooleans(
+  position: SecretSourcePosition | undefined,
+): boolean {
+  return countMergedBooleansForMarginSeed(position) >= 4;
+}
+
+// Per-action buy exposure surplus added on top of the account-type base for both accounts.
+// Uses all 6 individual booleans (not merged).
+export function getBooleanSurplusPct(goodBooleanScore: number): number {
+  if (goodBooleanScore >= 6) return 0.20;
+  if (goodBooleanScore >= 5) return 0.15;
+  if (goodBooleanScore >= 4) return 0.10;
+  if (goodBooleanScore >= 3) return 0.05;
+  return 0;
+}
+
 function isBuyEligible(position: SecretSourcePosition | undefined): boolean {
-  if (!position) return false;
-  const raw = position.buyEligible;
-  if (typeof raw === "boolean") return raw;
-  if (typeof raw === "number") return raw === 1;
-  const normalized = String(raw ?? "").trim().toLowerCase();
-  return normalized === "true" || normalized === "1" || normalized === "yes";
+  return position != null && toBooleanFlag(position.buyEligible);
 }
 
 export function computeCashPositionGate(options: {
@@ -109,16 +166,25 @@ export function computeCashPositionGate(options: {
 
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
+  const goodBooleanScore = countGoodBooleans(options.secretPosition);
+  const allBooleansGood = goodBooleanScore === 6;
+
   // basic: just buyEligible
   const basicStockYes = buyEligible;
 
-  // strong: buyEligible + either percentOfBalance or daytradeScore crosses time-scaled threshold
+  // strong: buyEligible + pct or daytradeScore crosses time-scaled threshold
   const strongStockYes =
     buyEligible &&
     (percentOfBalance > thresholds.pct ||
       (daytradeScore !== null && daytradeScore < thresholds.daytradeScore));
 
-  const signals: CashPositionSignals = { marginYes, basicStockYes, strongStockYes };
+  const signals: CashPositionSignals = {
+    marginYes,
+    basicStockYes,
+    strongStockYes,
+    goodBooleanScore,
+    allBooleansGood,
+  };
 
   let maxTargetPct = 0;
   if (marginYes && strongStockYes) {
@@ -130,6 +196,9 @@ export function computeCashPositionGate(options: {
   } else if (marginYes) {
     maxTargetPct = getSingleYesMaxTargetPct();
   }
+
+  // Each good boolean adds a fixed boost on top of the signal tier
+  maxTargetPct = Math.min(maxTargetPct + goodBooleanScore * getBooleanBoostPct(), 1.0);
 
   return {
     signals,

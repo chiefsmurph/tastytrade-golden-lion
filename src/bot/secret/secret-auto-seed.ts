@@ -1,10 +1,12 @@
 import seedSymbol from "../seed-symbol";
 import { SECRET_AUTO_SEED_ORDER_SOURCE } from "../order-sources";
 import { isWithinSecretAutoSeedWindow } from "../seeding-windows";
-import { getCashAccountNumber } from "~/core/default-account";
+import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
+import { shouldSeedMarginFromBooleans } from "../cash-position-gate";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
+const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 
 export function shouldAutoSeedOnSecretPositionsUpdate(): boolean {
   const raw =
@@ -138,7 +140,11 @@ export async function maybeAutoSeedFromSecretPositions(
     return;
   }
 
-  const cashAccountNumber = await getCashAccountNumber();
+  const [cashAccountNumber, marginAccountNumber] = await Promise.all([
+    getCashAccountNumber(),
+    getMarginAccountNumber(),
+  ]);
+  const hasSeparateMarginAccount = marginAccountNumber !== cashAccountNumber;
 
   for (const position of sourcePositions) {
     const symbol = String(position.ticker ?? "")
@@ -161,6 +167,16 @@ export async function maybeAutoSeedFromSecretPositions(
       accountNumber: cashAccountNumber,
       cooldownMap: lastCashAutoSeedAtBySymbol,
     });
+
+    if (hasSeparateMarginAccount && shouldSeedMarginFromBooleans(position)) {
+      await maybeAutoSeedSymbol({
+        symbol,
+        side,
+        scope: "secret-auto-seed-margin-all-signals",
+        accountNumber: marginAccountNumber,
+        cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
+      });
+    }
   }
 }
 
