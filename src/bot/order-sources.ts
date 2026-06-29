@@ -1,12 +1,12 @@
 export const BOT_ORDER_SOURCE = "tastytrade-playground";
-export const CASH_ACCOUNT_SEED_FROM_MARGIN_ORDER_SOURCE =
-  "tastytrade-playground-cash-account-seed-from-margin";
+export const MARGIN_SEED_FROM_CASH_ORDER_SOURCE =
+  "tastytrade-playground-margin-seed-from-cash";
 export const SECRET_AUTO_SEED_ORDER_SOURCE = "tastytrade-playground-secret-auto-seed";
 
-export function isCashAccountSeedFromMarginOrderSource(
+export function isMarginSeedFromCashOrderSource(
   source: string | null | undefined,
 ): boolean {
-  return String(source ?? "").trim() === CASH_ACCOUNT_SEED_FROM_MARGIN_ORDER_SOURCE;
+  return String(source ?? "").trim() === MARGIN_SEED_FROM_CASH_ORDER_SOURCE;
 }
 
 export function isSecretAutoSeedOrderSource(source: string | null | undefined): boolean {

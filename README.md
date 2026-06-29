@@ -28,10 +28,9 @@ Required `.env` values (from `.env.example`):
 Optional runtime env values:
 
 - `BOT_RUN_ON_SCHEDULE` (`true` or `false`, default `false`)
-- `BOT_SEED_ONLY_TO_MARGIN_ACCOUNTS` (`true` or `false`, default `false`)
 - `BOT_DO_NOT_TOUCH_GROUPS` (comma-separated group keys to protect from trading)
 - `BOT_READ_ONLY_ACCOUNTS` (comma-separated account numbers treated as read-only)
-- `BOT_CASH_ACCOUNT_SEED_FROM_MARGIN_MAX_ASK_RETURN_PCT` (max ask return percent for the new margin-driven cash seeding path)
+- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` (minimum down percentage on a cash account position to trigger a margin account seed during a run cycle; e.g. `10` means down 10%; omit or leave blank to disable)
 - `BOT_RUN_INTERVAL_MS` (scheduler run interval in milliseconds while market is open)
 - `BOT_RUN_INTERVAL_MINUTES` (scheduler run interval in minutes; used when `BOT_RUN_INTERVAL_MS` is unset)
 - `BOT_MAX_OPTION_SPREAD_PCT` (max bid/ask spread as a fraction of midpoint allowed when selecting an option contract; default `0.3` = 30%)

@@ -14,7 +14,7 @@ import {
   logRunPlan,
   logStrategyDecisions,
 } from "./run-cycle-logging";
-import { maybeSeedCashAccountFromMarginAccount } from "./run-cycle-seed";
+import { maybeSeedMarginAccountFromCashAccount } from "./run-cycle-seed";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
 
@@ -162,7 +162,7 @@ export default async function runBotCycle(
   const excludedSeedSymbols =
     recentlyClosedByAccount?.get(marginAccountNumber) ?? new Set<string>();
 
-  const cashAccountSeedResults = await maybeSeedCashAccountFromMarginAccount(
+  const cashAccountSeedResults = await maybeSeedMarginAccountFromCashAccount(
     context.preview.accountNumber,
     new Date(),
     excludedSeedSymbols,

@@ -62,10 +62,6 @@ function getMaxSeedOrderCost(): number {
   return parsed;
 }
 
-function shouldSeedOnlyToMarginAccounts(): boolean {
-  const raw = process.env.BOT_SEED_ONLY_TO_MARGIN_ACCOUNTS?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes";
-}
 
 
 export function isWithinCashAccountSeedDteRange(dte: number | null | undefined): boolean {
@@ -154,12 +150,7 @@ export async function seedSymbol(
   const orderSource = options.orderSource?.trim() || BOT_ORDER_SOURCE;
   const resolvedSeedAccount = requestedAccountNumber
     ? { accountNumber: requestedAccountNumber, fallbackToMargin: false }
-    : shouldSeedOnlyToMarginAccounts()
-      ? {
-          accountNumber: await getMarginAccountNumber(),
-          fallbackToMargin: false,
-        }
-      : await resolveSeedAccountNumber({ symbol: normalizedSymbol });
+    : await resolveSeedAccountNumber({ symbol: normalizedSymbol });
   const resolvedAccountNumber = resolvedSeedAccount.accountNumber;
   const resolvedAccountType = await getAccountMarginOrCash(resolvedAccountNumber);
 

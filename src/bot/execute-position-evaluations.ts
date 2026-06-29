@@ -34,7 +34,7 @@ import {
   isOrderDoNotTouch,
 } from "./do-not-touch-groups";
 import {
-  isCashAccountSeedFromMarginOrderSource,
+  isMarginSeedFromCashOrderSource,
   isSecretAutoSeedOrderSource,
 } from "./order-sources";
 
@@ -98,7 +98,7 @@ export async function cancelAllLiveOrders(
       continue;
     }
 
-    if (isCashAccountSeedFromMarginOrderSource(order.source)) {
+    if (isMarginSeedFromCashOrderSource(order.source)) {
       results.push({
         cancelled: false,
         orderId,
