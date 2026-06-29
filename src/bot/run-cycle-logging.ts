@@ -226,6 +226,15 @@ export function logExecutionTargetsByGroup(
       `  Blended (averaged): exp=${formatPercent(blendedTargets.targetAccountExposure)}, bid=${blendedTargets.bidWeight.toFixed(2)}/mid=${blendedTargets.midWeight.toFixed(2)}/ask=${blendedTargets.askWeight.toFixed(2)}`,
     );
     if (evaluation.executionTargets) {
+      const gate = evaluation.executionTargets.cashGate;
+      if (gate) {
+        const { signals } = gate;
+        const surplusPct = evaluation.executionTargets.booleanSurplusPct ?? 0;
+        const surplusStr = surplusPct > 0 ? ` +${(surplusPct * 100).toFixed(0)}% surplus` : "";
+        console.log(
+          `  Cash Gate:          marginYes=${signals.marginYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/6${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
+        );
+      }
       console.log(
         `  Final (post-caps):  exp=${formatPercent(evaluation.executionTargets.targetAccountExposure)}, bid=${evaluation.executionTargets.bidWeight.toFixed(2)}/mid=${evaluation.executionTargets.midWeight.toFixed(2)}/ask=${evaluation.executionTargets.askWeight.toFixed(2)}`,
       );

@@ -133,7 +133,15 @@ function toRunPlanSelectedGroup(
 
 function computeGroupReturns(
   completedEvaluations: PositionGroupEvaluation[],
+  gatedEvaluations: PositionGroupEvaluation[] = [],
 ): RunGroupReturn[] {
+  const gateBySymbol = new Map(
+    gatedEvaluations.map((e) => [
+      e.underlyingSymbol.toUpperCase(),
+      e.executionTargets?.cashGate ?? null,
+    ]),
+  );
+
   return completedEvaluations.map((evaluation) => {
     const secretSignals = getSecretPositionSignalsForSymbol(evaluation.underlyingSymbol);
     const firstSymbol = String(evaluation.positions[0]?.symbol ?? "").trim();
@@ -170,6 +178,7 @@ function computeGroupReturns(
     return {
       askReturnPct,
       bidReturnPct,
+      cashGate: gateBySymbol.get(evaluation.underlyingSymbol.toUpperCase()) ?? null,
       currentReturnPct: evaluation.currentReturn,
       buyWeight: evaluation.secretBuyWeight ?? null,
       daytradeScore: secretSignals?.daytradeScore ?? null,
@@ -285,7 +294,6 @@ export async function buildRunCycleContext(
   const actionableCompletedEvaluations = completedEvaluations.filter(
     (evaluation) => !isEvaluationDoNotTouch(evaluation, doNotTouchGroupKeys),
   );
-  const groupReturns = computeGroupReturns(completedEvaluations);
   const strategyDecisions = computeStrategyDecisions(completedEvaluations).map(
     (decision) => {
       const matchedEvaluation = completedEvaluations.find(
@@ -430,9 +438,12 @@ export async function buildRunCycleContext(
         targetAccountExposure: cappedTargetAccountExposure,
         maxTargetAccountExposure: gate.maxTargetPct,
         booleanSurplusPct,
+        cashGate: gate,
       },
     };
   });
+
+  const groupReturns = computeGroupReturns(completedEvaluations, evaluationsWithGroupTargets);
 
   const plannedManageEvaluations = selectManageEvaluationsByBuyingPower(
     evaluationsWithGroupTargets.filter(
