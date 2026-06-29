@@ -11,7 +11,7 @@ export interface PositionRegistryEntry {
   // Populated when CLOSE_POSITION order is placed
   closingOrderId?: string;
   closingInitiatedAt?: string;
-  openPriceAtClose?: number;    // WAF at time of close (may differ from original if averaged in)
+  openPriceAtClose?: number;
   totalQuantityWeight?: number;
 
   // Populated after reconcile confirms the fill
@@ -21,7 +21,9 @@ export interface PositionRegistryEntry {
   returnAbs?: number;
 }
 
-type RegistryKey = string; // `${accountNumber}:${symbol.toUpperCase()}`
+// Key format: `${accountNumber}:${SYMBOL}:${openDate}` e.g. "5WT12345:RUM:2026-06-28"
+// Including the open date preserves historical entries when a position is reopened later.
+type RegistryKey = string;
 type RegistryData = Record<RegistryKey, PositionRegistryEntry>;
 
 function getRegistryPath(): string {
@@ -30,8 +32,38 @@ function getRegistryPath(): string {
   return path.join(dir, "position-registry.json");
 }
 
-function registryKey(accountNumber: string, symbol: string): RegistryKey {
-  return `${accountNumber}:${symbol.trim().toUpperCase()}`;
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function registryKey(accountNumber: string, symbol: string, openDate: string): RegistryKey {
+  return `${accountNumber}:${symbol.trim().toUpperCase()}:${openDate}`;
+}
+
+function symbolPrefix(accountNumber: string, symbol: string): string {
+  return `${accountNumber}:${symbol.trim().toUpperCase()}:`;
+}
+
+function entriesForSymbol(
+  data: RegistryData,
+  accountNumber: string,
+  symbol: string,
+): [string, PositionRegistryEntry][] {
+  const prefix = symbolPrefix(accountNumber, symbol);
+  return Object.entries(data).filter(([key]) => key.startsWith(prefix));
+}
+
+function openEntryForSymbol(
+  data: RegistryData,
+  accountNumber: string,
+  symbol: string,
+): [string, PositionRegistryEntry] | null {
+  const matches = entriesForSymbol(data, accountNumber, symbol).filter(
+    ([, entry]) => !entry.closedAt,
+  );
+  if (matches.length === 0) return null;
+  // Most recently opened wins if somehow multiple open entries exist
+  return matches.sort(([, a], [, b]) => b.openedAt.localeCompare(a.openedAt))[0];
 }
 
 async function readRegistry(): Promise<RegistryData> {
@@ -56,10 +88,10 @@ export async function recordPositionOpened(
   side: "call" | "put",
 ): Promise<void> {
   const data = await readRegistry();
-  const key = registryKey(accountNumber, symbol);
-  if (data[key] && !data[key].closedAt) {
-    return; // already have an open entry, don't overwrite openedAt
-  }
+  const existing = openEntryForSymbol(data, accountNumber, symbol);
+  if (existing) return; // already have an open entry for this symbol
+
+  const key = registryKey(accountNumber, symbol, todayDate());
   data[key] = {
     accountNumber,
     symbol: symbol.trim().toUpperCase(),
@@ -78,13 +110,18 @@ export async function recordPositionClosing(
   totalQuantityWeight: number,
 ): Promise<void> {
   const data = await readRegistry();
-  const key = registryKey(accountNumber, symbol);
-  const existing = data[key] ?? {
-    accountNumber,
-    symbol: symbol.trim().toUpperCase(),
-    side: "call",
-    openedAt: new Date().toISOString(),
-  };
+  const match = openEntryForSymbol(data, accountNumber, symbol);
+
+  const [key, existing] = match ?? [
+    registryKey(accountNumber, symbol, todayDate()),
+    {
+      accountNumber,
+      symbol: symbol.trim().toUpperCase(),
+      side: "call" as const,
+      openedAt: new Date().toISOString(),
+    },
+  ];
+
   data[key] = {
     ...existing,
     closingOrderId: orderId,
@@ -119,7 +156,6 @@ export async function reconcilePendingCloses(accountNumber: string): Promise<voi
 
       if (status !== "filled") continue;
 
-      // Weighted average fill across all leg fills
       const allFills = (order.legs ?? []).flatMap((leg) => leg.fills ?? []);
       const totalFillQty = allFills.reduce(
         (sum, f) => sum + (Number(f.quantity) || 0),
@@ -193,18 +229,15 @@ function isSameCalendarDay(isoA: string, isoB: string): boolean {
   return isoA.slice(0, 10) === isoB.slice(0, 10);
 }
 
-function todayIso(): string {
-  return new Date().toISOString();
-}
-
 export async function isOvernightPosition(
   accountNumber: string,
   symbol: string,
 ): Promise<boolean> {
   const data = await readRegistry();
-  const entry = data[registryKey(accountNumber, symbol)];
-  if (!entry) return false;
-  return !isSameCalendarDay(entry.openedAt, todayIso());
+  const match = openEntryForSymbol(data, accountNumber, symbol);
+  if (!match) return false;
+  const [, entry] = match;
+  return !isSameCalendarDay(entry.openedAt, new Date().toISOString());
 }
 
 export async function isOpenedToday(
@@ -212,8 +245,8 @@ export async function isOpenedToday(
   symbol: string,
 ): Promise<boolean> {
   const data = await readRegistry();
-  const entry = data[registryKey(accountNumber, symbol)];
-  return entry != null && isSameCalendarDay(entry.openedAt, todayIso());
+  const key = registryKey(accountNumber, symbol, todayDate());
+  return key in data;
 }
 
 export async function isClosedToday(
@@ -221,11 +254,9 @@ export async function isClosedToday(
   symbol: string,
 ): Promise<boolean> {
   const data = await readRegistry();
-  const entry = data[registryKey(accountNumber, symbol)];
-  return (
-    entry != null &&
-    entry.closedAt != null &&
-    isSameCalendarDay(entry.closedAt, todayIso())
+  const today = new Date().toISOString();
+  return entriesForSymbol(data, accountNumber, symbol).some(
+    ([, entry]) => entry.closedAt != null && isSameCalendarDay(entry.closedAt, today),
   );
 }
 
@@ -234,10 +265,15 @@ export async function getRegistryEntry(
   symbol: string,
 ): Promise<PositionRegistryEntry | null> {
   const data = await readRegistry();
-  return data[registryKey(accountNumber, symbol)] ?? null;
+  const match = openEntryForSymbol(data, accountNumber, symbol);
+  if (match) return match[1];
+  // Fall back to most recently closed entry
+  const all = entriesForSymbol(data, accountNumber, symbol);
+  if (all.length === 0) return null;
+  return all.sort(([, a], [, b]) => b.openedAt.localeCompare(a.openedAt))[0][1];
 }
 
-// Removes entries older than keepDays calendar days that are fully closed
+// Removes fully closed entries older than keepDays calendar days
 export async function pruneOldEntries(keepDays = 2): Promise<void> {
   const data = await readRegistry();
   const cutoff = new Date();
