@@ -216,13 +216,17 @@ function getTimeOfDayExecutionTargetsForMinute(
       ...getScheduleTailPoints(accountType, 7),
     ]),
   );
+  // Margin reaches 100% at noon; cash reaches 100% at 12:45pm
+  const TWELVE_PM          = 12 * 60;
+  const TWELVE_FORTY_FIVE  = 12 * 60 + 45;
+  const exposurePeakMinute = accountType === "cash" ? TWELVE_FORTY_FIVE : TWELVE_PM;
   const targetAccountExposure = blendBySchedule(timeInMinutes, [
-    { minute: SIX_THIRTY_AM, value: 0.40 },
-    { minute: NINE_AM, value: 0.50 },
-    { minute: TEN_AM, value: 0.65 },
-    { minute: ELEVEN_AM, value: 0.85 },
-    { minute: ELEVEN_THIRTY_AM, value: 1.00 },
-    ...getScheduleTailPoints(accountType, 0.80),
+    { minute: SIX_THIRTY_AM,  value: 0.40 },
+    { minute: NINE_AM,        value: 0.50 },
+    { minute: TEN_AM,         value: 0.65 },
+    { minute: ELEVEN_AM,      value: 0.85 },
+    { minute: exposurePeakMinute, value: 1.00 },
+    { minute: noBuyCutoffMinute,  value: 1.00 },
   ]);
   const bidWeight = blendBySchedule(timeInMinutes, [
     { minute: SIX_THIRTY_AM, value: 0.70 },
