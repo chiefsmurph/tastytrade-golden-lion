@@ -67,6 +67,16 @@ export function getMarginSpendableFunds(
   return getConservativeSpendableFunds(accountBalance);
 }
 
+function parseCashAccountMaxBuyingPowerPct(): number {
+  const raw = process.env.BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT;
+  if (!raw) return 0.6;
+  const parsed = Number(raw);
+  // Leave at least 10% undeployed to avoid GFV the next day
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 0.9 ? parsed : 0.6;
+}
+
+const CASH_ACCOUNT_MAX_BUYING_POWER_PCT = parseCashAccountMaxBuyingPowerPct();
+
 export function getSpendableFundsForAccountType(
   accountBalance: TastytradeAccountBalance,
   accountMarginOrCash: "margin" | "cash" | "unknown",
@@ -75,7 +85,7 @@ export function getSpendableFundsForAccountType(
     return getMarginSpendableFunds(accountBalance);
   }
 
-  return getConservativeSpendableFunds(accountBalance);
+  return getConservativeSpendableFunds(accountBalance) * CASH_ACCOUNT_MAX_BUYING_POWER_PCT;
 }
 
 export function getEffectiveTotalCapital(accountBalance: TastytradeAccountBalance): number {
