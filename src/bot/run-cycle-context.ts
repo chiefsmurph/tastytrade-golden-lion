@@ -6,7 +6,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computeCashPositionGate, countGoodBooleans, getBooleanSurplusPct } from "./cash-position-gate";
+import { computeCashPositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier } from "./cash-position-gate";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -398,6 +398,51 @@ export async function buildRunCycleContext(
     const goodBooleanScore = countGoodBooleans(secretPosition);
     const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
 
+    if (accountMarginOrCash === "margin") {
+      // Margin gate: same signal system as cash but scaled up by 1.33x.
+      // marginAskReturnFraction uses the margin position's own return as confirmation.
+      const fill = evaluation.metrics.weightedAverageFill;
+      const marginAskReturnFraction =
+        fill > 0
+          ? (evaluation.metrics.currentAskPrice - fill) / fill
+          : null;
+      const gate = computeCashPositionGate({
+        marginAskReturnFraction,
+        secretPosition,
+        currentTime,
+      });
+      const multiplier = getMarginTargetMultiplier();
+      const marginMaxTargetPct = gate.maxTargetPct * multiplier;
+      const scaledTargetAccountExposure =
+        finalTargets.targetAccountExposure * marginMaxTargetPct;
+
+      console.log(
+        JSON.stringify({
+          scope: "margin-position-gate",
+          symbol,
+          marginAskReturnFraction,
+          signals: gate.signals,
+          cashMaxTargetPct: gate.maxTargetPct,
+          multiplier,
+          marginMaxTargetPct,
+          booleanSurplusPct,
+          originalTargetPct: finalTargets.targetAccountExposure,
+          effectiveTargetPct: scaledTargetAccountExposure,
+        }),
+      );
+
+      return {
+        ...evaluation,
+        executionTargets: {
+          ...finalTargets,
+          targetAccountExposure: scaledTargetAccountExposure,
+          maxTargetAccountExposure: marginMaxTargetPct,
+          booleanSurplusPct,
+          cashGate: gate,
+        },
+      };
+    }
+
     if (accountMarginOrCash !== "cash") {
       return {
         ...evaluation,
@@ -405,17 +450,17 @@ export async function buildRunCycleContext(
       };
     }
 
-    // Cash account: gate per-position allocation based on confirmation signals
+    // Cash account: gate per-position allocation based on confirmation signals.
+    // targetAccountExposure is scaled by gate max so the position ramps toward
+    // the gate ceiling by end of day rather than hitting it immediately.
     const gate = computeCashPositionGate({
       marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
       secretPosition,
       currentTime,
     });
 
-    const cappedTargetAccountExposure = Math.min(
-      finalTargets.targetAccountExposure,
-      gate.maxTargetPct,
-    );
+    const scaledTargetAccountExposure =
+      finalTargets.targetAccountExposure * gate.maxTargetPct;
 
     console.log(
       JSON.stringify({
@@ -428,7 +473,7 @@ export async function buildRunCycleContext(
         maxTargetPct: gate.maxTargetPct,
         booleanSurplusPct,
         originalTargetPct: finalTargets.targetAccountExposure,
-        effectiveTargetPct: cappedTargetAccountExposure,
+        effectiveTargetPct: scaledTargetAccountExposure,
       }),
     );
 
@@ -436,7 +481,7 @@ export async function buildRunCycleContext(
       ...evaluation,
       executionTargets: {
         ...finalTargets,
-        targetAccountExposure: cappedTargetAccountExposure,
+        targetAccountExposure: scaledTargetAccountExposure,
         maxTargetAccountExposure: gate.maxTargetPct,
         booleanSurplusPct,
         cashGate: gate,

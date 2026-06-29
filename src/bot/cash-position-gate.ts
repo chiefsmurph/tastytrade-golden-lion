@@ -32,8 +32,20 @@ function toBooleanFlag(raw: unknown): boolean {
   return ["true", "1", "yes"].includes(String(raw ?? "").trim().toLowerCase());
 }
 
-function getMarginYesDownPct(): number {
-  return readEnvPct("BOT_CASH_MARGIN_YES_DOWN_PCT", 10);
+// BOT_CASH_MARGIN_YES_DOWN_PCT is the late-day (lenient) threshold.
+// At window start (9:30am): requires 2x that dip (strict).
+// At window end (1pm): requires exactly the configured dip.
+function getMarginYesDownPct(currentTime: Date): number {
+  const base = readEnvPct("BOT_CASH_MARGIN_YES_DOWN_PCT", 10);
+  const minuteOfDay = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const startMinute = getSecretAutoSeedWindowStartMinute();
+  const endMinute = getCashAccountSeedEndMinute();
+  const duration = endMinute - startMinute;
+  const t = duration > 0
+    ? Math.max(0, Math.min(1, (minuteOfDay - startMinute) / duration))
+    : 1;
+  // t=0 (9:30am): 2× base (strict). t=1 (1pm): 1× base (lenient).
+  return base * (2 - t);
 }
 
 // Max percentOfBalance required at end-of-day (1pm) for strong YES.
@@ -151,7 +163,7 @@ export function computeCashPositionGate(options: {
   secretPosition: SecretSourcePosition | undefined;
   currentTime: Date;
 }): CashPositionGateResult {
-  const marginYesThreshold = getMarginYesDownPct() / 100;
+  const marginYesThreshold = getMarginYesDownPct(options.currentTime) / 100;
   const marginYes =
     options.marginAskReturnFraction !== null &&
     options.marginAskReturnFraction < -marginYesThreshold;
