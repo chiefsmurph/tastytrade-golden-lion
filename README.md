@@ -47,8 +47,6 @@ Optional runtime env values:
 - `SECRET_AUTO_SEED_ON_POSITIONS_UPDATE` (`true` or `false`, default `false`)
 - `SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE` (`true` or `false`, default `false`)
 - `SECRET_AUTO_SEED_START_TIME` (auto-seed window start time in `HH:mm`, default `06:30`)
-- `SECRET_AUTO_SEED_MARGIN_END_TIME` (time when secret auto-seeds stop going to the margin account and begin going to the cash account; default `12:15`)
-- `SECRET_AUTO_SEED_END_TIME` (deprecated alias for `SECRET_AUTO_SEED_MARGIN_END_TIME`; prefer the explicit name)
 - `SECRET_AUTO_SEED_COOLDOWN_MS` (minimum delay between secret auto-seeds for the same symbol; default `600000`)
 - `TASTYTRADE_BOT_SOCKET` (override IPC socket path)
 - `TASTYTRADE_BOT_RUN_HISTORY_DIR` (override directory for run history files; default: `data/`)

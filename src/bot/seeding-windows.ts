@@ -1,5 +1,4 @@
 const DEFAULT_SECRET_AUTO_SEED_START_MINUTE = 6 * 60 + 30;
-const DEFAULT_SECRET_AUTO_SEED_MARGIN_END_MINUTE = 12 * 60 + 15;
 const CASH_ACCOUNT_SEED_END_MINUTE = 13 * 60;
 
 function parseMinuteOfDay(value: string | undefined): number | null {
@@ -34,14 +33,6 @@ export function getSecretAutoSeedWindowStartMinute(): number {
   );
 }
 
-export function getSecretAutoSeedMarginEndMinute(): number {
-  return (
-    parseMinuteOfDay(process.env.SECRET_AUTO_SEED_MARGIN_END_TIME) ??
-    parseMinuteOfDay(process.env.SECRET_AUTO_SEED_END_TIME) ??
-    DEFAULT_SECRET_AUTO_SEED_MARGIN_END_MINUTE
-  );
-}
-
 export function getCashAccountSeedEndMinute(): number {
   return CASH_ACCOUNT_SEED_END_MINUTE;
 }
@@ -56,12 +47,4 @@ export function isWithinSecretAutoSeedWindow(currentTime: Date): boolean {
 
 export function isWithinCashAccountSeedFromMarginWindow(currentTime: Date): boolean {
   return getMinuteOfDay(currentTime) < getCashAccountSeedEndMinute();
-}
-
-export function getSecretAutoSeedTargetAccountType(
-  currentTime: Date,
-): "margin" | "cash" {
-  return getMinuteOfDay(currentTime) < getSecretAutoSeedMarginEndMinute()
-    ? "margin"
-    : "cash";
 }

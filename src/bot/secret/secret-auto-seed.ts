@@ -1,9 +1,11 @@
 import seedSymbol from "../seed-symbol";
 import { SECRET_AUTO_SEED_ORDER_SOURCE } from "../order-sources";
 import { isWithinSecretAutoSeedWindow } from "../seeding-windows";
+import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
 
-const lastAutoSeedAtBySymbol = new Map<string, number>();
+const lastCashAutoSeedAtBySymbol = new Map<string, number>();
+const lastMarginAutoSeedAtBySymbol = new Map<string, number>();
 
 export function shouldAutoSeedOnSecretPositionsUpdate(): boolean {
   const raw =
@@ -90,26 +92,29 @@ async function maybeAutoSeedSymbol(options: {
   symbol: string;
   side: "call" | "put";
   scope: string;
+  accountNumber: string;
+  cooldownMap: Map<string, number>;
 }): Promise<void> {
   const cooldownMs = getAutoSeedCooldownMs();
   const now = Date.now();
-  const lastSeedAt = lastAutoSeedAtBySymbol.get(options.symbol) ?? 0;
+  const lastSeedAt = options.cooldownMap.get(options.symbol) ?? 0;
   if (now - lastSeedAt < cooldownMs) {
     return;
   }
 
   try {
-    const result = await seedSymbol(options.symbol, options.side, undefined, {
+    const result = await seedSymbol(options.symbol, options.side, options.accountNumber, {
       orderSource: SECRET_AUTO_SEED_ORDER_SOURCE,
       priceMode: "mid",
     });
-    lastAutoSeedAtBySymbol.set(options.symbol, now);
+    options.cooldownMap.set(options.symbol, now);
     console.log(
       JSON.stringify(
         {
           scope: options.scope,
           symbol: options.symbol,
           side: options.side,
+          accountNumber: options.accountNumber,
           result,
           timestamp: new Date(now).toISOString(),
         },
@@ -134,6 +139,11 @@ export async function maybeAutoSeedFromSecretPositions(
     return;
   }
 
+  const [cashAccountNumber, marginAccountNumber] = await Promise.all([
+    getCashAccountNumber(),
+    getMarginAccountNumber(),
+  ]);
+
   for (const position of sourcePositions) {
     const symbol = String(position.ticker ?? "")
       .trim()
@@ -143,21 +153,33 @@ export async function maybeAutoSeedFromSecretPositions(
     }
 
     const isBuyEligible = hasBuyEligible(position);
-    const distanceToAsk = position.distanceToAsk ?? 0;
-    const percentOfBalance = position.percentOfBalance ?? 0;
-
-    const shouldAutoSeed =
-      isBuyEligible && distanceToAsk < -1.5 && percentOfBalance >= 20;
-    if (!shouldAutoSeed) {
+    if (!isBuyEligible) {
       continue;
     }
 
     const side = normalizeSideForSeed(position) ?? "call";
+
+    // Cash: any buyEligible position
     await maybeAutoSeedSymbol({
       symbol,
       side,
-      scope: "secret-auto-seed",
+      scope: "secret-auto-seed-cash",
+      accountNumber: cashAccountNumber,
+      cooldownMap: lastCashAutoSeedAtBySymbol,
     });
+
+    // Margin: only when position is significantly down
+    const distanceToAsk = position.distanceToAsk ?? 0;
+    const percentOfBalance = position.percentOfBalance ?? 0;
+    if (distanceToAsk < -1.5 && percentOfBalance >= 20) {
+      await maybeAutoSeedSymbol({
+        symbol,
+        side,
+        scope: "secret-auto-seed-margin",
+        accountNumber: marginAccountNumber,
+        cooldownMap: lastMarginAutoSeedAtBySymbol,
+      });
+    }
   }
 }
 
@@ -171,6 +193,8 @@ export async function maybeAutoSeedFromTickerRecs(
   if (!isWithinSecretAutoSeedWindow(new Date())) {
     return;
   }
+
+  const cashAccountNumber = await getCashAccountNumber();
 
   for (const pick of picks) {
     const symbol = String(pick.ticker ?? "")
@@ -188,6 +212,8 @@ export async function maybeAutoSeedFromTickerRecs(
       symbol,
       side: "call",
       scope: "secret-auto-seed-ticker-recs",
+      accountNumber: cashAccountNumber,
+      cooldownMap: lastCashAutoSeedAtBySymbol,
     });
   }
 }

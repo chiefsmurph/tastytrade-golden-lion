@@ -1,7 +1,6 @@
 import tastytradeApi from "~/core/tastytrade-client";
 import {
   getAccountMarginOrCash,
-  getDefaultAccountNumber,
   getCashAccountNumber,
   getMarginAccountNumber,
 } from "~/core/default-account";
@@ -12,11 +11,7 @@ import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./action
 import { ProgrammaticAction } from "./evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
-import {
-  BOT_ORDER_SOURCE,
-  SECRET_AUTO_SEED_ORDER_SOURCE,
-} from "./order-sources";
-import { getSecretAutoSeedTargetAccountType } from "./seeding-windows";
+import { BOT_ORDER_SOURCE } from "./order-sources";
 
 const DEFAULT_CONTRACT_MULTIPLIER = 100;
 const DEFAULT_MAX_SEED_ORDER_COST = 500;
@@ -72,9 +67,6 @@ function shouldSeedOnlyToMarginAccounts(): boolean {
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
-function isSecretAutoSeedOrderSource(source: string): boolean {
-  return source === SECRET_AUTO_SEED_ORDER_SOURCE;
-}
 
 export function isWithinCashAccountSeedDteRange(dte: number | null | undefined): boolean {
   return (
@@ -126,52 +118,27 @@ async function hasOpenUnderlyingPosition(
 }
 
 async function resolveSeedAccountNumber(options: {
-  accountNumber?: string;
-  orderSource: string;
   symbol: string;
-}): Promise<{ accountNumber: string; fallbackToCash: boolean }> {
-  const requestedAccountNumber = options.accountNumber?.trim();
-
-  if (requestedAccountNumber) {
+}): Promise<{ accountNumber: string; fallbackToMargin: boolean }> {
+  const cashAccountNumber = await getCashAccountNumber();
+  if (!(await hasOpenUnderlyingPosition(cashAccountNumber, options.symbol))) {
     return {
-      accountNumber: requestedAccountNumber,
-      fallbackToCash: false,
-    };
-  }
-
-  if (isSecretAutoSeedOrderSource(options.orderSource)) {
-    if (getSecretAutoSeedTargetAccountType(new Date()) === "cash") {
-      return {
-        accountNumber: await getCashAccountNumber(),
-        fallbackToCash: false,
-      };
-    }
-
-    return {
-      accountNumber: await getMarginAccountNumber(),
-      fallbackToCash: false,
+      accountNumber: cashAccountNumber,
+      fallbackToMargin: false,
     };
   }
 
   const marginAccountNumber = await getMarginAccountNumber();
-  if (!(await hasOpenUnderlyingPosition(marginAccountNumber, options.symbol))) {
-    return {
-      accountNumber: marginAccountNumber,
-      fallbackToCash: false,
-    };
-  }
-
-  const cashAccountNumber = await getCashAccountNumber();
   if (cashAccountNumber === marginAccountNumber) {
     return {
-      accountNumber: marginAccountNumber,
-      fallbackToCash: false,
+      accountNumber: cashAccountNumber,
+      fallbackToMargin: false,
     };
   }
 
   return {
-    accountNumber: cashAccountNumber,
-    fallbackToCash: true,
+    accountNumber: marginAccountNumber,
+    fallbackToMargin: true,
   };
 }
 
@@ -186,17 +153,13 @@ export async function seedSymbol(
   const priceMode = options.priceMode === "mid" ? "mid" : "ask";
   const orderSource = options.orderSource?.trim() || BOT_ORDER_SOURCE;
   const resolvedSeedAccount = requestedAccountNumber
-    ? { accountNumber: requestedAccountNumber, fallbackToCash: false }
+    ? { accountNumber: requestedAccountNumber, fallbackToMargin: false }
     : shouldSeedOnlyToMarginAccounts()
       ? {
           accountNumber: await getMarginAccountNumber(),
-          fallbackToCash: false,
+          fallbackToMargin: false,
         }
-      : await resolveSeedAccountNumber({
-          accountNumber: requestedAccountNumber,
-          orderSource,
-          symbol: normalizedSymbol,
-        });
+      : await resolveSeedAccountNumber({ symbol: normalizedSymbol });
   const resolvedAccountNumber = resolvedSeedAccount.accountNumber;
   const resolvedAccountType = await getAccountMarginOrCash(resolvedAccountNumber);
 
@@ -270,7 +233,7 @@ export async function seedSymbol(
         requestedAccountNumber: requestedAccountNumber ?? null,
         resolvedAccountNumber,
         resolvedAccountType,
-        resolvedFromCashFallback: resolvedSeedAccount.fallbackToCash,
+        fallbackToMargin: resolvedSeedAccount.fallbackToMargin,
         strategy,
         candidateDTE: candidateDte,
         minDTE: candidate?.minDTE,
