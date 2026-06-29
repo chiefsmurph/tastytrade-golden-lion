@@ -640,6 +640,7 @@ export function buildInitialBudget(
 
 export async function getCurrentAllocationBudget(
   accountNumber: string,
+  options?: { bypassCashAccountCap?: boolean },
 ): Promise<AllocationBudget> {
   const [accountBalance, evaluations] = await Promise.all([
     tastytradeApi.balancesAndPositionsService.getAccountBalanceValues(
@@ -649,8 +650,13 @@ export async function getCurrentAllocationBudget(
   ]);
   const accountMarginOrCash = await getAccountMarginOrCash(accountNumber);
 
+  const buyingPower =
+    options?.bypassCashAccountCap && accountMarginOrCash === "cash"
+      ? getConservativeSpendableFunds(accountBalance)
+      : getSpendableFundsForAccountType(accountBalance, accountMarginOrCash);
+
   return buildInitialBudget(
-    getSpendableFundsForAccountType(accountBalance, accountMarginOrCash),
+    buyingPower,
     getEffectiveTotalCapital(accountBalance),
     evaluations,
   );

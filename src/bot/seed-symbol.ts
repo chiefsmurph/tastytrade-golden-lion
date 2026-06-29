@@ -359,6 +359,8 @@ export async function seedSymbol(
 
   const buyingPowerSummary = await getEffectiveBuyingPowerSummary(
     resolvedAccountNumber,
+    new Date(),
+    { bypassCashAccountCap: true },
   );
   const buyingPowerAvailable = buyingPowerSummary.effectiveBuyingPower;
   const estimatedOrderCost = numericLimitPrice * DEFAULT_CONTRACT_MULTIPLIER;

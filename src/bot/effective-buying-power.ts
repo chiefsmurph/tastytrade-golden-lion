@@ -17,8 +17,9 @@ export interface EffectiveBuyingPowerSummary {
 export async function getEffectiveBuyingPowerSummary(
   accountNumber: string,
   currentTime = new Date(),
+  options?: { bypassCashAccountCap?: boolean },
 ): Promise<EffectiveBuyingPowerSummary> {
-  const budget = await getCurrentAllocationBudget(accountNumber);
+  const budget = await getCurrentAllocationBudget(accountNumber, options);
   const accountType = await getAccountMarginOrCash(accountNumber);
   const executionTargets = getTimeOfDayExecutionTargets(currentTime, accountType);
 
