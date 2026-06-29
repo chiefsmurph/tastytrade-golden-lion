@@ -85,7 +85,10 @@ export function getSpendableFundsForAccountType(
     return getMarginSpendableFunds(accountBalance);
   }
 
-  return getConservativeSpendableFunds(accountBalance) * CASH_ACCOUNT_MAX_BUYING_POWER_PCT;
+  const conservativeFunds = getConservativeSpendableFunds(accountBalance);
+  const netLiq = getAccountBalanceNumber(accountBalance, "net-liquidating-value");
+  const equityBasedCap = (netLiq + getSignedPendingCash(accountBalance)) * CASH_ACCOUNT_MAX_BUYING_POWER_PCT;
+  return Math.min(conservativeFunds, equityBasedCap);
 }
 
 export function getEffectiveTotalCapital(accountBalance: TastytradeAccountBalance): number {
