@@ -72,10 +72,14 @@ export interface RunSeedOrder {
   estimatedOrderCost: number | null;
   limitPrice: number | null;
   placedOrder: boolean;
+  scope: string;
   side: "call" | "put";
   skippedReason: string | null;
   sourceAccountNumber: string;
   symbol: string;
+  triggerReason: string;
+  goodBooleanScore: number | null;
+  booleanSurplusPct: number | null;
 }
 
 export interface RunHistoryEntry {

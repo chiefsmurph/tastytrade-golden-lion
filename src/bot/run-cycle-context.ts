@@ -12,6 +12,7 @@ import {
   getSpendableFundsForAccountType,
 } from "~/core/account-balance";
 import { TastytradeAccountBalance } from "~/core/types";
+import type { SecretSourcePosition } from "./secret/types";
 import { getPositionEvaluations } from "./get-position-evaluations";
 import {
   applyPositionSizeWeightCaps,
@@ -94,6 +95,7 @@ export type RunCycleContext = {
     targetAccountExposure: number;
     targetDTE: number;
   };
+  cachedSecretPositions: SecretSourcePosition[];
   completedEvaluations: PositionGroupEvaluation[];
   evaluationsWithGroupTargets: PositionGroupEvaluation[];
   preview: RunCyclePreview;
@@ -558,6 +560,7 @@ export async function buildRunCycleContext(
   return {
     accountBalances,
     baseExecutionTargets,
+    cachedSecretPositions,
     completedEvaluations,
     evaluationsWithGroupTargets,
     preview: {

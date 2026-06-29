@@ -5,6 +5,8 @@ import { RunSeedOrder } from "./run-history";
 import seedSymbol, { SeedSymbolResult } from "./seed-symbol";
 import { MARGIN_SEED_FROM_CASH_ORDER_SOURCE } from "./order-sources";
 import { isWithinCashAccountSeedFromMarginWindow } from "./seeding-windows";
+import type { SecretSourcePosition } from "./secret/types";
+import { countGoodBooleans, getBooleanSurplusPct } from "./cash-position-gate";
 
 export type MarginSeedResult = RunSeedOrder;
 
@@ -26,18 +28,24 @@ function mapMarginSeedOrderForRunHistory(
   sourceAccountNumber: string,
   askReturnPctSource: number,
   result: SeedSymbolResult,
+  goodBooleanScore: number | null,
+  booleanSurplusPct: number | null,
 ): MarginSeedResult {
   return {
     accountNumber: result.accountNumber,
     askReturnPctSource,
+    booleanSurplusPct,
     candidateSymbol: result.candidateSymbol ?? null,
     estimatedOrderCost: result.estimatedOrderCost ?? null,
+    goodBooleanScore,
     limitPrice: result.limitPrice ?? null,
     placedOrder: result.placedOrder,
+    scope: "run-cycle-margin-from-cash",
     side: result.side,
     skippedReason: result.skippedReason ?? null,
     sourceAccountNumber,
     symbol: result.symbol,
+    triggerReason: `cash position down ${Math.abs(askReturnPctSource).toFixed(1)}%`,
   };
 }
 
@@ -45,6 +53,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
   accountNumber: string,
   currentTime: Date,
   excludedUnderlyingSymbols: ReadonlySet<string> = new Set(),
+  secretPositions: readonly SecretSourcePosition[] = [],
 ): Promise<MarginSeedResult[]> {
   if (isReadOnlyAccount(accountNumber)) {
     return [];
@@ -88,11 +97,40 @@ export async function maybeSeedMarginAccountFromCashAccount(
     const askReturnPct = getAskReturnPct(evaluation);
     if (askReturnPct === null || askReturnPct >= -minDownPct) continue;
 
+    const secretPosition = secretPositions.find(
+      (p) => String(p.ticker ?? "").trim().toUpperCase() === symbol,
+    );
+    const goodBooleanScore = secretPosition != null ? countGoodBooleans(secretPosition) : null;
+    const booleanSurplusPct = goodBooleanScore != null ? getBooleanSurplusPct(goodBooleanScore) : null;
+
     const result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
       orderSource: MARGIN_SEED_FROM_CASH_ORDER_SOURCE,
     });
 
-    results.push(mapMarginSeedOrderForRunHistory(cashAccountNumber, askReturnPct, result));
+    const seedOrder = mapMarginSeedOrderForRunHistory(
+      cashAccountNumber,
+      askReturnPct,
+      result,
+      goodBooleanScore,
+      booleanSurplusPct,
+    );
+
+    console.log(JSON.stringify({
+      scope: "run-cycle-margin-from-cash",
+      symbol,
+      side,
+      accountNumber,
+      askReturnPct,
+      goodBooleanScore,
+      booleanSurplusPct,
+      placedOrder: result.placedOrder,
+      skippedReason: result.skippedReason ?? null,
+      candidateSymbol: result.candidateSymbol ?? null,
+      limitPrice: result.limitPrice ?? null,
+      estimatedOrderCost: result.estimatedOrderCost ?? null,
+    }));
+
+    results.push(seedOrder);
   }
 
   return results;

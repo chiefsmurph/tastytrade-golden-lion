@@ -3,7 +3,7 @@ import { SECRET_AUTO_SEED_ORDER_SOURCE } from "../order-sources";
 import { isWithinSecretAutoSeedWindow } from "../seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans } from "../cash-position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "../cash-position-gate";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
@@ -95,6 +95,9 @@ async function maybeAutoSeedSymbol(options: {
   scope: string;
   accountNumber: string;
   cooldownMap: Map<string, number>;
+  triggerReason?: string;
+  goodBooleanScore?: number;
+  booleanSurplusPct?: number;
 }): Promise<void> {
   const cooldownMs = getAutoSeedCooldownMs();
   const now = Date.now();
@@ -110,18 +113,21 @@ async function maybeAutoSeedSymbol(options: {
     });
     options.cooldownMap.set(options.symbol, now);
     console.log(
-      JSON.stringify(
-        {
-          scope: options.scope,
-          symbol: options.symbol,
-          side: options.side,
-          accountNumber: options.accountNumber,
-          result,
-          timestamp: new Date(now).toISOString(),
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({
+        scope: options.scope,
+        symbol: options.symbol,
+        side: options.side,
+        accountNumber: options.accountNumber,
+        triggerReason: options.triggerReason ?? null,
+        goodBooleanScore: options.goodBooleanScore ?? null,
+        booleanSurplusPct: options.booleanSurplusPct ?? null,
+        placedOrder: result.placedOrder,
+        skippedReason: result.skippedReason ?? null,
+        candidateSymbol: result.candidateSymbol ?? null,
+        limitPrice: result.limitPrice ?? null,
+        estimatedOrderCost: result.estimatedOrderCost ?? null,
+        timestamp: new Date(now).toISOString(),
+      }),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -159,6 +165,8 @@ export async function maybeAutoSeedFromSecretPositions(
     }
 
     const side = normalizeSideForSeed(position) ?? "call";
+    const goodBooleanScore = countGoodBooleans(position);
+    const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
 
     await maybeAutoSeedSymbol({
       symbol,
@@ -166,6 +174,9 @@ export async function maybeAutoSeedFromSecretPositions(
       scope: "secret-auto-seed-cash",
       accountNumber: cashAccountNumber,
       cooldownMap: lastCashAutoSeedAtBySymbol,
+      triggerReason: "secret-positions-update: buyEligible",
+      goodBooleanScore,
+      booleanSurplusPct,
     });
 
     if (hasSeparateMarginAccount && shouldSeedMarginFromBooleans(position)) {
@@ -175,6 +186,9 @@ export async function maybeAutoSeedFromSecretPositions(
         scope: "secret-auto-seed-margin-all-signals",
         accountNumber: marginAccountNumber,
         cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
+        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/5 good`,
+        goodBooleanScore,
+        booleanSurplusPct,
       });
     }
   }

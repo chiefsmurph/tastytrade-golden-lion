@@ -166,6 +166,7 @@ export default async function runBotCycle(
     context.preview.accountNumber,
     new Date(),
     excludedSeedSymbols,
+    context.cachedSecretPositions,
   );
 
   const executionSummary = {
