@@ -11,6 +11,13 @@ import {
   type SecretPositionSignals,
 } from "./secret";
 
+function getMaxAskReturnPercForBuy(): number | null {
+  const raw = process.env.BOT_MAX_ASK_RETURN_PERC_FOR_BUY?.trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export interface GroupExecutionTargetInputs {
   askReturnPerc: number;
   baseExecutionTargets: ExecutionTargets;
@@ -64,6 +71,30 @@ export function buildGroupExecutionTargets(
     baseExecutionTargets.askWeight === 0;
 
   if (hardNoBuyGateActive) {
+    const zeroTargets: ExecutionTargets = {
+      targetDTE: baseExecutionTargets.targetDTE,
+      targetAccountExposure: 0,
+      bidWeight: 0,
+      midWeight: 0,
+      askWeight: 0,
+    };
+
+    return {
+      blendedTargets: zeroTargets,
+      finalPostCapsTargets: zeroTargets,
+      noBuyGateActive: true,
+      positionGroupTargets: null,
+      secretBuyWeight,
+      secretExecutionTargets,
+      secretSignals,
+    };
+  }
+
+  const maxAskReturnPercForBuy = getMaxAskReturnPercForBuy();
+  const highAskReturnNoBuyGateActive =
+    maxAskReturnPercForBuy !== null && askReturnPerc > maxAskReturnPercForBuy;
+
+  if (highAskReturnNoBuyGateActive) {
     const zeroTargets: ExecutionTargets = {
       targetDTE: baseExecutionTargets.targetDTE,
       targetAccountExposure: 0,
