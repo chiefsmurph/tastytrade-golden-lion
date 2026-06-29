@@ -235,5 +235,15 @@ export default async function runBotCycle(
 
   console.log("Execution results:", JSON.stringify(executionResults, null, 2));
 
+  // Second pass: if close orders were placed this cycle, try to reconcile fills
+  // immediately so EOD closes aren't left pending until next morning.
+  const placedCloseOrdersThisCycle = [
+    ...executionResults.closeOrders,
+    ...overnightReductionOrders,
+  ].some((o) => o.placedOrder);
+  if (placedCloseOrdersThisCycle) {
+    await reconcilePendingCloses(accountNumber);
+  }
+
   return runHistoryEntry;
 }
