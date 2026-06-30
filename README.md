@@ -80,43 +80,44 @@ cp .env.example .env
 
 ### Optional Runtime Controls
 
-#### Scheduling And Runtime Behavior
+#### Bot Scheduling
 
 - `BOT_RUN_ON_SCHEDULE` (`true` or `false`, default `false`)
 - `BOT_RUN_INTERVAL_MS` (scheduler run interval in milliseconds while market is open)
 - `BOT_RUN_INTERVAL_MINUTES` (scheduler run interval in minutes, used when `BOT_RUN_INTERVAL_MS` is unset)
 
-#### Account Protection / Trade Guardrails
+#### Bot Trading Controls
 
 - `BOT_DO_NOT_TOUCH_GROUPS` (comma-separated group keys to protect from trading)
 - `BOT_READ_ONLY_ACCOUNTS` (comma-separated account numbers treated as read-only)
-- `BOT_MAX_OPTION_SPREAD_PCT` (max bid/ask spread as a fraction of midpoint; default `0.3`)
-- `BOT_MAX_SEED_ORDER_COST` (max estimated cost in dollars for one seed order; default `500`)
-- `BOT_MIN_IV_RANK_PCT` (minimum IV rank 0-100 required to enter; default `20`, set `0` to disable)
-- `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` (cache TTL for option snapshot lookups; default `30000`, set `0` to disable)
+- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` (minimum cash-position drawdown required before triggering margin seed; default `10`)
+- `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` (override max ask-return threshold for buy orders; unset by default, default `0.2` in env.example)
 
-#### Cash / Margin Allocation Controls
+#### Cash Account Signal Gates
 
-- `BOT_MARGIN_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital per margin allocation action; default `0.012`)
-- `BOT_CASH_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital per cash allocation action; default `0.05`)
-- `BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` (max fraction of cash buying power deployed daily; default `0.6`, capped at `0.9`)
-- `BOT_MARGIN_TARGET_CALL_DELTA` (target absolute delta for OTM call strike selection on margin accounts; default `0.35`)
-
-#### Cross-Account / Signal Gates
-
-- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` (minimum cash-position drawdown required before triggering margin seed)
 - `BOT_CASH_MARGIN_YES_DOWN_PCT` (cross-account ask-return threshold for margin-yes signal; default `10`)
-- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` (multiplier on margin threshold; default `2`)
-- `BOT_CASH_BASIC_STOCK_YES_MIN_PCT_OF_BALANCE` (minimum `percentOfBalance` for basic stock yes; default `10`)
-- `BOT_CASH_STRONG_STOCK_YES_MIN_PCT_OF_BALANCE` (minimum `percentOfBalance` for strong stock yes; default `30`)
+- `BOT_CASH_STRONG_STOCK_YES_MAX_PCT` (max `percentOfBalance` required for strong stock yes; default `30`)
+- `BOT_CASH_STRONG_DAYTRADE_SCORE_MAX` (daytradeScore magnitude threshold for strong yes; default `100`)
 - `BOT_CASH_SINGLE_YES_MAX_TARGET_PCT` (max target exposure with any single yes signal; default `0.15`)
 - `BOT_CASH_BOTH_YES_MAX_TARGET_PCT` (max target exposure when margin yes and basic stock yes are both true; default `0.25`)
 - `BOT_CASH_STRONG_YES_MAX_TARGET_PCT` (max target exposure when strong stock yes is present; default `0.35`)
 - `BOT_MARGIN_MAX_TARGET_MULTIPLIER` (multiplier for deriving margin per-position cap from cash cap; default `1.33`)
+- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` (multiplier on margin threshold; default `2`)
+- `BOT_CASH_GOOD_BOOLEAN_BOOST_PCT` (additional max target pct added per good boolean signal; default `0.03`)
 
-#### Overnight Risk Management
+#### Position Management
 
+- `BOT_MAX_SEED_ORDER_COST` (max estimated cost in dollars for one seed order; default `200`)
+- `BOT_MAX_OPTION_SPREAD_PCT` (max bid/ask spread as a fraction of midpoint; default `0.3`)
+- `BOT_MARGIN_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital per margin allocation action; default `0.012`)
+- `BOT_CASH_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital per cash allocation action; default `0.05`)
+- `BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` (max fraction of cash buying power deployed daily; default `0.6`, capped at `0.9`)
 - `BOT_CASH_OVERNIGHT_REDUCTION_FLOOR_PCT` (minimum cash-position exposure target during overnight reduction; default `0.08`)
+- `BOT_MIN_IV_RANK_PCT` (minimum IV rank 0–100 required to enter; default `20`, set `0` to disable)
+- `BOT_MARGIN_TARGET_CALL_DELTA` (target absolute delta for OTM call strike selection on margin accounts; default `0.35`)
+- `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` (cache TTL for option snapshot lookups; default `30000`, set `0` to disable)
+- `BOT_MARGIN_MAX_TARGET_DTE` (hard ceiling on target DTE for margin accounts; default `7`)
+- `BOT_CASH_MIN_TARGET_DTE` (hard floor on target DTE for cash accounts; default `10`)
 
 #### Secret Feed Integration (Optional)
 

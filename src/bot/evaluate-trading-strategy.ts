@@ -206,6 +206,9 @@ function getTimeOfDayExecutionTargetsForMinute(
   const ELEVEN_THIRTY_AM   = 11 * 60 + 30;
   const noBuyCutoffMinute = getNoBuyCutoffMinute(accountType);
 
+  const marginMaxDTE = parseInt(process.env.BOT_MARGIN_MAX_TARGET_DTE ?? "7", 10);
+  const cashMinDTE   = parseInt(process.env.BOT_CASH_MIN_TARGET_DTE ?? "10", 10);
+
   const rawTargetDTE = Math.round(
     blendBySchedule(timeInMinutes, [
       { minute: SIX_THIRTY_AM, value: 30 },
@@ -216,7 +219,9 @@ function getTimeOfDayExecutionTargetsForMinute(
       ...getScheduleTailPoints(accountType, 7),
     ]),
   );
-  const targetDTE = accountType === "margin" ? Math.min(rawTargetDTE, 7) : rawTargetDTE;
+  const targetDTE = accountType === "margin"
+    ? Math.min(rawTargetDTE, marginMaxDTE)
+    : Math.max(rawTargetDTE, cashMinDTE);
   // Margin reaches 100% at noon; cash reaches 100% at 12:45pm
   const TWELVE_PM          = 12 * 60;
   const TWELVE_FORTY_FIVE  = 12 * 60 + 45;
