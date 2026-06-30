@@ -7,6 +7,7 @@ import {
   RunCyclePreview,
   MultiAccountRunCyclePreview,
 } from "./run-cycle-context";
+import { maybeRecordDayReport } from "./record-day-report";
 import {
   logRunSnapshot,
   logGroupReturns,
@@ -265,7 +266,16 @@ export default async function runBotCycle(
 
   console.log("Execution results:", JSON.stringify(executionResults, null, 2));
 
-  // Second pass: if close orders were placed this cycle, try to reconcile fills
-  // immediately so EOD closes aren't left pending until next morning.
+  try {
+    await maybeRecordDayReport(
+      context.preview.accountNumber,
+      context.accountBalances,
+      context.preview.groups,
+      context.preview.snapshot.totalCapital,
+    );
+  } catch (error) {
+    console.error("Failed to record day report:", error);
+  }
+
   return runHistoryEntry;
 }

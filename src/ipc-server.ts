@@ -30,6 +30,9 @@ import {
 } from "./bot/market-open-scheduler";
 import getLastRunCycle from "./bot/get-last-run-cycle";
 import { getLastRunGroupsByTickers, getRecentRunHistory } from "./bot/run-history";
+import getDayReport from "./bot/get-day-report";
+import getDayTrend from "./bot/get-day-trend";
+import getClosedPositionsToday from "./bot/get-closed-positions-today";
 import {
   getCurrentEquitiesSession,
   isEquityOptionsMarketOpen,
@@ -231,6 +234,9 @@ const commandHandlers: Record<string, CommandHandler> = {
     getMarketOpenSchedulerStatus(),
   "bot:startMarketOpenScheduler": async () => startMarketOpenScheduler(),
   "bot:stopMarketOpenScheduler": async () => stopMarketOpenScheduler(),
+  "bot:getDayReport": async (args) => getDayReport(args),
+  "bot:getDayTrend": async (args) => getDayTrend(args),
+  "bot:getClosedPositionsToday": async (args) => getClosedPositionsToday(args),
 };
 
 export function startIpcServer() {
