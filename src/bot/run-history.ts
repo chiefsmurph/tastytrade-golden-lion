@@ -41,6 +41,7 @@ export interface RunGroupReturn {
   totalUnrealizedReturnAsk: number;
   totalUnrealizedReturnBid: number;
   underlyingSymbol: string;
+  weightedAverageFill: number;
 }
 
 export interface RunStrategyDecision {

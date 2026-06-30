@@ -13,7 +13,8 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
   const entries = await getRecentRunHistory(200, accountNumber);
   const todayEntries = entries.filter((e) => getDateInPst(e.timestamp) === todayDate);
 
-  const closes: {
+  // Collect all placed closes with their realized P&L
+  const rawCloses: {
     underlyingSymbol: string;
     symbol: string;
     orderId: string | null;
@@ -25,8 +26,6 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
     askReturnPctAtClose: number | null;
     midReturnPctAtClose: number | null;
     totalCostBasis: number | null;
-    totalUnrealizedReturnBidAtClose: number | null;
-    totalUnrealizedReturnAskAtClose: number | null;
     realizedPnlDollars: number | null;
     realizedPnlPct: number | null;
   }[] = [];
@@ -54,14 +53,13 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
       let realizedPnlDollars: number | null = null;
       let realizedPnlPct: number | null = null;
 
+      // weightedAverageFill is cost per share (multiply by 100 * contracts for total).
+      // Using it directly avoids the broken full-close assumption.
       if (matchingGroup && totalFillQty > 0 && avgFillPrice != null) {
-        // totalCostBasis = weightedAverageFill * totalQuantityWeight
-        // For a full close, totalQuantityWeight = totalFillQty * 100 (standard option multiplier)
-        const totalQuantityWeight = totalFillQty * 100;
-        const costBasisPerUnit = matchingGroup.totalCostBasis / totalQuantityWeight;
-        if (costBasisPerUnit > 0) {
-          realizedPnlDollars = (avgFillPrice - costBasisPerUnit) * totalQuantityWeight;
-          realizedPnlPct = (avgFillPrice - costBasisPerUnit) / costBasisPerUnit;
+        const fill = matchingGroup.weightedAverageFill;
+        if (fill > 0) {
+          realizedPnlDollars = (avgFillPrice - fill) * totalFillQty * 100;
+          realizedPnlPct = (avgFillPrice - fill) / fill;
         }
       }
 
@@ -70,7 +68,7 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
           ? (matchingGroup.bidReturnPct + matchingGroup.askReturnPct) / 2
           : null;
 
-      closes.push({
+      rawCloses.push({
         underlyingSymbol: closeOrder.underlyingSymbol,
         symbol: closeOrder.symbol,
         orderId: closeOrder.orderId,
@@ -86,16 +84,39 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
         askReturnPctAtClose: matchingGroup?.askReturnPct ?? null,
         midReturnPctAtClose: midReturnPct,
         totalCostBasis: matchingGroup?.totalCostBasis ?? null,
-        totalUnrealizedReturnBidAtClose: matchingGroup?.totalUnrealizedReturnBid ?? null,
-        totalUnrealizedReturnAskAtClose: matchingGroup?.totalUnrealizedReturnAsk ?? null,
         realizedPnlDollars,
         realizedPnlPct,
       });
     }
   }
 
+  // Group by underlying symbol
+  const bySymbol = new Map<string, typeof rawCloses>();
+  for (const close of rawCloses) {
+    const key = close.underlyingSymbol.toUpperCase();
+    if (!bySymbol.has(key)) bySymbol.set(key, []);
+    bySymbol.get(key)!.push(close);
+  }
+
+  const closes = [...bySymbol.entries()].map(([, symbolCloses]) => {
+    const totalRealizedPnlDollars = symbolCloses.reduce(
+      (s, c) => s + (c.realizedPnlDollars ?? 0),
+      0,
+    );
+    const totalCostBasis = symbolCloses.reduce((s, c) => s + (c.totalCostBasis ?? 0), 0);
+    const realizedPnlPct = totalCostBasis > 0 ? totalRealizedPnlDollars / totalCostBasis : null;
+    const first = symbolCloses[0]!;
+    return {
+      underlyingSymbol: first.underlyingSymbol,
+      closeCount: symbolCloses.length,
+      totalRealizedPnlDollars,
+      realizedPnlPct,
+      orders: symbolCloses,
+    };
+  });
+
   const totalRealizedPnlDollars = closes.reduce(
-    (s, c) => s + (c.realizedPnlDollars ?? 0),
+    (s, c) => s + c.totalRealizedPnlDollars,
     0,
   );
 

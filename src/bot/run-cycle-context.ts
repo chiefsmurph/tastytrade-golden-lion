@@ -190,6 +190,7 @@ function computeGroupReturns(
       totalUnrealizedReturnAsk,
       totalUnrealizedReturnBid,
       underlyingSymbol: evaluation.underlyingSymbol,
+      weightedAverageFill,
     };
   });
 }
