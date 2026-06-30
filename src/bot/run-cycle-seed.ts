@@ -63,6 +63,17 @@ function getPositionAgeSeedMultiplier(positionAgeDays: number | null): number {
   return 1.5 - 0.8 * t;
 }
 
+// Boolean multiplier: good signals lower thresholds so seeding fires on smaller losses.
+// No data and weak/bad scores are neutral (1.0) — only positive signals help, never penalize.
+// Score 0–10: <3=neutral (1.0×), 3-4=slight boost (0.95×), 5-7=good (0.85×), 8+=great (0.7×).
+function getBooleanSeedMultiplier(goodBooleanScore: number | null): number {
+  if (goodBooleanScore === null) return 1.0;
+  if (goodBooleanScore >= 8) return 0.7;
+  if (goodBooleanScore >= 5) return 0.85;
+  if (goodBooleanScore >= 3) return 0.95;
+  return 1.0;
+}
+
 // Returns position age in days using the registry (primary) or Tastytrade API date (fallback).
 async function getPositionAgeDays(
   cashAccountNumber: string,
@@ -83,14 +94,17 @@ async function getPositionAgeDays(
   return null;
 }
 
-// Returns the effective thresholds after applying time-of-day and position-age scaling.
+// Returns the effective thresholds after applying time-of-day, position-age, and boolean scaling.
 // maxDownPct is capped at the configured max — scaling can only lower it, never raise it.
+// When combined multiplier is high enough that minDownPct exceeds maxDownPct, no seed fires —
+// this is intentional (e.g., bad signals + new position early in day = don't seed).
 function getScaledThresholds(
   config: MarginSeedConfig,
   timeFactor: number,
   ageFactor: number,
+  booleanFactor: number,
 ): MarginSeedConfig {
-  const combined = timeFactor * ageFactor;
+  const combined = timeFactor * ageFactor * booleanFactor;
   return {
     minDownPct: Math.max(config.minDownPct * combined, 1),
     maxDownPct: Math.min(config.maxDownPct * combined, config.maxDownPct),
@@ -236,18 +250,20 @@ export async function maybeSeedMarginAccountFromCashAccount(
     const askReturnPct = getAskReturnPct(evaluation);
     if (askReturnPct === null) continue;
 
-    const positionAgeDays = await getPositionAgeDays(cashAccountNumber, symbol, currentTime, evaluation);
-    const ageFactor = getPositionAgeSeedMultiplier(positionAgeDays);
-    const thresholds = getScaledThresholds(config, timeFactor, ageFactor);
-
-    const lossDepth = -askReturnPct;
-    if (lossDepth < thresholds.minDownPct || lossDepth > thresholds.maxDownPct) continue;
-
+    // Boolean lookup happens before threshold scaling — score influences the window itself.
     const secretPosition = secretPositions.find(
       (p) => String(p.ticker ?? "").trim().toUpperCase() === symbol,
     );
     const goodBooleanScore = secretPosition != null ? countGoodBooleans(secretPosition) : null;
     const booleanSurplusPct = goodBooleanScore != null ? getBooleanSurplusPct(goodBooleanScore) : null;
+
+    const positionAgeDays = await getPositionAgeDays(cashAccountNumber, symbol, currentTime, evaluation);
+    const ageFactor = getPositionAgeSeedMultiplier(positionAgeDays);
+    const booleanFactor = getBooleanSeedMultiplier(goodBooleanScore);
+    const thresholds = getScaledThresholds(config, timeFactor, ageFactor, booleanFactor);
+
+    const lossDepth = -askReturnPct;
+    if (lossDepth < thresholds.minDownPct || lossDepth > thresholds.maxDownPct) continue;
 
     const decision = await getSeedDecision(
       symbol,
@@ -268,6 +284,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
         positionAgeDays,
         timeFactor: +timeFactor.toFixed(3),
         ageFactor: +ageFactor.toFixed(3),
+        booleanFactor: +booleanFactor.toFixed(3),
         thresholds,
         goodBooleanScore,
         ivRank: decision.ivRank,

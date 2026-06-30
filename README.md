@@ -1,3 +1,21 @@
+```
+         __  __
+        / _\/ _\
+       / / \ \ \
+      / /   \ \ \
+     /_/     \_\_\
+    (  ,-.   ,-. )
+    ( (   ) (   ))
+     \ `--'X`--' /
+      \  ( V )  /
+      /`-._^_,-'\
+     /  _/   \_  \
+    / .' \   / '. \
+   /_/    `v'    \_\
+  ( (   GOLDEN    ) )
+   \_\    LION   /_/
+```
+
 # Tastytrade Golden Lion
 
 A production options execution engine for Tastytrade — automated, risk-gated, and fully inspectable.
