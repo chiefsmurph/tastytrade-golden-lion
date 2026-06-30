@@ -1,20 +1,20 @@
 # Tastytrade Golden Lion
 
-An event-driven options execution engine built with Node.js and TypeScript.
+A production options execution engine for Tastytrade — automated, risk-gated, and fully inspectable.
 
-This project is a decoupled execution client for Tastytrade with optional external signal subscriptions.
-
-The runtime is always the same: it can subscribe to live state broadcasts from the core Golden Lion brain over a private socket, and it also supports direct manual IPC commands for candidate discovery, health checks, and order execution.
+The scheduler runs a full allocation and risk-management cycle at a configurable interval during market hours. Each cycle enforces entry criteria, sizes positions against real capital, applies strategy-level risk rules, and records structured reasoning for every decision. All workflows are also available on demand over a local Unix IPC socket — candidate discovery, health checks, order placement, and cycle control — with or without the scheduler running.
 
 ## System Profile
 
 Golden Lion is built as an execution control plane, not just a script runner.
 
-- Deterministic run cycle: each cycle builds a full context snapshot, evaluates group-level strategy decisions, then executes allocation, close, and seed actions with explicit reasoning.
-- Multi-account aware: the cycle can run account-specific or fan out across all managed accounts, with cash and margin policies applied independently.
-- Session-gated automation: the scheduler checks live market session status and only runs during regular equities options windows.
-- Optional signal ingestion: secret socket updates can influence buy-weighting and trigger controlled auto-seed actions, but the bot remains fully operable without the feed.
-- Audit trail by default: each run appends structured NDJSON history (plan, decisions, execution summary, snapshot metrics) for after-action review.
+- Deterministic run cycle: each cycle builds a full context snapshot, evaluates group-level strategy decisions, then executes allocation, close, and seed actions with explicit reasoning recorded for every step.
+- Execution quality controls: IV rank filtering and bid/ask spread checks gate every entry. Orders are routed across bid/mid/ask using configurable weights, and aggressiveness can tick toward ask in bounded steps to improve fill probability without unconstrained price chasing.
+- Risk-first circuit breakers: strategy logic enforces profit capture targets, drawdown floors, cooldown periods, no-buy cutoffs, and end-of-day position constraints before any order is placed.
+- Multi-account aware: the cycle can run account-specific or fan out across all managed accounts, with cash and margin policies — including position sizing and exposure caps — applied independently per account type.
+- Session-gated automation: the scheduler checks live Tastytrade session status and only runs during regular equities options windows. Extended-hours sessions are never treated as open.
+- Optional signal ingestion: an external feed can influence buy-weighting and trigger auto-seed actions, but the engine is fully operational without it.
+- Audit trail by default: each run appends structured NDJSON history (plan, decisions, execution summary, snapshot metrics) for after-action review and debugging.
 
 ## Operating Model
 
@@ -26,14 +26,35 @@ At a high level, each cycle follows this sequence:
 4. Generate an execution plan and route order sizing by available capital and route weights.
 5. Execute and record outcomes, including placement/skips, close actions, overnight reductions, and cross-account seed decisions.
 
-The result is an execution engine that is explainable to engineers, inspectable by operators, and legible to product and risk stakeholders.
+## Runtime Topology
+
+```mermaid
+flowchart TD
+    PM2["PM2 / supervisor"] -->|manages| Process
+
+    subgraph Process["tastytrade-golden-lion process"]
+        direction TB
+        IPC["IPC Server\n(Unix socket)"]
+        Sched["Market-Open Scheduler\n(optional)"]
+        Cycle["Run Cycle"]
+        Tasty["Tastytrade API"]
+
+        IPC -->|"bot:runCycle"| Cycle
+        Sched -->|"market open + interval elapsed"| Cycle
+        Cycle --> Tasty
+    end
+
+    SecretFeed["Secret Feed\n(optional)"] -->|signal updates| Process
+    CLI["node run &lt;command&gt;"] -->|Unix socket| IPC
+    ExtClient["ipc-client.js\n(another Node process)"] -->|Unix socket| IPC
+```
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Clone and Install
 
 ```bash
-mkdir -p ~/code/tastytrade-golden-lion
+git clone <repo-url> ~/code/tastytrade-golden-lion
 cd ~/code/tastytrade-golden-lion
 npm install
 ```
@@ -42,8 +63,12 @@ npm install
 
 ```bash
 cp .env.example .env
-# open .env and set required values
+# open .env and fill in required values (see credentials section below)
 ```
+
+### 3. Obtain API Credentials
+
+`API_CLIENT_SECRET` and `API_REFRESH_TOKEN` come from Tastytrade's OAuth2 flow. Follow the [Tastytrade OAuth2 guide](https://developer.tastytrade.com/oauth/) to register an application and obtain these values. The SDK automatically refreshes the access token at runtime — you only need to supply the long-lived refresh token.
 
 ## Environment Variables
 
@@ -110,6 +135,14 @@ If these are omitted or disconnected, the runtime continues normally and manual 
 - `TASTYTRADE_BOT_SOCKET` (override IPC socket path)
 - `TASTYTRADE_BOT_RUN_HISTORY_DIR` (override run-history directory; default `data/`)
 
+## Running Tests
+
+```bash
+npm test
+```
+
+Runs the built-in Node test runner against `src/**/*.test.ts` via `tsx`. Note that `npm run typecheck` and the test suite verify code correctness — they don't exercise live API calls or the scheduler loop.
+
 ## Typecheck And Build
 
 This project usually runs directly from TypeScript via `tsx`.
@@ -123,6 +156,8 @@ npm run build
 - `build` creates a bundled entrypoint at `build/index.js`.
 
 ## Run With IPC
+
+`node run` is a thin CLI wrapper over `ipc-client.js`. It opens a JSON request over the local Unix socket to the running server and prints the result. The server must be running first.
 
 Start the server in one terminal:
 
@@ -225,7 +260,14 @@ The scheduler uses Tastytrade's session endpoint:
 
 It runs only during regular equities session windows. Extended-hours sessions are not treated as open for options execution.
 
-Scheduler behavior is stateful and introspectable (`stopped`, `waiting-for-open`, `waiting-for-next-run`, `running`) so operators can verify timing and in-flight status over IPC.
+Scheduler behavior is stateful and introspectable so operators can verify timing and in-flight status over IPC.
+
+| State | Meaning | Next transition |
+|---|---|---|
+| `stopped` | Scheduler not started | → `waiting-for-open` on start |
+| `waiting-for-open` | Polling every 60s; market closed (or last run errored) | → `running` when market opens and interval has elapsed |
+| `running` | `runBotCycle()` in-flight | → `waiting-for-next-run` on success; → `waiting-for-open` on error |
+| `waiting-for-next-run` | Market is open; holding until next interval elapses | → `running` when interval elapses; → `waiting-for-open` if market closes |
 
 Auto-start scheduler on boot:
 
@@ -239,6 +281,34 @@ Manual scheduler control via IPC:
 node run bot:startMarketOpenScheduler
 node run bot:getMarketOpenSchedulerStatus
 node run bot:stopMarketOpenScheduler
+```
+
+## Running With PM2
+
+An `ecosystem.config.cjs` is included for production deployment with PM2.
+
+```bash
+npm run build
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+The config registers the app as `tastytrade-golden-lion`, runs `build/index.js` in fork mode with `autorestart: true`, and sets `BOT_RUN_ON_SCHEDULE=true` by default. Credentials and runtime overrides should be set in `.env` — PM2 inherits the process environment, so `.env` is still loaded via `dotenv` at startup.
+
+To regenerate the startup hook so PM2 survives a reboot:
+
+```bash
+pm2 startup   # follow the printed instruction
+pm2 save
+```
+
+Common PM2 operations:
+
+```bash
+pm2 status
+pm2 logs tastytrade-golden-lion
+pm2 restart tastytrade-golden-lion
+pm2 stop tastytrade-golden-lion
 ```
 
 ## Reusable IPC Client
