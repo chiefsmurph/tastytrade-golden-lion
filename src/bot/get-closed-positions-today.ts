@@ -31,11 +31,22 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
   }[] = [];
 
   for (const entry of todayEntries) {
+    // Pass 1: total fill contracts per underlying in this cycle, for fallback cost basis.
+    // Needed for entries written before weightedAverageFill was stored in RunGroupReturn.
+    const totalFillQtyBySymbol = new Map<string, number>();
+    for (const closeOrder of entry.closeOrders) {
+      if (!closeOrder.placedOrder) continue;
+      const sym = closeOrder.underlyingSymbol.toUpperCase();
+      const qty = closeOrder.fills.reduce((s, f) => s + (Number(f.quantity) || 0), 0);
+      totalFillQtyBySymbol.set(sym, (totalFillQtyBySymbol.get(sym) ?? 0) + qty);
+    }
+
     for (const closeOrder of entry.closeOrders) {
       if (!closeOrder.placedOrder) continue;
 
+      const sym = closeOrder.underlyingSymbol.toUpperCase();
       const matchingGroup = entry.groups.find(
-        (g) => g.underlyingSymbol.toUpperCase() === closeOrder.underlyingSymbol.toUpperCase(),
+        (g) => g.underlyingSymbol.toUpperCase() === sym,
       );
 
       const totalFillQty = closeOrder.fills.reduce(
@@ -53,10 +64,17 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
       let realizedPnlDollars: number | null = null;
       let realizedPnlPct: number | null = null;
 
-      // weightedAverageFill is cost per share (multiply by 100 * contracts for total).
-      // Using it directly avoids the broken full-close assumption.
       if (matchingGroup && totalFillQty > 0 && avgFillPrice != null) {
-        const fill = matchingGroup.weightedAverageFill;
+        // Prefer stored weightedAverageFill (new entries). Fall back to estimating from
+        // totalCostBasis / (all fill contracts for this symbol * 100) for older entries
+        // that predate the weightedAverageFill field.
+        let fill = matchingGroup.weightedAverageFill ?? 0;
+        if (!fill) {
+          const totalSymbolFillQty = totalFillQtyBySymbol.get(sym) ?? totalFillQty;
+          if (totalSymbolFillQty > 0) {
+            fill = matchingGroup.totalCostBasis / (totalSymbolFillQty * 100);
+          }
+        }
         if (fill > 0) {
           realizedPnlDollars = (avgFillPrice - fill) * totalFillQty * 100;
           realizedPnlPct = (avgFillPrice - fill) / fill;
