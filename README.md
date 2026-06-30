@@ -1,4 +1,4 @@
-# Tastytrade Playground (minimal)
+# Tastytrade Golden Lion (minimal)
 
 This small Node.js scaffold fetches and displays positions and account balances from Tastytrade.
 
@@ -7,8 +7,8 @@ Setup
 1. Create project folder and install dependencies:
 
 ```bash
-mkdir -p ~/code/tastytrade-playground
-cd ~/code/tastytrade-playground
+mkdir -p ~/code/tastytrade-golden-lion
+cd ~/code/tastytrade-golden-lion
 npm install
 ```
 
@@ -88,7 +88,7 @@ Or run the bundled build instead:
 npm run start:build
 ```
 
-This starts a long-running Node process that listens on a local socket at `.tastytrade-playground.sock`.
+This starts a long-running Node process that listens on a local socket at `.tastytrade-golden-lion.sock`.
 
 In a second terminal, call commands through IPC:
 
@@ -202,7 +202,7 @@ const optionHealth = await sendIpcCommand(
 	"bot:getOptionHealthForSymbol",
 	["RUM", "call"],
 	{
-		socketPath: "/absolute/path/to/tastytrade-playground/.tastytrade-playground.sock",
+		socketPath: "/absolute/path/to/tastytrade-golden-lion/.tastytrade-golden-lion.sock",
 	},
 );
 ```

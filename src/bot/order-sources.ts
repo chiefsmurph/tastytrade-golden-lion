@@ -1,7 +1,7 @@
-export const BOT_ORDER_SOURCE = "tastytrade-playground";
+export const BOT_ORDER_SOURCE = "tastytrade-golden-lion";
 export const MARGIN_SEED_FROM_CASH_ORDER_SOURCE =
-  "tastytrade-playground-margin-seed-from-cash";
-export const SECRET_AUTO_SEED_ORDER_SOURCE = "tastytrade-playground-secret-auto-seed";
+  "tastytrade-golden-lion-margin-seed-from-cash";
+export const SECRET_AUTO_SEED_ORDER_SOURCE = "tastytrade-golden-lion-secret-auto-seed";
 
 export function isMarginSeedFromCashOrderSource(
   source: string | null | undefined,

@@ -291,7 +291,7 @@ export async function placeRouteOrders(
 
     while (tickCount <= MAX_TICK_UPS) {
       const order: OrderPayload = {
-        source: "tastytrade-playground",
+        source: "tastytrade-golden-lion",
         "time-in-force": "Day",
         "order-type": "Limit",
         price: roundOrderPrice(currentPrice),

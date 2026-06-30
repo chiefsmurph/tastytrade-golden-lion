@@ -1,7 +1,7 @@
 import net from "node:net";
 import path from "node:path";
 
-export const DEFAULT_IPC_SOCKET_FILENAME = ".tastytrade-playground.sock";
+export const DEFAULT_IPC_SOCKET_FILENAME = ".tastytrade-golden-lion.sock";
 export const DEFAULT_IPC_SOCKET_ENV_VAR = "TASTYTRADE_BOT_SOCKET";
 
 export function getIpcSocketPath(options = {}) {

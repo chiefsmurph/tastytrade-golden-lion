@@ -3,7 +3,7 @@ const path = require("node:path");
 module.exports = {
   apps: [
     {
-      name: "tastytrade-playground",
+      name: "tastytrade-golden-lion",
       cwd: __dirname,
       script: "./build/index.js",
       interpreter: "/home/deploy/.nvm/versions/node/v24.17.0/bin/node",
@@ -17,7 +17,7 @@ module.exports = {
         BOT_RUN_ON_SCHEDULE: "true",
         TASTYTRADE_BOT_SOCKET: path.join(
           __dirname,
-          ".tastytrade-playground.sock",
+          ".tastytrade-golden-lion.sock",
         ),
       },
     },
