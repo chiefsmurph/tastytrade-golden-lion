@@ -90,7 +90,8 @@ cp .env.example .env
 
 - `BOT_DO_NOT_TOUCH_GROUPS` (comma-separated group keys to protect from trading)
 - `BOT_READ_ONLY_ACCOUNTS` (comma-separated account numbers treated as read-only)
-- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` (minimum cash-position drawdown required before triggering margin seed; default `10`)
+- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` (minimum cash-position ask-return loss % before considering a margin seed; feature disabled if unset)
+- `BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT` (maximum loss % beyond which seeding is suppressed — too close to the bid stop-loss floor; default `18`)
 - `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` (override max ask-return threshold for buy orders; unset by default, default `0.2` in env.example)
 
 #### Cash Account Signal Gates

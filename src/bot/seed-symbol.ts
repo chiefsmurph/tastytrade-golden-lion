@@ -21,6 +21,9 @@ const CASH_ACCOUNT_SEED_MAX_DTE = 30;
 export interface SeedSymbolOptions {
   priceMode?: "ask" | "mid";
   orderSource?: string;
+  // Reject the seed if the computed limit price exceeds this value.
+  // Used to gate averaging-down seeds to entries cheaper than the cash fill.
+  maxLimitPrice?: number;
 }
 
 export interface SeedSymbolResult {
@@ -340,6 +343,29 @@ export async function seedSymbol(
 
   const limitPrice = roundOrderPrice(selectedPrice);
   const numericLimitPrice = Number(limitPrice);
+
+  if (options.maxLimitPrice !== undefined && numericLimitPrice > options.maxLimitPrice) {
+    return {
+      accountNumber: resolvedAccountNumber,
+      askPrice,
+      bidPrice,
+      candidateSymbol,
+      dte: candidateDte,
+      limitPrice: numericLimitPrice,
+      maxDTE,
+      midPrice,
+      minDTE,
+      placedOrder: false,
+      priceMode,
+      preferredDTE,
+      quoteSymbol,
+      side,
+      skippedReason: `unfavorable entry: limit price ${numericLimitPrice.toFixed(2)} > cash fill ${options.maxLimitPrice.toFixed(2)}`,
+      strategy,
+      symbol: normalizedSymbol,
+      usedDteFallback,
+    };
+  }
 
   const order: OrderPayload = {
     source: orderSource,

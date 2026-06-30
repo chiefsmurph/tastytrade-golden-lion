@@ -73,6 +73,7 @@ export interface RunSeedOrder {
   askReturnPctSource: number;
   candidateSymbol: string | null;
   estimatedOrderCost: number | null;
+  ivRank: number | null;
   limitPrice: number | null;
   placedOrder: boolean;
   scope: string;
