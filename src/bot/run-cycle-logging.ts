@@ -229,13 +229,13 @@ export function logExecutionTargetsByGroup(
       `  Blended (averaged): exp=${formatPercent(blendedTargets.targetAccountExposure)}, bid=${blendedTargets.bidWeight.toFixed(2)}/mid=${blendedTargets.midWeight.toFixed(2)}/ask=${blendedTargets.askWeight.toFixed(2)}`,
     );
     if (evaluation.executionTargets) {
-      const gate = evaluation.executionTargets.cashGate;
+      const gate = evaluation.executionTargets.positionGate;
       const surplusPct = evaluation.executionTargets.booleanSurplusPct ?? 0;
       if (gate) {
         const { signals } = gate;
         const surplusStr = surplusPct > 0 ? ` +${(surplusPct * 100).toFixed(0)}% surplus` : "";
         console.log(
-          `  Cash Gate:          marginYes=${signals.marginYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/10${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
+          `  Position Gate:      crossAccountYes=${signals.crossAccountYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/10${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
         );
       }
       const baseBuyPct = getMaxBuyExposurePctForAccountType(accountType === "unknown" ? "cash" : accountType);

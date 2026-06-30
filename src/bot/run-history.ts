@@ -25,12 +25,12 @@ export interface RunPlanSelectedGroup {
   underlyingSymbol: string;
 }
 
-import type { CashPositionGateResult } from "./cash-position-gate";
+import type { PositionGateResult } from "./cash-position-gate";
 
 export interface RunGroupReturn {
   askReturnPct: number;
   bidReturnPct: number;
-  cashGate: CashPositionGateResult | null;
+  positionGate: PositionGateResult | null;
   currentReturnPct: number;
   side: "call" | "put" | "none";
   buyWeight: number | null;

@@ -1,6 +1,6 @@
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { ExecutionTargets } from "./evaluate-trading-strategy";
-import { CashPositionSignals } from "./cash-position-gate";
+import { PositionGateSignals } from "./cash-position-gate";
 import { closePosition, ClosePositionResult } from "./actions/close-position";
 import { isOvernightPosition } from "./position-registry";
 
@@ -16,13 +16,13 @@ function getReductionFloorPct(): number {
 }
 
 // Returns forced max exposure pct, or null if no reduction applies.
-// Signals with marginYes or strongStockYes override and pause reduction.
+// Signals with crossAccountYes or strongStockYes override and pause reduction.
 export function computeOvernightReductionTargetPct(
   currentTime: Date,
   currentExposurePct: number,
-  signals: CashPositionSignals | undefined,
+  signals: PositionGateSignals | undefined,
 ): number | null {
-  if (signals?.marginYes || signals?.strongStockYes) return null;
+  if (signals?.crossAccountYes || signals?.strongStockYes) return null;
 
   const minuteOfDay = currentTime.getHours() * 60 + currentTime.getMinutes();
   if (minuteOfDay < REDUCTION_START_MINUTE) return null;
@@ -94,7 +94,7 @@ export async function executeOvernightReductions(
     );
     const currentExposurePct = totalCapital > 0 ? groupAskValue / totalCapital : 0;
 
-    const signals = evaluation.executionTargets?.cashGate?.signals;
+    const signals = evaluation.executionTargets?.positionGate?.signals;
     const targetPct = computeOvernightReductionTargetPct(
       currentTime,
       currentExposurePct,
@@ -122,7 +122,7 @@ export async function executeOvernightReductions(
         currentExposurePct: Number((currentExposurePct * 100).toFixed(2)),
         targetPct: Number((targetPct * 100).toFixed(2)),
         contractsToClose,
-        signalOverride: signals?.marginYes || signals?.strongStockYes || false,
+        signalOverride: signals?.crossAccountYes || signals?.strongStockYes || false,
         currentTime: currentTime.toISOString(),
       }),
     );

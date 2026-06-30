@@ -6,7 +6,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computeCashPositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier } from "./cash-position-gate";
+import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "./cash-position-gate";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -139,7 +139,7 @@ function computeGroupReturns(
   const gateBySymbol = new Map(
     gatedEvaluations.map((e) => [
       e.underlyingSymbol.toUpperCase(),
-      e.executionTargets?.cashGate ?? null,
+      e.executionTargets?.positionGate ?? null,
     ]),
   );
 
@@ -179,7 +179,7 @@ function computeGroupReturns(
     return {
       askReturnPct,
       bidReturnPct,
-      cashGate: gateBySymbol.get(evaluation.underlyingSymbol.toUpperCase()) ?? null,
+      positionGate: gateBySymbol.get(evaluation.underlyingSymbol.toUpperCase()) ?? null,
       currentReturnPct: evaluation.currentReturn,
       buyWeight: evaluation.secretBuyWeight ?? null,
       daytradeScore: secretSignals?.daytradeScore ?? null,
@@ -344,9 +344,9 @@ export async function buildRunCycleContext(
     currentExposurePct,
   );
 
-  // For cash accounts: build a lookup of margin account's ask-return fractions per symbol
-  // used to determine "margin YES" signals for per-position gating.
-  const marginAskReturnBySymbol = new Map<string, number>();
+  // Build cross-account ask-return fraction lookup for per-position gating.
+  // Cash accounts confirm against the margin position; margin accounts confirm against cash.
+  const crossAccountAskReturnBySymbol = new Map<string, number>();
   if (accountMarginOrCash === "cash") {
     try {
       const [cashAccountNumber, marginAccountNumber] = await Promise.all([
@@ -359,13 +359,30 @@ export async function buildRunCycleContext(
           const fill = marginEval.metrics.weightedAverageFill;
           if (fill > 0) {
             const fraction = (marginEval.metrics.currentAskPrice - fill) / fill;
-            marginAskReturnBySymbol.set(marginEval.underlyingSymbol.toUpperCase(), fraction);
+            crossAccountAskReturnBySymbol.set(marginEval.underlyingSymbol.toUpperCase(), fraction);
           }
         }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[cash-position-gate] failed to fetch margin evaluations: ${message}`);
+      console.warn(`[position-gate] failed to fetch margin evaluations: ${message}`);
+    }
+  } else if (accountMarginOrCash === "margin") {
+    try {
+      const cashAccountNumber = await getCashAccountNumber();
+      if (cashAccountNumber !== resolvedAccountNumber) {
+        const cashEvaluations = await getPositionEvaluations(cashAccountNumber);
+        for (const cashEval of cashEvaluations) {
+          const fill = cashEval.metrics.weightedAverageFill;
+          if (fill > 0) {
+            const fraction = (cashEval.metrics.currentAskPrice - fill) / fill;
+            crossAccountAskReturnBySymbol.set(cashEval.underlyingSymbol.toUpperCase(), fraction);
+          }
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[position-gate] failed to fetch cash evaluations: ${message}`);
     }
   }
 
@@ -400,16 +417,14 @@ export async function buildRunCycleContext(
 
     if (accountMarginOrCash === "margin") {
       // Margin gate: same signal system as cash but scaled up by 1.33x.
-      // marginAskReturnFraction uses the margin position's own return as confirmation.
-      const fill = evaluation.metrics.weightedAverageFill;
-      const marginAskReturnFraction =
-        fill > 0
-          ? (evaluation.metrics.currentAskPrice - fill) / fill
-          : null;
-      const gate = computeCashPositionGate({
-        marginAskReturnFraction,
+      // crossAccountAskReturnFraction uses the cash position's return as confirmation,
+      // with a 2x threshold multiplier so the bar is higher than the cash-side check.
+      const crossAccountAskReturnFraction = crossAccountAskReturnBySymbol.get(symbol) ?? null;
+      const gate = computePositionGate({
+        crossAccountAskReturnFraction,
         secretPosition,
         currentTime,
+        crossAccountThresholdMultiplier: getCrossAccountThresholdMultiplier(),
       });
       const multiplier = getMarginTargetMultiplier();
       const marginMaxTargetPct = gate.maxTargetPct * multiplier;
@@ -420,7 +435,7 @@ export async function buildRunCycleContext(
         JSON.stringify({
           scope: "margin-position-gate",
           symbol,
-          marginAskReturnFraction,
+          crossAccountAskReturnFraction,
           signals: gate.signals,
           cashMaxTargetPct: gate.maxTargetPct,
           multiplier,
@@ -438,7 +453,7 @@ export async function buildRunCycleContext(
           targetAccountExposure: scaledTargetAccountExposure,
           maxTargetAccountExposure: marginMaxTargetPct,
           booleanSurplusPct,
-          cashGate: gate,
+          positionGate: gate,
         },
       };
     }
@@ -453,8 +468,9 @@ export async function buildRunCycleContext(
     // Cash account: gate per-position allocation based on confirmation signals.
     // targetAccountExposure is scaled by gate max so the position ramps toward
     // the gate ceiling by end of day rather than hitting it immediately.
-    const gate = computeCashPositionGate({
-      marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
+    const crossAccountAskReturnFraction = crossAccountAskReturnBySymbol.get(symbol) ?? null;
+    const gate = computePositionGate({
+      crossAccountAskReturnFraction,
       secretPosition,
       currentTime,
     });
@@ -466,7 +482,7 @@ export async function buildRunCycleContext(
       JSON.stringify({
         scope: "cash-position-gate",
         symbol,
-        marginAskReturnFraction: marginAskReturnBySymbol.get(symbol) ?? null,
+        crossAccountAskReturnFraction,
         signals: gate.signals,
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
         strongStockYesScoreThreshold: gate.strongStockYesScoreThreshold,
@@ -484,7 +500,7 @@ export async function buildRunCycleContext(
         targetAccountExposure: scaledTargetAccountExposure,
         maxTargetAccountExposure: gate.maxTargetPct,
         booleanSurplusPct,
-        cashGate: gate,
+        positionGate: gate,
       },
     };
   });

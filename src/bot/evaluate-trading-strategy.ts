@@ -1,5 +1,5 @@
 export type ProgrammaticAction = "MANAGE_ALLOCATION" | "CLOSE_POSITION";
-import type { CashPositionGateResult } from "./cash-position-gate";
+import type { PositionGateResult } from "./cash-position-gate";
 
 // Unified return structure containing target state goals for the execution loop
 export interface ExecutionStrategy {
@@ -15,7 +15,7 @@ export interface ExecutionTargets {
   askWeight: number;
   maxTargetAccountExposure?: number;
   booleanSurplusPct?: number;
-  cashGate?: CashPositionGateResult;
+  positionGate?: PositionGateResult;
 }
 
 function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {

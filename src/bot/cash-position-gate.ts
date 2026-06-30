@@ -4,16 +4,16 @@ import {
   getSecretAutoSeedWindowStartMinute,
 } from "./seeding-windows";
 
-export interface CashPositionSignals {
-  marginYes: boolean;
+export interface PositionGateSignals {
+  crossAccountYes: boolean;
   basicStockYes: boolean;
   strongStockYes: boolean;
   goodBooleanScore: number;
   allBooleansGood: boolean;
 }
 
-export interface CashPositionGateResult {
-  signals: CashPositionSignals;
+export interface PositionGateResult {
+  signals: PositionGateSignals;
   maxTargetPct: number;
   strongStockYesPctThreshold: number;
   strongStockYesScoreThreshold: number;
@@ -32,10 +32,10 @@ function toBooleanFlag(raw: unknown): boolean {
   return ["true", "1", "yes"].includes(String(raw ?? "").trim().toLowerCase());
 }
 
-// BOT_CASH_MARGIN_YES_DOWN_PCT is the late-day (lenient) threshold.
+// BOT_CASH_MARGIN_YES_DOWN_PCT is the late-day (lenient) threshold for the cross-account YES signal.
 // At window start (9:30am): requires 2x that dip (strict).
 // At window end (1pm): requires exactly the configured dip.
-function getMarginYesDownPct(currentTime: Date): number {
+function getCrossAccountYesDownPct(currentTime: Date): number {
   const base = readEnvPct("BOT_CASH_MARGIN_YES_DOWN_PCT", 10);
   const minuteOfDay = currentTime.getHours() * 60 + currentTime.getMinutes();
   const startMinute = getSecretAutoSeedWindowStartMinute();
@@ -80,6 +80,10 @@ export function getStrongYesMaxTargetPct(): number {
 
 export function getMarginTargetMultiplier(): number {
   return readEnvPct("BOT_MARGIN_MAX_TARGET_MULTIPLIER", 1.33);
+}
+
+export function getCrossAccountThresholdMultiplier(): number {
+  return readEnvPct("BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER", 2);
 }
 
 // percentOfBalance: max/2 at window start → max at window end (gets stricter late)
@@ -170,15 +174,17 @@ function isQualityToBuy(position: SecretSourcePosition | undefined): boolean {
   return position != null && toBooleanFlag(position.qualityToBuy);
 }
 
-export function computeCashPositionGate(options: {
-  marginAskReturnFraction: number | null;
+export function computePositionGate(options: {
+  crossAccountAskReturnFraction: number | null;
   secretPosition: SecretSourcePosition | undefined;
   currentTime: Date;
-}): CashPositionGateResult {
-  const marginYesThreshold = getMarginYesDownPct(options.currentTime) / 100;
-  const marginYes =
-    options.marginAskReturnFraction !== null &&
-    options.marginAskReturnFraction < -marginYesThreshold;
+  crossAccountThresholdMultiplier?: number;
+}): PositionGateResult {
+  const multiplier = options.crossAccountThresholdMultiplier ?? 1;
+  const crossAccountYesThreshold = (getCrossAccountYesDownPct(options.currentTime) / 100) * multiplier;
+  const crossAccountYes =
+    options.crossAccountAskReturnFraction !== null &&
+    options.crossAccountAskReturnFraction < -crossAccountYesThreshold;
 
   const qualityToBuy = isQualityToBuy(options.secretPosition);
   const percentOfBalance = Number(options.secretPosition?.percentOfBalance ?? 0);
@@ -202,8 +208,8 @@ export function computeCashPositionGate(options: {
     (percentOfBalance > thresholds.pct ||
       (daytradeScore !== null && daytradeScore < thresholds.daytradeScore));
 
-  const signals: CashPositionSignals = {
-    marginYes,
+  const signals: PositionGateSignals = {
+    crossAccountYes,
     basicStockYes,
     strongStockYes,
     goodBooleanScore,
@@ -211,13 +217,13 @@ export function computeCashPositionGate(options: {
   };
 
   let maxTargetPct = 0;
-  if (marginYes && strongStockYes) {
+  if (crossAccountYes && strongStockYes) {
     maxTargetPct = getStrongYesMaxTargetPct();
-  } else if (marginYes && basicStockYes) {
+  } else if (crossAccountYes && basicStockYes) {
     maxTargetPct = getBothYesMaxTargetPct();
   } else if (strongStockYes) {
     maxTargetPct = getSingleYesMaxTargetPct();
-  } else if (marginYes) {
+  } else if (crossAccountYes) {
     maxTargetPct = getSingleYesMaxTargetPct();
   }
 
