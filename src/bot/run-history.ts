@@ -206,12 +206,10 @@ function getAccountTypeFromHistoryFileName(fileName: string): AccountTypeLabel {
 }
 
 function getRunHistoryDirectory(): string {
-  const configuredDirectory = process.env.TASTYTRADE_BOT_RUN_HISTORY_DIR?.trim();
-  if (configuredDirectory) {
-    return configuredDirectory;
-  }
-
-  return path.join(process.cwd(), "data", "runs");
+  const specific = process.env.TASTYTRADE_BOT_RUN_HISTORY_DIR?.trim();
+  if (specific) return specific;
+  const dataDir = process.env.TASTYTRADE_BOT_DATA_DIR?.trim();
+  return path.join(dataDir ?? path.join(process.cwd(), "data"), "runs");
 }
 
 async function getRunHistoryPrimaryPathForAccount(accountNumber: string): Promise<string> {

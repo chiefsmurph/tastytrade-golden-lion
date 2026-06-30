@@ -46,7 +46,8 @@ export function getPstTimeInMinutes(date?: Date): number {
 }
 
 function getDayReportDirectory(): string {
-  return path.join(process.cwd(), "data", "day-reports");
+  const dataDir = process.env.TASTYTRADE_BOT_DATA_DIR?.trim();
+  return path.join(dataDir ?? path.join(process.cwd(), "data"), "day-reports");
 }
 
 function sanitizeAccountNumber(accountNumber: string): string {

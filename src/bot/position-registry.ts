@@ -16,9 +16,10 @@ type RegistryKey = string;
 type RegistryData = Record<RegistryKey, PositionRegistryEntry>;
 
 function getRegistryPath(): string {
-  const dir = process.env.TASTYTRADE_BOT_RUN_HISTORY_DIR?.trim()
-    ?? path.join(process.cwd(), "data", "runs");
-  return path.join(dir, "position-registry.json");
+  const specific = process.env.TASTYTRADE_BOT_RUN_HISTORY_DIR?.trim();
+  if (specific) return path.join(specific, "position-registry.json");
+  const dataDir = process.env.TASTYTRADE_BOT_DATA_DIR?.trim();
+  return path.join(dataDir ?? path.join(process.cwd(), "data"), "runs", "position-registry.json");
 }
 
 function todayDate(): string {

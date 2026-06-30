@@ -137,7 +137,7 @@ If these are omitted or disconnected, the runtime continues normally and manual 
 #### Paths / Overrides
 
 - `TASTYTRADE_BOT_SOCKET` (override IPC socket path)
-- `TASTYTRADE_BOT_RUN_HISTORY_DIR` (override run-history directory; default `data/`)
+- `TASTYTRADE_BOT_DATA_DIR` (override root data directory; default `data/`; controls where run history, day reports, and position registry are stored)
 
 ## Running Tests
 
@@ -216,6 +216,19 @@ node run bot:getSecretSocketStatus
 node run bot:getLastRunGroupsByTickers RUM,TSLA
 ```
 
+### Day Report Examples
+
+```bash
+node run bot:getDayReport                          # latest snapshot for all accounts
+node run bot:getDayReport 5WI88116                 # history for one account
+node run bot:getDayReport 5WI88116 2026-06-30      # specific date
+node run bot:getDayTrend                           # live snapshot vs last stored baseline
+node run bot:getDayTrend 5WI88116                  # single account
+node run bot:getClosedPositionsToday               # all positions closed today with realized P&L
+node run bot:recordDayReport                       # force-record a snapshot now (bypasses 1pm gate)
+node run bot:recordDayReport 5WI88116              # single account
+```
+
 `bot:purchaseSymbol` format:
 
 ```text
@@ -253,8 +266,28 @@ bot:getLastRunCycle
 bot:startMarketOpenScheduler
 bot:stopMarketOpenScheduler
 bot:getMarketOpenSchedulerStatus
+bot:getDayReport [accountNumber] [date YYYY-MM-DD]
+bot:getDayTrend [accountNumber]
+bot:getClosedPositionsToday [accountNumber]
+bot:recordDayReport [accountNumber]
 core:listCommands
 ```
+
+## Data Storage
+
+All persistent data lands under `data/` (or `TASTYTRADE_BOT_DATA_DIR` if set).
+
+| Path | Format | Contents |
+|---|---|---|
+| `data/runs/{account}-{type}.ndjson` | NDJSON | One entry per bot cycle: position evaluations, strategy decisions, orders placed, snapshot metrics |
+| `data/runs/position-registry.json` | JSON | Per-position open/close timestamps and closing order IDs; used for overnight detection and position age |
+| `data/day-reports/{account}-{type}.ndjson` | NDJSON | One entry per account per day (recorded after 1pm PST on first post-cutoff cycle): net liq, capital, per-position bid/mid/ask unrealized returns |
+
+**Run history** is the primary audit trail — every cycle is recorded regardless of whether orders were placed. Useful for debugging strategy decisions and reconstructing what the bot saw at any point in time.
+
+**Position registry** tracks when each option contract was opened and closed. Used internally to identify overnight positions for forced close-at-open logic.
+
+**Day reports** are end-of-day account snapshots. Used by `bot:getDayTrend` to diff current live state against the prior day's baseline.
 
 ## Market-Open Scheduler
 
@@ -358,5 +391,5 @@ If you copy `ipc-client.js` into another project, either pass `socketPath` expli
 - API calls depend on valid `.env` credentials.
 - Socket path can be overridden with `TASTYTRADE_BOT_SOCKET`.
 - Run interval can be tuned with `BOT_RUN_INTERVAL_MS` or `BOT_RUN_INTERVAL_MINUTES`.
-- Run-history output can be redirected with `TASTYTRADE_BOT_RUN_HISTORY_DIR`.
+- All data output can be redirected with `TASTYTRADE_BOT_DATA_DIR`.
 - Source imports intentionally use extensionless TypeScript paths because runtime execution goes through `tsx` with bundler-style resolution.
