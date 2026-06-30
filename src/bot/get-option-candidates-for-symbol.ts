@@ -131,9 +131,11 @@ function getResolvedSelectionOptions(
     selectionOptions?.preferredDTE != null ||
     selectionOptions?.minDTE != null ||
     selectionOptions?.maxDTE != null;
-  const defaultSelection = !hasDtePreference ? getDefaultTopCandidateSelection() : undefined;
+  // Always evaluate current time-of-day strategy so callers can gate on it.
+  // Only use the default DTE values when no caller-supplied DTE preference exists.
+  const defaultSelection = getDefaultTopCandidateSelection();
   const preferredDTE =
-    selectionOptions?.preferredDTE ?? targetDTE ?? defaultSelection?.preferredDTE;
+    selectionOptions?.preferredDTE ?? targetDTE ?? (!hasDtePreference ? defaultSelection.preferredDTE : undefined);
   const dteFill =
     preferredDTE != null
       ? {
