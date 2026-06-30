@@ -22,6 +22,20 @@ function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {
   return accountType === "cash" ? 13 * 60 : 12 * 60 + 30;
 }
 
+function getIntradayStopLossFloor(): number {
+  const raw = process.env.BOT_INTRADAY_STOP_LOSS_PCT?.trim();
+  if (!raw) return 0.30;
+  const parsed = Number(raw) / 100;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.30;
+}
+
+function getEodStopLossFloor(): number {
+  const raw = process.env.BOT_EOD_STOP_LOSS_PCT?.trim();
+  if (!raw) return 0.10;
+  const parsed = Number(raw) / 100;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.10;
+}
+
 function getScheduleTailPoints(
   accountType: StrategyAccountType,
   value: number,
@@ -163,19 +177,21 @@ export function evaluateTradingStrategy(
   }
 
   // Absolute Risk Floor Check
-  if (timeInMinutes < accumulationCutoffMinute && currentReturn <= -0.30) {
+  const intradayFloor = getIntradayStopLossFloor();
+  if (timeInMinutes < accumulationCutoffMinute && currentReturn <= -intradayFloor) {
     return {
       action: "CLOSE_POSITION",
-      reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -30%) - stop loss triggered`
+      reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered`
     };
   }
 
   // 4. BLOCK ALL NEW ACCUMULATION PAST THE ACCOUNT-SPECIFIC CUTOFF
   if (timeInMinutes >= accumulationCutoffMinute) {
-    if (currentReturn <= -0.10) {
+    const eodFloor = getEodStopLossFloor();
+    if (currentReturn <= -eodFloor) {
       return {
         action: "CLOSE_POSITION",
-        reason: `End-of-day risk management (${(currentReturn * 100).toFixed(2)}% <= -10%) - close losing positions before market close`
+        reason: `End-of-day risk management (${(currentReturn * 100).toFixed(2)}% <= -${(eodFloor * 100).toFixed(0)}%) - close losing positions before market close`
       };
     }
   }
