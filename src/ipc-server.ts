@@ -33,6 +33,7 @@ import { getLastRunGroupsByTickers, getRecentRunHistory } from "./bot/run-histor
 import getDayReport from "./bot/get-day-report";
 import getDayTrend from "./bot/get-day-trend";
 import getClosedPositionsToday from "./bot/get-closed-positions-today";
+import { recordDayReportNow } from "./bot/record-day-report";
 import {
   getCurrentEquitiesSession,
   isEquityOptionsMarketOpen,
@@ -237,6 +238,7 @@ const commandHandlers: Record<string, CommandHandler> = {
   "bot:getDayReport": async (args) => getDayReport(args),
   "bot:getDayTrend": async (args) => getDayTrend(args),
   "bot:getClosedPositionsToday": async (args) => getClosedPositionsToday(args),
+  "bot:recordDayReport": async ([accountNumber]) => recordDayReportNow(accountNumber),
 };
 
 export function startIpcServer() {

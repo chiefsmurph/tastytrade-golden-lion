@@ -103,3 +103,17 @@ export async function buildDayReportForAccount(
     context.preview.snapshot.totalCapital,
   );
 }
+
+// Force-records a snapshot immediately, bypassing the time gate. Used for manual seeding.
+export async function recordDayReportNow(accountNumber?: string): Promise<DayReportEntry[]> {
+  const { getManagedAccountNumbers } = await import("~/core/default-account");
+  const accountNumbers = accountNumber?.trim()
+    ? [accountNumber.trim()]
+    : await getManagedAccountNumbers();
+  return Promise.all(
+    accountNumbers.map(async (acc) => {
+      const input = await buildDayReportForAccount(acc);
+      return appendDayReport(input);
+    }),
+  );
+}
