@@ -75,7 +75,7 @@ All runtime config via `.env`. Defaults are in-code via `readEnvPct()` / `toBool
 - Scheduler: `BOT_RUN_ON_SCHEDULE`, `BOT_RUN_INTERVAL_MS`
 - Risk limits: `BOT_MIN_IV_RANK_PCT`, `BOT_MAX_OPTION_SPREAD_PCT`, `BOT_MAX_BUY_POWER_PCT`
 - DTE controls: `BOT_MARGIN_MAX_TARGET_DTE`, `BOT_CASH_MIN_TARGET_DTE`
-- Cross-account seeding: `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT`, `BOT_CASH_MARGIN_YES_DOWN_PCT`
+- Cross-account seeding: `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT`, `BOT_CROSS_ACCOUNT_YES_DOWN_PCT`
 - Secret feed: `SECRET_SOCKET_URL`, `SECRET_SOCKET_TIMEOUT_MS`, `SECRET_DATA_UPDATE_POSITIONS_KEY`
 
 See `.env.example` and README for the full variable list.

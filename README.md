@@ -96,17 +96,17 @@ cp .env.example .env
 - `BOT_EOD_STOP_LOSS_PCT` (end-of-day bid-return stop loss floor after accumulation cutoff; default `10`)
 - `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` (override max ask-return threshold for buy orders; unset by default, default `0.2` in env.example)
 
-#### Cash Account Signal Gates
+#### Position Gate Signal Settings (both accounts)
 
-- `BOT_CASH_MARGIN_YES_DOWN_PCT` (cross-account ask-return threshold for margin-yes signal; default `10`)
-- `BOT_CASH_STRONG_STOCK_YES_MAX_PCT` (max `percentOfBalance` required for strong stock yes; default `30`)
-- `BOT_CASH_STRONG_DAYTRADE_SCORE_MAX` (daytradeScore magnitude threshold for strong yes; default `100`)
-- `BOT_CASH_SINGLE_YES_MAX_TARGET_PCT` (max target exposure with any single yes signal; default `0.15`)
-- `BOT_CASH_BOTH_YES_MAX_TARGET_PCT` (max target exposure when margin yes and basic stock yes are both true; default `0.25`)
-- `BOT_CASH_STRONG_YES_MAX_TARGET_PCT` (max target exposure when strong stock yes is present; default `0.35`)
-- `BOT_MARGIN_MAX_TARGET_MULTIPLIER` (multiplier for deriving margin per-position cap from cash cap; default `1.33`)
-- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` (multiplier on margin threshold; default `2`)
-- `BOT_CASH_GOOD_BOOLEAN_BOOST_PCT` (additional max target pct added per good boolean signal; default `0.03`)
+- `BOT_CROSS_ACCOUNT_YES_DOWN_PCT` (how far down the cash position must be for cross-account yes signal; default `10`)
+- `BOT_GATE_STRONG_STOCK_YES_MAX_PCT` (max `percentOfBalance` required for strong stock yes; default `30`)
+- `BOT_GATE_STRONG_DAYTRADE_SCORE_MAX` (daytradeScore magnitude threshold for strong yes; default `100`)
+- `BOT_GATE_SINGLE_YES_MAX_TARGET_PCT` (max target exposure with any single yes signal; default `0.15`)
+- `BOT_GATE_BOTH_YES_MAX_TARGET_PCT` (max target exposure when cross-account yes and basic stock yes are both true; default `0.25`)
+- `BOT_GATE_STRONG_YES_MAX_TARGET_PCT` (max target exposure when strong stock yes is present; default `0.35`)
+- `BOT_MARGIN_MAX_TARGET_MULTIPLIER` (multiplier applied to gate ceiling for margin account; default `1.33`)
+- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` (stricter cross-account threshold multiplier for margin; default `2`)
+- `BOT_GATE_BOOLEAN_BOOST_PCT` (additional max target pct added per good boolean signal; default `0.03`)
 
 #### Position Management
 
