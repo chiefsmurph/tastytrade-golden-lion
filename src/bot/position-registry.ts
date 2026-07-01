@@ -115,6 +115,21 @@ function isSameCalendarDay(isoA: string, isoB: string): boolean {
   return isoA.slice(0, 10) === isoB.slice(0, 10);
 }
 
+export async function getPositionAgeDays(
+  accountNumber: string,
+  symbol: string,
+): Promise<number | null> {
+  const data = await readRegistry();
+  const match = openEntryForSymbol(data, accountNumber, symbol);
+  if (!match) return null;
+  const openedAt = new Date(match[1].openedAt);
+  const now = new Date();
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const openDay = new Date(openedAt.toISOString().slice(0, 10));
+  const today = new Date(now.toISOString().slice(0, 10));
+  return Math.round((today.getTime() - openDay.getTime()) / msPerDay);
+}
+
 export async function isOvernightPosition(
   accountNumber: string,
   symbol: string,
