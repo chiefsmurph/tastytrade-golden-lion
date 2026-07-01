@@ -15,7 +15,7 @@ import {
   logRunPlan,
   logStrategyDecisions,
 } from "./run-cycle-logging";
-import { maybeSeedMarginAccountFromCashAccount } from "./run-cycle-seed";
+import { maybeSeedMarginAccountFromCashAccount, maybeSeedCashAccountFromMarginAccount } from "./run-cycle-seed";
 import { pruneOldEntries, isOvernightPosition } from "./position-registry";
 import { executeOvernightReductions } from "./overnight-position-reduction";
 import { PositionGroupEvaluation } from "./evaluate-position";
@@ -212,12 +212,21 @@ export default async function runBotCycle(
   const excludedSeedSymbols =
     recentlyClosedByAccount?.get(marginAccountNumber) ?? new Set<string>();
 
-  const cashAccountSeedResults = await maybeSeedMarginAccountFromCashAccount(
-    context.preview.accountNumber,
-    new Date(),
-    excludedSeedSymbols,
-    context.cachedSecretPositions,
-  );
+  const [marginSeedResults, cashSeedFromMarginResults] = await Promise.all([
+    maybeSeedMarginAccountFromCashAccount(
+      context.preview.accountNumber,
+      new Date(),
+      excludedSeedSymbols,
+      context.cachedSecretPositions,
+    ),
+    maybeSeedCashAccountFromMarginAccount(
+      context.preview.accountNumber,
+      new Date(),
+      closedUnderlyingSymbolsThisRun,
+      context.cachedSecretPositions,
+    ),
+  ]);
+  const allSeedResults = [...marginSeedResults, ...cashSeedFromMarginResults];
 
   const executionSummary = {
     allocationEstimatedTotal: executionResults.allocationOrders.reduce(
@@ -236,12 +245,12 @@ export default async function runBotCycle(
     closeOrderCount: executionResults.closeOrders.length,
     overnightReductionOrderCount: overnightReductionOrders.length,
     overnightReductionPlacedCount: overnightReductionOrders.filter((o) => o.placedOrder).length,
-    seedEstimatedTotal: cashAccountSeedResults.reduce(
+    seedEstimatedTotal: allSeedResults.reduce(
       (sum, order) => sum + (order.estimatedOrderCost ?? 0),
       0,
     ),
-    seedPlacedCount: cashAccountSeedResults.filter((order) => order.placedOrder).length,
-    seedSkippedCount: cashAccountSeedResults.filter((order) => !order.placedOrder).length,
+    seedPlacedCount: allSeedResults.filter((order) => order.placedOrder).length,
+    seedSkippedCount: allSeedResults.filter((order) => !order.placedOrder).length,
   };
 
   const runHistoryEntry = await appendRunHistory({
@@ -253,7 +262,7 @@ export default async function runBotCycle(
     executionSummary,
     groups: context.preview.groups,
     plan: context.preview.plan,
-    seedOrders: cashAccountSeedResults,
+    seedOrders: allSeedResults,
     strategyDecisions: context.strategyDecisions,
     snapshot: context.preview.snapshot,
   });
