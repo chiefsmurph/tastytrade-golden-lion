@@ -7,7 +7,7 @@ import {
   getOptionMarketSnapshotCacheStats,
   getOptionHealthForSymbol,
   resetOptionMarketSnapshotCacheStats,
-  getTopOptionCandidateForSymbol,
+  getTopOptionCandidateForAccount,
 } from "./bot/get-option-candidates-for-symbol";
 import { getPositionsAndBalances } from "./core/get-positions-and-balances";
 import {
@@ -19,7 +19,7 @@ import runBotCycle, {
   getRunCyclePreview,
   runBotCycleLogOnly,
 } from "./bot/run-cycle";
-import seedSymbol, { getSeedSelectionOptionsForAccountType } from "./bot/seed-symbol";
+import seedSymbol from "./bot/seed-symbol";
 import purchaseSymbol from "./bot/purchase-symbol";
 import { getEffectiveBuyingPowerSummary } from "./bot/effective-buying-power";
 import {
@@ -37,7 +37,7 @@ import {
   getCurrentEquitiesSession,
   isEquityOptionsMarketOpen,
 } from "./core/market-sessions";
-import { getAccountMarginOrCash, getDefaultAccountNumber, getMarginAccountNumber } from "./core/default-account";
+import { getDefaultAccountNumber, getMarginAccountNumber } from "./core/default-account";
 import {
   buildDebugSecretExecutionTargetPayload,
   getSecretSocketStatus,
@@ -109,26 +109,7 @@ const commandHandlers: Record<string, CommandHandler> = {
   "bot:getTopOptionCandidateForSymbol": async ([symbol, side, accountNumber]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";
-    const resolvedAccount = accountNumber?.trim() || await getMarginAccountNumber();
-    const accountType = await getAccountMarginOrCash(resolvedAccount);
-    const selectionOptions = getSeedSelectionOptionsForAccountType(accountType);
-    const [candidate, buyingPowerSummary] = await Promise.all([
-      getTopOptionCandidateForSymbol(symbol, normalizedSide, undefined, selectionOptions),
-      getEffectiveBuyingPowerSummary(resolvedAccount, new Date(), { bypassCashAccountCap: true }),
-    ]);
-    const askPrice = candidate?.askPrice;
-    const estimatedOrderCost = askPrice != null ? askPrice * 100 : null;
-    const wouldPassBuyingPowerCheck = estimatedOrderCost != null
-      ? estimatedOrderCost <= buyingPowerSummary.effectiveBuyingPower
-      : null;
-    return {
-      ...candidate,
-      accountNumber: resolvedAccount,
-      accountType,
-      estimatedOrderCost,
-      effectiveBuyingPower: buyingPowerSummary.effectiveBuyingPower,
-      wouldPassBuyingPowerCheck,
-    };
+    return getTopOptionCandidateForAccount(symbol, normalizedSide, accountNumber);
   },
   "bot:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
     assertArg(symbol, "symbol");
