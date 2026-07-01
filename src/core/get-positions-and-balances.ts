@@ -1,6 +1,6 @@
 import tastytradeApi from "./tastytrade-client";
 import { getDefaultAccountNumber } from "./default-account";
-import { getTopOptionCandidateForSymbol } from "~/bot/get-option-candidates-for-symbol";
+import { getTopOptionCandidateForSymbol } from "~/bot/option-candidate";
 import { getEffectiveBuyingPowerSummary } from "~/bot/effective-buying-power";
 import { getRunCyclePreview } from "~/bot/run-cycle";
 

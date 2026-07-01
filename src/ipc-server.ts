@@ -8,7 +8,7 @@ import {
   getOptionHealthForSymbol,
   resetOptionMarketSnapshotCacheStats,
   getTopOptionCandidateForAccount,
-} from "./bot/get-option-candidates-for-symbol";
+} from "./bot/option-candidate";
 import { getPositionsAndBalances } from "./core/get-positions-and-balances";
 import {
   getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime,

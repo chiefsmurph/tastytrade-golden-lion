@@ -5,7 +5,7 @@ import {
   getOptionHealthForSymbol,
   getTopOptionCandidateForSymbol,
   getMarginTargetCallDelta,
-} from "./get-option-candidates-for-symbol";
+} from "./option-candidate";
 import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import {
   allocateContractsByWeight,

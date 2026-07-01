@@ -6,7 +6,7 @@ import {
 } from "~/core/default-account";
 import { CurrentPosition } from "~/core/types";
 import { getUnderlyingSymbolForPosition } from "./evaluate-position";
-import { getTopOptionCandidateForSymbol, getMarginTargetCallDelta } from "./get-option-candidates-for-symbol";
+import { getTopOptionCandidateForSymbol, getMarginTargetCallDelta } from "./option-candidate";
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
 import { ProgrammaticAction } from "./evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
