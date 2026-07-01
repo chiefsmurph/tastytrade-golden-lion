@@ -455,10 +455,8 @@ export async function maybeSeedCashAccountFromMarginAccount(
       continue;
     }
 
-    const marginFill = evaluation.metrics.weightedAverageFill;
     const result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
       orderSource: CASH_SEED_FROM_MARGIN_ORDER_SOURCE,
-      maxLimitPrice: marginFill > 0 ? marginFill : undefined,
     });
 
     if (result.placedOrder) {
