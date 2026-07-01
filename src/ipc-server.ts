@@ -38,7 +38,7 @@ import {
   getCurrentEquitiesSession,
   isEquityOptionsMarketOpen,
 } from "./core/market-sessions";
-import { getDefaultAccountNumber } from "./core/default-account";
+import { getDefaultAccountNumber, getMarginAccountNumber } from "./core/default-account";
 import {
   buildDebugSecretExecutionTargetPayload,
   getSecretSocketStatus,
@@ -190,7 +190,8 @@ const commandHandlers: Record<string, CommandHandler> = {
   "bot:seedSymbol": async ([symbol, side, accountNumber]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";
-    return seedSymbol(symbol, normalizedSide, accountNumber);
+    const resolvedAccount = accountNumber?.trim() || await getMarginAccountNumber();
+    return seedSymbol(symbol, normalizedSide, resolvedAccount);
   },
   "bot:purchaseSymbol": async ([symbol, dollars, side, accountNumber]) => {
     assertArg(symbol, "symbol");
