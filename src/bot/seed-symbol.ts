@@ -15,8 +15,14 @@ import { BOT_ORDER_SOURCE } from "./order-sources";
 
 const DEFAULT_CONTRACT_MULTIPLIER = 100;
 const DEFAULT_MAX_SEED_ORDER_COST = 500;
-const CASH_ACCOUNT_SEED_MIN_DTE = 14;
-const CASH_ACCOUNT_SEED_MAX_DTE = 30;
+export const CASH_ACCOUNT_SEED_MIN_DTE = 14;
+export const CASH_ACCOUNT_SEED_MAX_DTE = 30;
+
+export function getSeedSelectionOptionsForAccountType(accountType: "margin" | "cash" | "unknown") {
+  return accountType === "cash"
+    ? { minDTE: CASH_ACCOUNT_SEED_MIN_DTE, maxDTE: CASH_ACCOUNT_SEED_MAX_DTE }
+    : { strikeTarget: "otm" as const, targetDelta: getMarginTargetCallDelta() };
+}
 
 export interface SeedSymbolOptions {
   priceMode?: "ask" | "mid";
@@ -171,15 +177,7 @@ export async function seedSymbol(
     symbol,
     side,
     undefined,
-    resolvedAccountType === "cash"
-      ? {
-          minDTE: CASH_ACCOUNT_SEED_MIN_DTE,
-          maxDTE: CASH_ACCOUNT_SEED_MAX_DTE,
-        }
-      : {
-          strikeTarget: "otm",
-          targetDelta: getMarginTargetCallDelta(),
-        },
+    getSeedSelectionOptionsForAccountType(resolvedAccountType),
   );
   const strategy = candidate?.strategy;
   const candidateDte = candidate?.dte != null ? Number(candidate.dte) : undefined;

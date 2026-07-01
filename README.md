@@ -195,7 +195,8 @@ node run core:isEquityOptionsMarketOpen
 
 ```bash
 node run bot:getOptionCandidates RUM call
-node run bot:getTopOptionCandidateForSymbol RUM call
+node run bot:getTopOptionCandidateForSymbol RUM call 5WI88116
+node run bot:getTopOptionCandidateForSymbol RUM call 5WU18519
 node run bot:getOptionHealthForSymbol RUM call
 node run bot:getOptionHealthForSymbol RUM call 14
 ```
@@ -248,7 +249,7 @@ core:fetchOptionChainWithVolume <symbol>
 core:getCurrentEquitiesSession
 core:isEquityOptionsMarketOpen
 bot:getOptionCandidates <symbol> [call|put]
-bot:getTopOptionCandidateForSymbol <symbol> [call|put]
+bot:getTopOptionCandidateForSymbol <symbol> [call|put] [accountNumber]
 bot:getOptionHealthForSymbol <symbol> [call|put] [targetDTE]
 bot:getOptionMarketSnapshotCacheStats
 bot:resetOptionMarketSnapshotCacheStats [clearCache=true|false]
