@@ -11,6 +11,7 @@ import { isWithinCashAccountSeedFromMarginWindow, getCashAccountSeedEndMinute } 
 import type { SecretSourcePosition } from "./secret/types";
 import { countGoodBooleans, getBooleanSurplusPct, shouldSeedMarginFromBooleans } from "./cash-position-gate";
 import { recordPositionOpened, getRegistryEntry } from "./position-registry";
+import { getNumDaysToSellOff } from "./overnight-position-reduction";
 import { getUnderlyingIvMetrics } from "~/core/market-metrics";
 
 export type MarginSeedResult = RunSeedOrder;
@@ -61,8 +62,9 @@ function getTimeOfDaySeedMultiplier(currentTime: Date): number {
 // Scales linearly down to 0.7 at 7+ days (aggressive, thesis is confirmed persistent).
 function getPositionAgeSeedMultiplier(positionAgeDays: number | null): number {
   if (positionAgeDays === null) return 1.0; // unknown age → neutral
-  const t = Math.max(0, Math.min(1, positionAgeDays / 7));
-  // t=0 (day 0): 1.5. t=1 (day 7+): 0.7.
+  const fullAgeDays = Math.max(1, getNumDaysToSellOff() - 1);
+  const t = Math.max(0, Math.min(1, positionAgeDays / fullAgeDays));
+  // t=0 (day 0): 1.5. t=1 (BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF - 1): 0.7.
   return 1.5 - 0.8 * t;
 }
 

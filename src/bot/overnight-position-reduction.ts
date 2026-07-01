@@ -8,7 +8,7 @@ import { isOvernightPosition, getPositionAgeDays } from "./position-registry";
 const REDUCTION_START_MINUTE = 7 * 60 + 30;
 const REDUCTION_END_MINUTE = 11 * 60 + 30;
 
-function getNumDaysToSellOff(): number {
+export function getNumDaysToSellOff(): number {
   const raw = process.env.BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF?.trim();
   if (!raw) return 6;
   const parsed = Number(raw);
