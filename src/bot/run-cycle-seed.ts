@@ -1,9 +1,12 @@
-import { getAccountMarginOrCash, getCashAccountNumber, isReadOnlyAccount } from "~/core/default-account";
+import { getAccountMarginOrCash, getCashAccountNumber, getMarginAccountNumber, isReadOnlyAccount } from "~/core/default-account";
+import { getAccountBalanceNumber } from "~/core/account-balance";
+import tastytradeApi from "~/core/tastytrade-client";
+import { getGroupMarketValue } from "./actions/order-utils";
 import { getGroupSideForPositions, type PositionGroupEvaluation } from "./evaluate-position";
 import { getPositionEvaluations } from "./get-position-evaluations";
 import { RunSeedOrder } from "./run-history";
 import seedSymbol, { SeedSymbolResult } from "./seed-symbol";
-import { MARGIN_SEED_FROM_CASH_ORDER_SOURCE } from "./order-sources";
+import { MARGIN_SEED_FROM_CASH_ORDER_SOURCE, CASH_SEED_FROM_MARGIN_ORDER_SOURCE } from "./order-sources";
 import { isWithinCashAccountSeedFromMarginWindow, getCashAccountSeedEndMinute } from "./seeding-windows";
 import type { SecretSourcePosition } from "./secret/types";
 import { countGoodBooleans, getBooleanSurplusPct, shouldSeedMarginFromBooleans } from "./cash-position-gate";
@@ -324,6 +327,170 @@ export async function maybeSeedMarginAccountFromCashAccount(
       positionAgeDays,
       timeFactor: +timeFactor.toFixed(3),
       ageFactor: +ageFactor.toFixed(3),
+      thresholds,
+      goodBooleanScore,
+      booleanSurplusPct,
+      ivRank: decision.ivRank,
+      decisionReason: decision.reason,
+      placedOrder: result.placedOrder,
+      skippedReason: result.skippedReason ?? null,
+      candidateSymbol: result.candidateSymbol ?? null,
+      limitPrice: result.limitPrice ?? null,
+      estimatedOrderCost: result.estimatedOrderCost ?? null,
+    }));
+
+    results.push(seedOrder);
+  }
+
+  return results;
+}
+
+function getCashSeedFromMarginConfig(): MarginSeedConfig | null {
+  const rawMin = process.env.BOT_CASH_SEED_FROM_MARGIN_MIN_DOWN_PCT?.trim();
+  if (!rawMin) return null;
+  const minDownPct = Number(rawMin);
+  if (!Number.isFinite(minDownPct) || minDownPct <= 0) return null;
+
+  const rawMax = process.env.BOT_CASH_SEED_FROM_MARGIN_MAX_DOWN_PCT?.trim();
+  const parsedMax = rawMax ? Number(rawMax) : NaN;
+  const maxDownPct = Number.isFinite(parsedMax) && parsedMax > minDownPct ? parsedMax : minDownPct + 10;
+
+  if (minDownPct >= maxDownPct) return null;
+  return { minDownPct, maxDownPct };
+}
+
+// Balance-weight multiplier: larger position relative to margin net-liq = more committed = lower threshold.
+// pctOfNetLiq: position market value as fraction of net-liq (0–1).
+// ≤2% of net-liq: 1.5 (conservative, need bigger loss). ≥15% of net-liq: 0.7 (aggressive, smaller loss needed).
+function getPositionNetLiqPctMultiplier(pctOfNetLiq: number): number {
+  const LOW = 0.02;
+  const HIGH = 0.15;
+  const t = Math.max(0, Math.min(1, (pctOfNetLiq - LOW) / (HIGH - LOW)));
+  return 1.5 - 0.8 * t;
+}
+
+export async function maybeSeedCashAccountFromMarginAccount(
+  accountNumber: string,
+  currentTime: Date,
+  excludedUnderlyingSymbols: ReadonlySet<string> = new Set(),
+  secretPositions: readonly SecretSourcePosition[] = [],
+): Promise<MarginSeedResult[]> {
+  if (isReadOnlyAccount(accountNumber)) return [];
+
+  const accountMarginOrCash = await getAccountMarginOrCash(accountNumber);
+  if (accountMarginOrCash !== "cash") return [];
+
+  if (!isWithinCashAccountSeedFromMarginWindow(currentTime)) return [];
+
+  const config = getCashSeedFromMarginConfig();
+  if (config === null) return [];
+
+  const marginAccountNumber = await getMarginAccountNumber();
+  if (marginAccountNumber === accountNumber) return [];
+
+  const timeFactor = getTimeOfDaySeedMultiplier(currentTime);
+
+  const [marginEvaluations, marginBalance] = await Promise.all([
+    getPositionEvaluations(marginAccountNumber),
+    tastytradeApi.balancesAndPositionsService.getAccountBalanceValues(marginAccountNumber),
+  ]);
+  const marginNetLiq = getAccountBalanceNumber(marginBalance, "net-liquidating-value");
+
+  const localExcluded = new Set(
+    Array.from(excludedUnderlyingSymbols, (s) => String(s).toUpperCase()),
+  );
+
+  const results: MarginSeedResult[] = [];
+
+  for (const evaluation of marginEvaluations) {
+    if (evaluation.strategy.action !== "MANAGE_ALLOCATION") continue;
+
+    const side = getGroupSideForPositions(evaluation.positions);
+    if (side !== "call" && side !== "put") continue;
+
+    const symbol = String(evaluation.underlyingSymbol ?? "").toUpperCase();
+    if (!symbol || localExcluded.has(symbol)) continue;
+
+    const askReturnPct = getAskReturnPct(evaluation);
+    if (askReturnPct === null) continue;
+
+    const secretPosition = secretPositions.find(
+      (p) => String(p.ticker ?? "").trim().toUpperCase() === symbol,
+    );
+    const goodBooleanScore = secretPosition != null ? countGoodBooleans(secretPosition) : null;
+    const booleanSurplusPct = goodBooleanScore != null ? getBooleanSurplusPct(goodBooleanScore) : null;
+
+    const positionMarketValue = getGroupMarketValue(evaluation.positionSnapshots);
+    const pctOfNetLiq = marginNetLiq > 0 ? positionMarketValue / marginNetLiq : 0;
+    const balanceFactor = getPositionNetLiqPctMultiplier(pctOfNetLiq);
+
+    const booleanFactor = getBooleanSeedMultiplier(goodBooleanScore);
+    const thresholds = getScaledThresholds(config, timeFactor, balanceFactor, booleanFactor);
+
+    const lossDepth = -askReturnPct;
+    if (lossDepth < thresholds.minDownPct || lossDepth > thresholds.maxDownPct) continue;
+
+    const decision = await getSeedDecision(symbol, lossDepth, goodBooleanScore, secretPosition, thresholds);
+
+    if (!decision.shouldSeed) {
+      console.log(JSON.stringify({
+        scope: "run-cycle-cash-from-margin",
+        symbol,
+        side,
+        accountNumber,
+        askReturnPct,
+        lossDepth,
+        pctOfNetLiq: +pctOfNetLiq.toFixed(4),
+        timeFactor: +timeFactor.toFixed(3),
+        balanceFactor: +balanceFactor.toFixed(3),
+        booleanFactor: +booleanFactor.toFixed(3),
+        thresholds,
+        goodBooleanScore,
+        ivRank: decision.ivRank,
+        gated: true,
+        gateReason: decision.reason,
+      }));
+      continue;
+    }
+
+    const marginFill = evaluation.metrics.weightedAverageFill;
+    const result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
+      orderSource: CASH_SEED_FROM_MARGIN_ORDER_SOURCE,
+      maxLimitPrice: marginFill > 0 ? marginFill : undefined,
+    });
+
+    if (result.placedOrder) {
+      await recordPositionOpened(accountNumber, symbol, side);
+    }
+
+    const seedOrder: MarginSeedResult = {
+      accountNumber: result.accountNumber,
+      askReturnPctSource: askReturnPct,
+      booleanSurplusPct,
+      candidateSymbol: result.candidateSymbol ?? null,
+      estimatedOrderCost: result.estimatedOrderCost ?? null,
+      goodBooleanScore,
+      ivRank: decision.ivRank,
+      limitPrice: result.limitPrice ?? null,
+      placedOrder: result.placedOrder,
+      scope: "run-cycle-cash-from-margin",
+      side: result.side,
+      skippedReason: result.skippedReason ?? null,
+      sourceAccountNumber: marginAccountNumber,
+      symbol: result.symbol,
+      triggerReason: `margin down ${Math.abs(askReturnPct).toFixed(1)}% ask (${(pctOfNetLiq * 100).toFixed(1)}% of net-liq) — ${decision.reason}`,
+    };
+
+    console.log(JSON.stringify({
+      scope: "run-cycle-cash-from-margin",
+      symbol,
+      side,
+      accountNumber,
+      askReturnPct,
+      lossDepth,
+      pctOfNetLiq: +pctOfNetLiq.toFixed(4),
+      timeFactor: +timeFactor.toFixed(3),
+      balanceFactor: +balanceFactor.toFixed(3),
       thresholds,
       goodBooleanScore,
       booleanSurplusPct,
