@@ -163,7 +163,19 @@ export interface OptionMarketSample {
   deltaBySymbol: Record<string, number>; // streamer symbol → delta
 }
 
+// Serializes all connect/sample/disconnect cycles — DxLink doesn't support concurrent sessions.
+let streamerMutex = Promise.resolve();
+
 export async function fetchOptionVolumes(
+  optionChain: TastytradeOptionChain,
+  sampleMs = 5000,
+): Promise<OptionMarketSample> {
+  const queued = streamerMutex.then(() => fetchOptionVolumesInner(optionChain, sampleMs));
+  streamerMutex = queued.then(() => {}, () => {});
+  return queued;
+}
+
+async function fetchOptionVolumesInner(
   optionChain: TastytradeOptionChain,
   sampleMs = 5000,
 ): Promise<OptionMarketSample> {
