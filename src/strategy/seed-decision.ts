@@ -2,6 +2,7 @@ import { getCashAccountSeedEndMinute } from "./seeding-windows";
 import { shouldSeedMarginFromBooleans } from "./position-gate";
 import { getNumDaysToSellOff } from "./overnight-reduction";
 import { getUnderlyingIvMetrics } from "~/core/market-metrics";
+import { getSecretSocketStatus } from "~/strategy/secret/secret-socket-state";
 import type { SecretSourcePosition } from "~/strategy/secret/types";
 
 export interface MarginSeedConfig {
@@ -142,7 +143,18 @@ export async function getSeedDecision(
   const ivRank = ivMetrics?.ivRank ?? null;
 
   if (ivRank === null) {
-    return { shouldSeed: false, ivRank: null, reason: "no boolean data and IV rank unavailable" };
+    // Distinguish "feed never sent this symbol" from "we just restarted and the
+    // cache is still cold" — the staleness tells which one it was.
+    const staleness = getSecretSocketStatus().secondsSinceLastPositionsUpdate;
+    const feedDetail =
+      staleness == null
+        ? "no positions update received since boot"
+        : `last positions update ${Math.round(staleness)}s ago`;
+    return {
+      shouldSeed: false,
+      ivRank: null,
+      reason: `no boolean data and IV rank unavailable (${feedDetail})`,
+    };
   }
 
   const requiredIvRank = isDeepLoss ? 70 : 50;
