@@ -13,8 +13,6 @@ import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import { BOT_ORDER_SOURCE } from "./order-sources";
 
-const DEFAULT_CONTRACT_MULTIPLIER = 100;
-const DEFAULT_MAX_SEED_ORDER_COST = 500;
 export const CASH_ACCOUNT_SEED_MIN_DTE = 14;
 export const CASH_ACCOUNT_SEED_MAX_DTE = 30;
 
@@ -60,12 +58,12 @@ export interface SeedSymbolResult {
 function getMaxSeedOrderCost(): number {
   const raw = process.env.BOT_MAX_SEED_ORDER_COST;
   if (!raw) {
-    return DEFAULT_MAX_SEED_ORDER_COST;
+    return 500;
   }
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_MAX_SEED_ORDER_COST;
+    return 500;
   }
 
   return parsed;
@@ -387,7 +385,7 @@ export async function seedSymbol(
     { bypassCashAccountCap: true },
   );
   const buyingPowerAvailable = buyingPowerSummary.effectiveBuyingPower;
-  const estimatedOrderCost = numericLimitPrice * DEFAULT_CONTRACT_MULTIPLIER;
+  const estimatedOrderCost = numericLimitPrice * 100;
   const maxSeedOrderCost = getMaxSeedOrderCost();
 
   if (estimatedOrderCost > maxSeedOrderCost) {

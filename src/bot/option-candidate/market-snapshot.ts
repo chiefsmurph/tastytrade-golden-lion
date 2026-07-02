@@ -1,7 +1,6 @@
 import tastytradeApi from "~/core/tastytrade-client";
 import { OptionMarketSnapshotCacheStats } from "./types";
 
-const DEFAULT_OPTION_MARKET_SNAPSHOT_TTL_MS = 30_000;
 
 type OptionChainWithVolume = Awaited<
   ReturnType<typeof tastytradeApi.johnsService.fetchOptionChainWithVolume>
@@ -25,9 +24,9 @@ let optionMarketSnapshotCacheMissCount = 0;
 
 function getOptionMarketSnapshotTtlMs(): number {
   const raw = process.env.BOT_OPTION_MARKET_SNAPSHOT_TTL_MS;
-  if (!raw) return DEFAULT_OPTION_MARKET_SNAPSHOT_TTL_MS;
+  if (!raw) return 30_000;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_OPTION_MARKET_SNAPSHOT_TTL_MS;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30_000;
 }
 
 export async function getOptionMarketSnapshot(

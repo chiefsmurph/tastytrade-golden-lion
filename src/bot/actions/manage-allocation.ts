@@ -25,7 +25,6 @@ import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 
-const DEFAULT_CONTRACT_MULTIPLIER = 100;
 
 export type AllocationRoute = "bid" | "mid" | "ask";
 
@@ -134,7 +133,7 @@ export function allocateContractsByWeight(
   }
 
   const targets = routeOrders.map((routeOrder) => ({
-    contractCost: routeOrder.limitPrice * DEFAULT_CONTRACT_MULTIPLIER,
+    contractCost: routeOrder.limitPrice * 100,
     routeOrder,
     targetSpend: availableCapital * (routeOrder.weight / totalWeight),
   }));
