@@ -59,6 +59,11 @@ function getBasicDaytradeScoreThreshold(): number {
   return readEnvPct("STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD", -40);
 }
 
+// percentOfBalance above this qualifies as a basic stock YES on its own.
+function getBasicPercentOfBalanceThreshold(): number {
+  return readEnvPct("STRATEGY_GATE_BASIC_PERCENT_OF_BALANCE_THRESHOLD", 50);
+}
+
 // daytradeScore magnitude for strong YES.
 // At window start (9:30am): score must be < -max (strict).
 // At window end (1pm): score must be < -max/2 (relaxed).
@@ -208,10 +213,12 @@ export function computePositionGate(options: {
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
   const allBooleansGood = goodBooleanScore === 10;
 
-  // basic: qualityToBuy, or a bullish daytradeScore below the basic threshold
+  // basic: qualityToBuy, a bullish daytradeScore below the basic threshold,
+  // or percentOfBalance above the basic threshold
   const basicStockYes =
     qualityToBuy ||
-    (daytradeScore !== null && daytradeScore < getBasicDaytradeScoreThreshold());
+    (daytradeScore !== null && daytradeScore < getBasicDaytradeScoreThreshold()) ||
+    percentOfBalance > getBasicPercentOfBalanceThreshold();
 
   // strong: qualityToBuy + pct or daytradeScore crosses time-scaled threshold
   const strongStockYes =
