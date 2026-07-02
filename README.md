@@ -74,71 +74,71 @@ cp .env.example .env
 
 ### Required
 
-- `BASE_URL` (default: `https://api.tastyworks.com`)
-- `API_CLIENT_SECRET`
-- `API_REFRESH_TOKEN`
+- `BASE_URL` — Tastytrade API base URL. Defaults to `https://api.tastyworks.com`.
+- `API_CLIENT_SECRET` — OAuth2 client secret from Tastytrade.
+- `API_REFRESH_TOKEN` — long-lived refresh token from Tastytrade's OAuth2 flow.
 
 ### Optional Runtime Controls
 
 #### Bot Scheduling
 
-- `BOT_RUN_ON_SCHEDULE` (`true` or `false`, default `false`)
-- `BOT_RUN_INTERVAL_MS` (scheduler run interval in milliseconds while market is open)
-- `BOT_RUN_INTERVAL_MINUTES` (scheduler run interval in minutes, used when `BOT_RUN_INTERVAL_MS` is unset)
+- `BOT_RUN_ON_SCHEDULE` — Set to `true` to start the market-open scheduler when the process boots. Defaults to `false`.
+- `BOT_RUN_INTERVAL_MS` — Scheduler interval in milliseconds while the market is open.
+- `BOT_RUN_INTERVAL_MINUTES` — Scheduler interval in minutes. Used when `BOT_RUN_INTERVAL_MS` is not set.
 
 #### Bot Trading Controls
 
-- `BOT_DO_NOT_TOUCH_GROUPS` (comma-separated group keys to protect from trading)
-- `BOT_READ_ONLY_ACCOUNTS` (comma-separated account numbers treated as read-only)
-- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` (minimum cash-position ask-return loss % before considering a margin seed; feature disabled if unset)
-- `BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT` (maximum loss % beyond which seeding is suppressed — too close to the bid stop-loss floor; default `14`)
-- `BOT_INTRADAY_STOP_LOSS_PCT` (intraday bid-return stop loss floor before accumulation cutoff; default `30`)
-- `BOT_EOD_STOP_LOSS_PCT` (end-of-day bid-return stop loss floor after accumulation cutoff; default `10`)
-- `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` (override max ask-return threshold for buy orders; unset by default, default `0.2` in env.example)
+- `BOT_DO_NOT_TOUCH_GROUPS` — Comma-separated group keys the bot should leave alone.
+- `BOT_READ_ONLY_ACCOUNTS` — Comma-separated account numbers the bot can inspect but should not trade.
+- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` — Minimum cash-position ask-return loss percentage before the bot considers seeding the margin account. Leave unset to disable this feature.
+- `BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT` — Maximum loss percentage allowed for margin seeding. This prevents seeding when the cash position is already too close to the bid stop-loss floor. Defaults to `14`.
+- `BOT_INTRADAY_STOP_LOSS_PCT` — Intraday bid-return loss floor before the bot cuts off accumulation. Defaults to `30`.
+- `BOT_EOD_STOP_LOSS_PCT` — End-of-day bid-return loss floor after the accumulation cutoff. Defaults to `10`.
+- `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` — Optional override for the maximum ask-return threshold used on buy orders. Unset by default; `.env.example` uses `0.2`.
 
 #### Position Gate Signal Settings (both accounts)
 
-- `BOT_CROSS_ACCOUNT_YES_DOWN_PCT` (how far down the cash position must be for cross-account yes signal; default `10`)
-- `BOT_GATE_STRONG_STOCK_YES_MAX_PCT` (max `percentOfBalance` required for strong stock yes; default `30`)
-- `BOT_GATE_STRONG_DAYTRADE_SCORE_MAX` (daytradeScore magnitude threshold for strong yes; default `100`)
-- `BOT_GATE_SINGLE_YES_MAX_TARGET_PCT` (max target exposure with any single yes signal; default `0.15`)
-- `BOT_GATE_BOTH_YES_MAX_TARGET_PCT` (max target exposure when cross-account yes and basic stock yes are both true; default `0.25`)
-- `BOT_GATE_STRONG_YES_MAX_TARGET_PCT` (max target exposure when strong stock yes is present; default `0.35`)
-- `BOT_MARGIN_MAX_TARGET_MULTIPLIER` (multiplier applied to gate ceiling for margin account; default `1.33`)
-- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` (stricter cross-account threshold multiplier for margin; default `2`)
-- `BOT_GATE_BOOLEAN_BOOST_PCT` (additional max target pct added per good boolean signal; default `0.03`)
+- `BOT_CROSS_ACCOUNT_YES_DOWN_PCT` — How far down the cash position must be before it can create a cross-account yes signal. Defaults to `10`.
+- `BOT_GATE_STRONG_STOCK_YES_MAX_PCT` — Maximum `percentOfBalance` allowed for a strong stock yes signal. Defaults to `30`.
+- `BOT_GATE_STRONG_DAYTRADE_SCORE_MAX` — Daytrade score magnitude threshold for a strong yes signal. Defaults to `100`.
+- `BOT_GATE_SINGLE_YES_MAX_TARGET_PCT` — Maximum target exposure when there is one yes signal. Defaults to `0.15`.
+- `BOT_GATE_BOTH_YES_MAX_TARGET_PCT` — Maximum target exposure when both the cross-account yes signal and the basic stock yes signal are true. Defaults to `0.25`.
+- `BOT_GATE_STRONG_YES_MAX_TARGET_PCT` — Maximum target exposure when a strong stock yes signal is present. Defaults to `0.35`.
+- `BOT_MARGIN_MAX_TARGET_MULTIPLIER` — Multiplier applied to the gate ceiling for margin accounts. Defaults to `1.33`.
+- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` — Makes the cross-account threshold stricter for margin accounts. Defaults to `2`.
+- `BOT_GATE_BOOLEAN_BOOST_PCT` — Additional max target percentage added for each favorable boolean signal. Defaults to `0.03`.
 
 #### Position Management
 
-- `BOT_MAX_SEED_ORDER_COST` (max estimated cost in dollars for one seed order; default `200`)
-- `BOT_MAX_OPTION_SPREAD_PCT` (max bid/ask spread as a fraction of midpoint; default `0.3`)
-- `BOT_MARGIN_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital per margin allocation action; default `0.012`)
-- `BOT_CASH_MAX_BUY_EXPOSURE_PCT` (max fraction of total capital per cash allocation action; default `0.05`)
-- `BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` (max fraction of cash buying power deployed daily; default `0.6`, capped at `0.9`)
-- `BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF` (calendar days until a cash overnight position is fully sold off; default `6`)
-- `BOT_OVERNIGHT_REDUCTION_START_FLOOR_PCT` (exposure floor % on day 1 of overnight reduction, interpolates linearly to 0 by selloff day; default `20`)
-- `BOT_MIN_IV_RANK_PCT` (minimum IV rank 0–100 required to enter; default `20`, set `0` to disable)
-- `BOT_MARGIN_TARGET_CALL_DELTA` (target absolute delta for OTM call strike selection on margin accounts; default `0.35`)
-- `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` (cache TTL for option snapshot lookups; default `30000`, set `0` to disable)
-- `BOT_MARGIN_MAX_TARGET_DTE` (hard ceiling on target DTE for margin accounts; default `7`)
-- `BOT_CASH_MIN_TARGET_DTE` (hard floor on target DTE for cash accounts; default `10`)
+- `BOT_MAX_SEED_ORDER_COST` — Maximum estimated dollar cost for a single seed order. Defaults to `200`.
+- `BOT_MAX_OPTION_SPREAD_PCT` — Maximum bid/ask spread as a fraction of the midpoint. Defaults to `0.3`.
+- `BOT_MARGIN_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one margin allocation action. Defaults to `0.012`.
+- `BOT_CASH_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one cash allocation action. Defaults to `0.05`.
+- `BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` — Maximum fraction of cash buying power the bot can deploy in a day. Defaults to `0.6`, capped at `0.9`.
+- `BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF` — Calendar days until a cash overnight position should be fully sold off. Defaults to `6`.
+- `BOT_OVERNIGHT_REDUCTION_START_FLOOR_PCT` — Exposure floor percentage on day 1 of overnight reduction; interpolates linearly to `0` by the selloff day. Defaults to `20`.
+- `BOT_MIN_IV_RANK_PCT` — Minimum IV rank (`0`–`100`) required before entering a position. Defaults to `20`; set to `0` to disable.
+- `BOT_MARGIN_TARGET_CALL_DELTA` — Target absolute delta for OTM call strike selection on margin accounts. Defaults to `0.35`.
+- `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` — Cache TTL for option snapshot lookups. Defaults to `30000`; set to `0` to disable.
+- `BOT_MARGIN_MAX_TARGET_DTE` — Hard ceiling on target DTE for margin accounts. Defaults to `7`.
+- `BOT_CASH_MIN_TARGET_DTE` — Hard floor on target DTE for cash accounts. Defaults to `10`.
 
 #### Secret Feed Integration (Optional)
 
-If these are omitted or disconnected, the runtime continues normally and manual IPC workflows remain fully available.
+If these are omitted or the feed is disconnected, the runtime continues normally and manual IPC workflows remain fully available.
 
-- `SECRET_SOCKET_URL` (private feed socket URL)
-- `SECRET_SOCKET_TIMEOUT_MS` (feed timeout ms; default `5000`)
-- `SECRET_DATA_UPDATE_POSITIONS_KEY` (positions key inside secret payload)
-- `SECRET_AUTO_SEED_ON_POSITIONS_UPDATE` (`true` or `false`, default `false`)
-- `SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE` (`true` or `false`, default `false`)
-- `SECRET_AUTO_SEED_START_TIME` (auto-seed window start in `HH:mm`; default `06:30`)
-- `SECRET_AUTO_SEED_COOLDOWN_MS` (minimum delay between secret auto-seeds for the same symbol; default `600000`)
+- `SECRET_SOCKET_URL` — Private feed socket URL.
+- `SECRET_SOCKET_TIMEOUT_MS` — Timeout for feed requests in milliseconds. Defaults to `5000`.
+- `SECRET_DATA_UPDATE_POSITIONS_KEY` — Positions key inside the secret feed payload.
+- `SECRET_AUTO_SEED_ON_POSITIONS_UPDATE` — Set to `true` to allow auto-seeding when position updates arrive. Defaults to `false`.
+- `SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE` — Set to `true` to allow auto-seeding when ticker recommendations update. Defaults to `false`.
+- `SECRET_AUTO_SEED_START_TIME` — Start of the auto-seed window in `HH:mm` format. Defaults to `06:30`.
+- `SECRET_AUTO_SEED_COOLDOWN_MS` — Minimum delay between secret-feed auto-seeds for the same symbol. Defaults to `600000`.
 
 #### Paths / Overrides
 
-- `TASTYTRADE_BOT_SOCKET` (override IPC socket path)
-- `TASTYTRADE_BOT_DATA_DIR` (override root data directory; default `data/`; controls where run history, day reports, and position registry are stored)
+- `TASTYTRADE_BOT_SOCKET` — Override the IPC socket path.
+- `TASTYTRADE_BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; controls where run history, day reports, and the position registry are stored.
 
 ## Running Tests
 
