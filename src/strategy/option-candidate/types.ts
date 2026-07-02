@@ -19,6 +19,7 @@ export interface TopOptionCandidateForSymbolResult {
   put?: string;
   quoteSymbol?: string;
   requestedSide?: "call" | "put";
+  skippedByIvGate?: boolean;
   skippedReason?: string;
   spread?: number;
   spreadPct?: number;
