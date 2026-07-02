@@ -19,9 +19,11 @@ export async function fetchOptionChain(symbol: string): Promise<TastytradeOption
   const data: TastytradeOptionChains =
     await tastytradeApi.instrumentsService.getNestedOptionChain(symbol);
   if (data.length > 1) {
+    const chainLabels = data
+      .map((chain) => `${chain["root-symbol"] ?? "?"}/${chain["option-chain-type"] ?? "?"}`)
+      .join(", ");
     console.warn(
-      `Received multiple option chains for symbol ${symbol}, using the first one. Data:`,
-      JSON.stringify(data, null, 2),
+      `Received multiple option chains for symbol ${symbol}, using the first one: ${chainLabels}`,
     );
   }
   return data[0];

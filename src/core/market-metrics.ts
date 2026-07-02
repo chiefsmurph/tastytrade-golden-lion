@@ -37,12 +37,14 @@ export async function getUnderlyingIvMetrics(
     );
 
     if (!entry) {
+      console.error(`[market-metrics] no market-metrics entry for ${key} — ivRank unavailable (cached ${IV_METRICS_CACHE_TTL_MS / 60000} min)`);
       ivMetricsCache.set(key, { cachedAt: now, metrics: null });
       return null;
     }
 
     const ivRank = toNumber(entry["implied-volatility-index-rank"]);
     if (ivRank == null) {
+      console.error(`[market-metrics] implied-volatility-index-rank missing/invalid for ${key} (raw: ${JSON.stringify(entry["implied-volatility-index-rank"])}) — ivRank unavailable (cached ${IV_METRICS_CACHE_TTL_MS / 60000} min)`);
       ivMetricsCache.set(key, { cachedAt: now, metrics: null });
       return null;
     }
@@ -54,8 +56,10 @@ export async function getUnderlyingIvMetrics(
 
     ivMetricsCache.set(key, { cachedAt: now, metrics });
     return metrics;
-  } catch {
+  } catch (error) {
     // Graceful degradation — no IV gate if API unavailable
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[market-metrics] market-metrics fetch failed for ${key}: ${message} — ivRank unavailable (cached ${IV_METRICS_CACHE_TTL_MS / 60000} min)`);
     ivMetricsCache.set(key, { cachedAt: now, metrics: null });
     return null;
   }

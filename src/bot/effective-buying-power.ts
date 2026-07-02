@@ -3,15 +3,36 @@ import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strate
 import { getAccountMarginOrCash } from "~/core/default-account";
 import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
 
+export type EffectiveBuyingPowerLimitingFactor =
+  | "per-action-cap"
+  | "exposure-headroom"
+  | "buying-power-remaining";
+
 export interface EffectiveBuyingPowerSummary {
   buyingPowerRemaining: number;
   currentExposurePct: number;
   currentExposureValue: number;
   effectiveBuyingPower: number;
   exposureHeadroom: number;
+  limitingFactor: EffectiveBuyingPowerLimitingFactor;
+  maxBuyAmountPerAction: number;
   targetExposurePct: number;
   targetExposureValue: number;
   totalCapital: number;
+}
+
+export function describeEffectiveBuyingPowerLimit(
+  summary: EffectiveBuyingPowerSummary,
+): string {
+  const cap = summary.effectiveBuyingPower.toFixed(2);
+  switch (summary.limitingFactor) {
+    case "per-action-cap":
+      return `capped at ${cap} by per-action max buy pct`;
+    case "exposure-headroom":
+      return `capped at ${cap} by time-of-day exposure headroom`;
+    case "buying-power-remaining":
+      return `capped at ${cap} by remaining buying power`;
+  }
 }
 
 export async function getEffectiveBuyingPowerSummary(
@@ -33,14 +54,18 @@ export async function getEffectiveBuyingPowerSummary(
     0,
     budget.totalCapital * getMaxBuyExposurePctForAccountType(accountType === "unknown" ? "cash" : accountType),
   );
-  const effectiveBuyingPower = Math.max(
-    0,
-    Math.min(
-      budget.buyingPowerRemaining,
-      exposureHeadroom,
-      maxBuyAmountPerAction,
-    ),
+  const rawEffectiveBuyingPower = Math.min(
+    budget.buyingPowerRemaining,
+    exposureHeadroom,
+    maxBuyAmountPerAction,
   );
+  const limitingFactor: EffectiveBuyingPowerLimitingFactor =
+    rawEffectiveBuyingPower === maxBuyAmountPerAction
+      ? "per-action-cap"
+      : rawEffectiveBuyingPower === exposureHeadroom
+        ? "exposure-headroom"
+        : "buying-power-remaining";
+  const effectiveBuyingPower = Math.max(0, rawEffectiveBuyingPower);
   const currentExposurePct =
     budget.totalCapital > 0 ? budget.portfolioExposure / budget.totalCapital : 0;
 
@@ -50,6 +75,8 @@ export async function getEffectiveBuyingPowerSummary(
     currentExposureValue: budget.portfolioExposure,
     effectiveBuyingPower,
     exposureHeadroom,
+    limitingFactor,
+    maxBuyAmountPerAction,
     targetExposurePct: executionTargets.targetAccountExposure,
     targetExposureValue,
     totalCapital: budget.totalCapital,

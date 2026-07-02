@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getHeldContractFallbackCandidate } from "../actions/manage-allocation";
-import { isNoFittingSeedCandidateReason } from "../run-cycle-seed";
+import { isCostBlockedSeedReason, isNoFittingSeedCandidateReason } from "../run-cycle-seed";
 import type { PositionGroupEvaluation } from "../evaluate-position";
 
 function occSymbol(root: string, yymmdd: string, strike: string): string {
@@ -156,8 +156,34 @@ test("isNoFittingSeedCandidateReason matches only candidate-fit failures", () =>
   );
   assert.equal(
     isNoFittingSeedCandidateReason(
-      "insufficient effective buying power for seed order at current time-of-day exposure target",
+      "insufficient effective buying power for seed order — capped at 98.80 by per-action max buy pct, order cost 183.00",
     ),
+    false,
+  );
+});
+
+test("isCostBlockedSeedReason matches only cost/buying-power failures", () => {
+  assert.equal(
+    isCostBlockedSeedReason(
+      "insufficient effective buying power for seed order — capped at 98.80 by per-action max buy pct, order cost 183.00",
+    ),
+    true,
+  );
+  assert.equal(
+    isCostBlockedSeedReason(
+      "seed order cost 250.00 exceeds BOT_MAX_SEED_ORDER_COST 200.00",
+    ),
+    true,
+  );
+
+  assert.equal(isCostBlockedSeedReason(null), false);
+  assert.equal(isCostBlockedSeedReason(undefined), false);
+  assert.equal(
+    isCostBlockedSeedReason("cash seed candidate DTE must be within 14-30"),
+    false,
+  );
+  assert.equal(
+    isCostBlockedSeedReason("underlying already has an open position"),
     false,
   );
 });
