@@ -16,7 +16,7 @@ import {
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
 import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
-import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
+import { describeEffectiveBuyingPowerLimit, getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import { BOT_ORDER_SOURCE } from "./order-sources";
 
 
@@ -447,8 +447,7 @@ export async function seedSymbol(
       preferredDTE,
       quoteSymbol,
       side,
-      skippedReason:
-        "insufficient effective buying power for seed order at current time-of-day exposure target",
+      skippedReason: `insufficient effective buying power for seed order — ${describeEffectiveBuyingPowerLimit(buyingPowerSummary)}, order cost ${estimatedOrderCost.toFixed(2)}`,
       strategy,
       symbol: normalizedSymbol,
       usedDteFallback,

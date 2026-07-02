@@ -6,7 +6,7 @@ import {
   getTopOptionCandidateForSymbol,
   getMarginTargetCallDelta,
 } from "~/strategy/option-candidate";
-import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
+import { describeEffectiveBuyingPowerLimit, getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import {
   allocateContractsByWeight,
   AllocationRouteResult,
@@ -172,8 +172,7 @@ export async function purchaseSymbol(
       requestedBudget,
       routeOrders: [],
       side,
-      skippedReason:
-        "insufficient effective buying power for current time-of-day exposure target",
+      skippedReason: `insufficient effective buying power — ${describeEffectiveBuyingPowerLimit(buyingPowerSummary)}`,
       symbol: normalizedSymbol,
       totalEstimatedOrderValue: 0,
       totalQuantity: 0,

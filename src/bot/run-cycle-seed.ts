@@ -39,6 +39,17 @@ export function isNoFittingSeedCandidateReason(reason: string | null | undefined
   );
 }
 
+// The chain candidate was too expensive (per-action cap, exposure headroom, or
+// BOT_MAX_SEED_ORDER_COST). The contract margin holds is often cheaper than the
+// fresh chain pick, so these skips are also worth retrying via the held fallback.
+export function isCostBlockedSeedReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  return (
+    reason.startsWith("insufficient effective buying power for seed order") ||
+    reason.startsWith("seed order cost")
+  );
+}
+
 function getAskReturnPct(evaluation: PositionGroupEvaluation): number | null {
   const fill = evaluation.metrics.weightedAverageFill;
   if (!(fill > 0)) return null;
@@ -324,10 +335,16 @@ export async function maybeSeedCashAccountFromMarginAccount(
       orderSource: CASH_SEED_FROM_MARGIN_ORDER_SOURCE,
     });
 
-    // No chain candidate fits the cash seed DTE window — fall back to the exact
-    // contract margin holds, as long as it has enough days left and passes the
-    // spread gate applied by getHeldContractFallbackCandidate.
-    if (!result.placedOrder && isNoFittingSeedCandidateReason(result.skippedReason)) {
+    // No chain candidate fits the cash seed DTE window, or the candidate was too
+    // expensive — fall back to the exact contract margin holds (often cheaper),
+    // as long as it has enough days left and passes the spread gate applied by
+    // getHeldContractFallbackCandidate. The fallback seedSymbol call re-applies
+    // every cost check, so a too-expensive held contract still gets skipped.
+    if (
+      !result.placedOrder &&
+      (isNoFittingSeedCandidateReason(result.skippedReason) ||
+        isCostBlockedSeedReason(result.skippedReason))
+    ) {
       const held = getHeldContractFallbackCandidate(evaluation, "cash", currentTime);
       const heldDte = typeof held.dte === "number" ? held.dte : null;
 
