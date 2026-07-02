@@ -23,6 +23,8 @@ logs/
 # Local runtime data
 data/runs.ndjson
 margin.ndjson
+data-pull/
+scripts/
 
 # TypeScript
 .tsbuildinfo
