@@ -3,7 +3,7 @@ import { SECRET_AUTO_SEED_ORDER_SOURCE } from "../order-sources";
 import { isWithinSecretAutoSeedWindow } from "../seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "../cash-position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "../position-gate";
 import { recordPositionOpened } from "../position-registry";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();

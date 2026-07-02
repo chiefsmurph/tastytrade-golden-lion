@@ -25,7 +25,7 @@ export interface RunPlanSelectedGroup {
   underlyingSymbol: string;
 }
 
-import type { PositionGateResult } from "./cash-position-gate";
+import type { PositionGateResult } from "./position-gate";
 
 export interface RunGroupReturn {
   askReturnPct: number;
