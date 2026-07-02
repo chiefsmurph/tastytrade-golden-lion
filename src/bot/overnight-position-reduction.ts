@@ -1,6 +1,6 @@
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { ExecutionTargets } from "./evaluate-trading-strategy";
-import { PositionGateSignals } from "./cash-position-gate";
+import { PositionGateSignals } from "./position-gate";
 import { closePosition, ClosePositionResult } from "./actions/close-position";
 import { isOvernightPosition, getPositionAgeDays } from "./position-registry";
 

@@ -6,7 +6,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "./cash-position-gate";
+import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "./position-gate";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
