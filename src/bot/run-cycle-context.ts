@@ -7,6 +7,7 @@ import {
   isReadOnlyAccount,
 } from "~/core/default-account";
 import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "~/strategy/position-gate";
+import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -429,8 +430,14 @@ export async function buildRunCycleContext(
       });
       const multiplier = getMarginTargetMultiplier();
       const marginMaxTargetPct = gate.maxTargetPct * multiplier;
+      const dipTargetBoostPct = getMarginDipTargetBoostPct(
+        askReturnPerc,
+        goodBooleanScore,
+      );
       const scaledTargetAccountExposure =
-        finalTargets.targetAccountExposure * marginMaxTargetPct;
+        finalTargets.targetAccountExposure *
+        marginMaxTargetPct *
+        (1 + dipTargetBoostPct);
 
       console.log(
         JSON.stringify({
@@ -442,6 +449,7 @@ export async function buildRunCycleContext(
           multiplier,
           marginMaxTargetPct,
           booleanSurplusPct,
+          dipTargetBoostPct,
           originalTargetPct: finalTargets.targetAccountExposure,
           effectiveTargetPct: scaledTargetAccountExposure,
         }),
