@@ -16,12 +16,38 @@ import {
   logStrategyDecisions,
 } from "./run-cycle-logging";
 import { maybeSeedMarginAccountFromCashAccount, maybeSeedCashAccountFromMarginAccount } from "./run-cycle-seed";
-import { pruneOldEntries, isOvernightPosition } from "./position-registry";
+import {
+  pruneOldEntries,
+  isOvernightPosition,
+  syncPositionOpens,
+  PositionOpenSnapshot,
+} from "./position-registry";
 import { executeOvernightReductions } from "./overnight-position-reduction";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { getEffectiveTotalCapital } from "~/core/account-balance";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
+
+function toPositionOpenSnapshots(
+  evaluations: PositionGroupEvaluation[],
+): PositionOpenSnapshot[] {
+  const snapshots: PositionOpenSnapshot[] = [];
+
+  for (const evaluation of evaluations) {
+    const symbol = String(evaluation.underlyingSymbol ?? "").toUpperCase();
+    const side = evaluation.groupKey?.split("::")[1];
+    if (!symbol || (side !== "call" && side !== "put")) continue;
+
+    const createdAts = evaluation.positions
+      .map((position) => position["created-at"])
+      .filter((value): value is string => Boolean(value));
+    if (createdAts.length === 0) continue;
+
+    snapshots.push({ symbol, side, openedAt: createdAts.sort()[0] });
+  }
+
+  return snapshots;
+}
 
 async function withOvernightCloseOverrides(
   accountNumber: string,
@@ -166,6 +192,13 @@ export default async function runBotCycle(
   const context = await buildRunCycleContext(accountNumber);
   console.log({ accountNumber: context.preview.accountNumber, run: "bot-cycle" });
   logCycle(context);
+
+  // Backfill registry opens from broker created-at before anything reads
+  // isOvernightPosition/getPositionAgeDays this cycle.
+  await syncPositionOpens(
+    context.preview.accountNumber,
+    toPositionOpenSnapshots(context.evaluationsWithGroupTargets),
+  );
 
   const evaluationsForExecution =
     context.accountMarginOrCash === "margin"

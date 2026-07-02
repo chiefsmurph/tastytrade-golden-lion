@@ -271,7 +271,12 @@ export async function executePositionEvaluations(
       ? placedResult.orderResponse?.order?.id
       : undefined;
     if (orderId) {
-      await recordPositionClosed(accountNumber, symbol, String(orderId));
+      await recordPositionClosed(
+        accountNumber,
+        symbol,
+        String(orderId),
+        evaluation.positions[0]?.["created-at"],
+      );
     }
   }
 

@@ -85,20 +85,56 @@ export async function recordPositionOpened(
   await writeRegistry(data);
 }
 
+export interface PositionOpenSnapshot {
+  symbol: string;
+  side: "call" | "put";
+  openedAt: string;
+}
+
+// Backfills open entries from broker position data (`created-at`). Positions
+// opened outside the seed paths — regular allocation buys, manual trades,
+// positions predating the registry — would otherwise never register, making
+// isOvernightPosition/getPositionAgeDays silently wrong for them.
+export async function syncPositionOpens(
+  accountNumber: string,
+  snapshots: PositionOpenSnapshot[],
+): Promise<void> {
+  const data = await readRegistry();
+  let changed = false;
+
+  for (const snapshot of snapshots) {
+    if (openEntryForSymbol(data, accountNumber, snapshot.symbol)) continue;
+    const key = registryKey(accountNumber, snapshot.symbol, snapshot.openedAt.slice(0, 10));
+    data[key] = {
+      accountNumber,
+      symbol: snapshot.symbol.trim().toUpperCase(),
+      side: snapshot.side,
+      openedAt: snapshot.openedAt,
+    };
+    changed = true;
+  }
+
+  if (changed) {
+    await writeRegistry(data);
+  }
+}
+
 export async function recordPositionClosed(
   accountNumber: string,
   symbol: string,
   orderId?: string,
+  openedAtFallback?: string,
 ): Promise<void> {
   const data = await readRegistry();
   const match = openEntryForSymbol(data, accountNumber, symbol);
+  const fallbackOpenedAt = openedAtFallback ?? new Date().toISOString();
   const [key, existing] = match ?? [
-    registryKey(accountNumber, symbol, todayDate()),
+    registryKey(accountNumber, symbol, fallbackOpenedAt.slice(0, 10)),
     {
       accountNumber,
       symbol: symbol.trim().toUpperCase(),
       side: "call" as const,
-      openedAt: new Date().toISOString(),
+      openedAt: fallbackOpenedAt,
     },
   ];
   data[key] = {
