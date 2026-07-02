@@ -1,4 +1,4 @@
-import type { SecretSourcePosition } from "~/bot/secret/types";
+import type { SecretSourcePosition } from "~/strategy/secret/types";
 import { ExecutionTargets } from "./evaluate-trading-strategy";
 
 function roundToTwoDecimals(value: number): number {

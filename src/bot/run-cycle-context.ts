@@ -12,7 +12,7 @@ import {
   getSpendableFundsForAccountType,
 } from "~/core/account-balance";
 import { TastytradeAccountBalance } from "~/core/types";
-import type { SecretSourcePosition } from "./secret/types";
+import type { SecretSourcePosition } from "~/strategy/secret/types";
 import { getPositionEvaluations } from "./get-position-evaluations";
 import {
   applyPositionSizeWeightCaps,
@@ -39,7 +39,7 @@ import {
   getSecretPositionSignalsForSymbol,
   getSecretSocketStatus,
   startSecretSocketConnection,
-} from "./secret";
+} from "~/strategy/secret";
 import { buildGroupExecutionTargets } from "~/strategy/group-execution-targets";
 
 export interface RunCyclePreview {

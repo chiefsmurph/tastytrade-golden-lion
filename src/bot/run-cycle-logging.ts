@@ -1,7 +1,7 @@
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { RunGroupReturn, RunStrategyDecision } from "./run-history";
 import { buildGroupExecutionTargets } from "~/strategy/group-execution-targets";
-import { getSecretSocketStatus } from "./secret";
+import { getSecretSocketStatus } from "~/strategy/secret";
 import type { RunCyclePreview } from "./run-cycle-context";
 import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
 import type { StrategyAccountType } from "~/strategy/evaluate-trading-strategy";

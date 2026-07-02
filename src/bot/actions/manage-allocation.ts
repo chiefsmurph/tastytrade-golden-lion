@@ -13,7 +13,7 @@ import {
   getOptionHealthForSymbol,
   getTopOptionCandidateForSymbol,
   getMarginTargetCallDelta,
-} from "../option-candidate";
+} from "~/strategy/option-candidate";
 import {
   getGroupMarketValue,
   inferOptionSide,

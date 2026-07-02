@@ -2,7 +2,7 @@ import { getCashAccountSeedEndMinute } from "./seeding-windows";
 import { shouldSeedMarginFromBooleans } from "./position-gate";
 import { getNumDaysToSellOff } from "./overnight-reduction";
 import { getUnderlyingIvMetrics } from "~/core/market-metrics";
-import type { SecretSourcePosition } from "~/bot/secret/types";
+import type { SecretSourcePosition } from "~/strategy/secret/types";
 
 export interface MarginSeedConfig {
   minDownPct: number;

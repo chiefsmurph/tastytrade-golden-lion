@@ -8,7 +8,7 @@ import { RunSeedOrder } from "./run-history";
 import seedSymbol, { SeedSymbolResult } from "./seed-symbol";
 import { MARGIN_SEED_FROM_CASH_ORDER_SOURCE, CASH_SEED_FROM_MARGIN_ORDER_SOURCE } from "./order-sources";
 import { isWithinCashAccountSeedFromMarginWindow } from "~/strategy/seeding-windows";
-import type { SecretSourcePosition } from "./secret/types";
+import type { SecretSourcePosition } from "~/strategy/secret/types";
 import { countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened, getRegistryEntry } from "./position-registry";
 import {

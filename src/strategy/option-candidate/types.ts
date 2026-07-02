@@ -1,4 +1,5 @@
 import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
+export type { OptionMarketSnapshotCacheStats } from "~/core/market-snapshot";
 
 export interface TopOptionCandidateForSymbolResult {
   askPrice?: number;
@@ -54,15 +55,6 @@ export interface OptionHealthForSymbolResult {
   summary: OptionHealthSummary;
   targetDTE: number;
   targets: Record<string, TopOptionCandidateForSymbolResult | undefined>;
-}
-
-export interface OptionMarketSnapshotCacheStats {
-  cacheSize: number;
-  hitRate: number;
-  hits: number;
-  misses: number;
-  requests: number;
-  ttlMs: number;
 }
 
 export interface TopOptionCandidateForAccountResult extends TopOptionCandidateForSymbolResult {

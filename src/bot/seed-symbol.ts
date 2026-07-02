@@ -6,21 +6,18 @@ import {
 } from "~/core/default-account";
 import { CurrentPosition } from "~/core/types";
 import { getUnderlyingSymbolForPosition } from "./evaluate-position";
-import { getTopOptionCandidateForSymbol, getMarginTargetCallDelta } from "./option-candidate";
+import {
+  getTopOptionCandidateForSymbol,
+  CASH_ACCOUNT_SEED_MIN_DTE,
+  CASH_ACCOUNT_SEED_MAX_DTE,
+  getSeedSelectionOptionsForAccountType,
+} from "~/strategy/option-candidate";
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
 import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import { BOT_ORDER_SOURCE } from "./order-sources";
 
-export const CASH_ACCOUNT_SEED_MIN_DTE = 14;
-export const CASH_ACCOUNT_SEED_MAX_DTE = 30;
-
-export function getSeedSelectionOptionsForAccountType(accountType: "margin" | "cash" | "unknown") {
-  return accountType === "cash"
-    ? { minDTE: CASH_ACCOUNT_SEED_MIN_DTE, maxDTE: CASH_ACCOUNT_SEED_MAX_DTE }
-    : { strikeTarget: "otm" as const, targetDelta: getMarginTargetCallDelta() };
-}
 
 export interface SeedSymbolOptions {
   priceMode?: "ask" | "mid";

@@ -1,5 +1,5 @@
 import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strategy";
-import { getOptionMarketSnapshot } from "./market-snapshot";
+import { getOptionMarketSnapshot } from "~/core/market-snapshot";
 import { buildTopOptionCandidateResult } from "./selection";
 import {
   OptionHealthForSymbolResult,
