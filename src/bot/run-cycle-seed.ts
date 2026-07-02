@@ -68,6 +68,17 @@ function getPositionAgeSeedMultiplier(positionAgeDays: number | null): number {
   return 1.5 - 0.8 * t;
 }
 
+// Intraday age multiplier for margin positions (no overnight hold).
+// Brand-new position (0 min) = 1.5 (conservative, need bigger loss before seeding).
+// Scales linearly down to 0.7 at 60+ minutes (established intraday thesis).
+function getPositionAgeMinutesSeedMultiplier(positionAgeMinutes: number | null): number {
+  if (positionAgeMinutes === null) return 1.0; // unknown age → neutral
+  const FULL_AGE_MINUTES = 120;
+  const t = Math.max(0, Math.min(1, positionAgeMinutes / FULL_AGE_MINUTES));
+  // t=0 (just opened): 1.5. t=1 (60+ min): 0.7.
+  return 1.5 - 0.8 * t;
+}
+
 // Boolean multiplier: good signals lower thresholds so seeding fires on smaller losses.
 // No data and weak/bad scores are neutral (1.0) — only positive signals help, never penalize.
 // Score 0–10: <3=neutral (1.0×), 3-4=slight boost (0.95×), 5-7=good (0.85×), 8+=great (0.7×).
@@ -361,15 +372,6 @@ function getCashSeedFromMarginConfig(): MarginSeedConfig | null {
   return { minDownPct, maxDownPct };
 }
 
-// Balance-weight multiplier: larger position relative to margin net-liq = more committed = lower threshold.
-// pctOfNetLiq: position market value as fraction of net-liq (0–1).
-// ≤2% of net-liq: 1.5 (conservative, need bigger loss). ≥15% of net-liq: 0.7 (aggressive, smaller loss needed).
-function getPositionNetLiqPctMultiplier(pctOfNetLiq: number): number {
-  const LOW = 0.02;
-  const HIGH = 0.15;
-  const t = Math.max(0, Math.min(1, (pctOfNetLiq - LOW) / (HIGH - LOW)));
-  return 1.5 - 0.8 * t;
-}
 
 export async function maybeSeedCashAccountFromMarginAccount(
   accountNumber: string,
@@ -422,12 +424,15 @@ export async function maybeSeedCashAccountFromMarginAccount(
     const goodBooleanScore = secretPosition != null ? countGoodBooleans(secretPosition) : null;
     const booleanSurplusPct = goodBooleanScore != null ? getBooleanSurplusPct(goodBooleanScore) : null;
 
+    const positionAgeDays = await getPositionAgeDays(marginAccountNumber, symbol, currentTime, evaluation);
+    const positionAgeMinutes = positionAgeDays !== null ? positionAgeDays * 24 * 60 : null;
+    const ageFactor = getPositionAgeMinutesSeedMultiplier(positionAgeMinutes);
+
     const positionMarketValue = getGroupMarketValue(evaluation.positionSnapshots);
     const pctOfNetLiq = marginNetLiq > 0 ? positionMarketValue / marginNetLiq : 0;
-    const balanceFactor = getPositionNetLiqPctMultiplier(pctOfNetLiq);
 
     const booleanFactor = getBooleanSeedMultiplier(goodBooleanScore);
-    const thresholds = getScaledThresholds(config, timeFactor, balanceFactor, booleanFactor);
+    const thresholds = getScaledThresholds(config, timeFactor, ageFactor, booleanFactor);
 
     const lossDepth = -askReturnPct;
     if (lossDepth < thresholds.minDownPct || lossDepth > thresholds.maxDownPct) continue;
@@ -442,9 +447,10 @@ export async function maybeSeedCashAccountFromMarginAccount(
         accountNumber,
         askReturnPct,
         lossDepth,
+        positionAgeMinutes: positionAgeMinutes !== null ? +positionAgeMinutes.toFixed(1) : null,
         pctOfNetLiq: +pctOfNetLiq.toFixed(4),
         timeFactor: +timeFactor.toFixed(3),
-        balanceFactor: +balanceFactor.toFixed(3),
+        ageFactor: +ageFactor.toFixed(3),
         booleanFactor: +booleanFactor.toFixed(3),
         thresholds,
         goodBooleanScore,
@@ -478,7 +484,7 @@ export async function maybeSeedCashAccountFromMarginAccount(
       skippedReason: result.skippedReason ?? null,
       sourceAccountNumber: marginAccountNumber,
       symbol: result.symbol,
-      triggerReason: `margin down ${Math.abs(askReturnPct).toFixed(1)}% ask (${(pctOfNetLiq * 100).toFixed(1)}% of net-liq) — ${decision.reason}`,
+      triggerReason: `margin down ${Math.abs(askReturnPct).toFixed(1)}% ask (${positionAgeMinutes !== null ? positionAgeMinutes.toFixed(0) + "min old" : "age unknown"}) — ${decision.reason}`,
     };
 
     console.log(JSON.stringify({
@@ -488,9 +494,10 @@ export async function maybeSeedCashAccountFromMarginAccount(
       accountNumber,
       askReturnPct,
       lossDepth,
+      positionAgeMinutes: positionAgeMinutes !== null ? +positionAgeMinutes.toFixed(1) : null,
       pctOfNetLiq: +pctOfNetLiq.toFixed(4),
       timeFactor: +timeFactor.toFixed(3),
-      balanceFactor: +balanceFactor.toFixed(3),
+      ageFactor: +ageFactor.toFixed(3),
       thresholds,
       goodBooleanScore,
       booleanSurplusPct,
