@@ -124,6 +124,7 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT` — Maximum `percentOfBalance` allowed for a strong stock yes signal. Defaults to `30`.
 - `STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX` — Daytrade score magnitude threshold for a strong yes signal. Defaults to `100`.
 - `STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD` — Daytrade score below which a position qualifies as a basic stock yes on its own (in addition to `qualityToBuy`). Defaults to `-40`.
+- `STRATEGY_GATE_BASIC_PERCENT_OF_BALANCE_THRESHOLD` — `percentOfBalance` above which a position qualifies as a basic stock yes on its own. Defaults to `50`.
 - `STRATEGY_GATE_SINGLE_YES_MAX_TARGET_PCT` — Maximum target exposure with one yes signal. Defaults to `0.15`.
 - `STRATEGY_GATE_BASIC_YES_MAX_TARGET_PCT` — Maximum target exposure with only a basic stock yes signal. Defaults to `0.10`.
 - `STRATEGY_GATE_BOTH_YES_MAX_TARGET_PCT` — Maximum target exposure when both yes signals are true. Defaults to `0.25`.
