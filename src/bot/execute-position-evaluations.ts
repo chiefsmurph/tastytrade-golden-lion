@@ -38,6 +38,8 @@ import {
   isMarginSeedFromCashOrderSource,
   isSecretAutoSeedOrderSource,
 } from "./order-sources";
+import { isOvernightPosition } from "./position-registry";
+import { isInOvernightReductionWindow } from "~/strategy/overnight-reduction";
 
 export interface CancelOrderResult {
   cancelled: boolean;
@@ -203,16 +205,34 @@ export async function executePositionEvaluations(
     });
   };
 
+  const currentTime = evaluations[0]?.metrics.currentTime ?? new Date();
+
   const closeEvaluations = evaluationsWithTargets.filter(
     (evaluation) => evaluation.strategy.action === "CLOSE_POSITION",
   );
+
+  const manageEvaluationCandidates = actionableEvaluations.filter(
+    (evaluation) => evaluation.strategy.action === "MANAGE_ALLOCATION",
+  );
+
+  // During the overnight reduction window (7:30–11:30 AM), skip adding to overnight
+  // cash positions unless a strong signal (crossAccountYes or strongStockYes) overrides.
+  const gatedManageEvaluations = accountMarginOrCash === "cash" && isInOvernightReductionWindow(currentTime)
+    ? (
+        await Promise.all(
+          manageEvaluationCandidates.map(async (evaluation) => {
+            const signals = evaluation.executionTargets?.positionGate?.signals;
+            if (signals?.crossAccountYes || signals?.strongStockYes) return evaluation;
+            const symbol = String(evaluation.underlyingSymbol ?? "").toUpperCase();
+            const overnight = await isOvernightPosition(accountNumber, symbol);
+            return overnight ? null : evaluation;
+          }),
+        )
+      ).filter((e) => e !== null)
+    : manageEvaluationCandidates;
+
   const manageEvaluations = normalizeSelectedManageExposureTargets(
-    selectManageEvaluationsByBuyingPower(
-      actionableEvaluations.filter(
-        (evaluation) => evaluation.strategy.action === "MANAGE_ALLOCATION",
-      ),
-      spendableFunds,
-    ),
+    selectManageEvaluationsByBuyingPower(gatedManageEvaluations, spendableFunds),
   );
   const actionableCloseEvaluations = actionableEvaluations.filter(
     (evaluation) => evaluation.strategy.action === "CLOSE_POSITION",

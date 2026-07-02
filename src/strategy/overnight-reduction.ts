@@ -3,6 +3,11 @@ import { PositionGateSignals } from "./position-gate";
 const REDUCTION_START_MINUTE = 7 * 60 + 30;
 const REDUCTION_END_MINUTE = 11 * 60 + 30;
 
+export function isInOvernightReductionWindow(currentTime: Date): boolean {
+  const minuteOfDay = currentTime.getHours() * 60 + currentTime.getMinutes();
+  return minuteOfDay >= REDUCTION_START_MINUTE && minuteOfDay < REDUCTION_END_MINUTE;
+}
+
 export function getNumDaysToSellOff(): number {
   const raw = process.env.BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF?.trim();
   if (!raw) return 6;
