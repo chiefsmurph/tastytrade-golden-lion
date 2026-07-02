@@ -11,6 +11,7 @@ import { isWithinCashAccountSeedFromMarginWindow } from "~/strategy/seeding-wind
 import type { SecretSourcePosition } from "~/strategy/secret/types";
 import { countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened, getRegistryEntry } from "./position-registry";
+import { getHeldContractFallbackCandidate } from "./actions/manage-allocation";
 import {
   getMarginSeedConfig,
   getCashSeedFromMarginConfig,
@@ -23,6 +24,20 @@ import {
 } from "~/strategy/seed-decision";
 
 export type MarginSeedResult = RunSeedOrder;
+
+// When no chain candidate fits the cash seed DTE window, cash may fall back to
+// buying the exact contract margin holds — but only with this many days left.
+const CASH_SEED_HELD_FALLBACK_MIN_DTE = 4;
+
+export function isNoFittingSeedCandidateReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  return (
+    reason.startsWith("no candidate found in cash seed DTE window") ||
+    reason.startsWith("cash seed candidate DTE must be within") ||
+    reason === "no option candidate found" ||
+    reason === "candidate quote symbol unavailable"
+  );
+}
 
 function getAskReturnPct(evaluation: PositionGroupEvaluation): number | null {
   const fill = evaluation.metrics.weightedAverageFill;
@@ -305,9 +320,50 @@ export async function maybeSeedCashAccountFromMarginAccount(
       continue;
     }
 
-    const result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
+    let result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
       orderSource: CASH_SEED_FROM_MARGIN_ORDER_SOURCE,
     });
+
+    // No chain candidate fits the cash seed DTE window — fall back to the exact
+    // contract margin holds, as long as it has enough days left and passes the
+    // spread gate applied by getHeldContractFallbackCandidate.
+    if (!result.placedOrder && isNoFittingSeedCandidateReason(result.skippedReason)) {
+      const held = getHeldContractFallbackCandidate(evaluation, "cash", currentTime);
+      const heldDte = typeof held.dte === "number" ? held.dte : null;
+
+      if (held.symbol && heldDte !== null && heldDte >= CASH_SEED_HELD_FALLBACK_MIN_DTE) {
+        console.log(JSON.stringify({
+          scope: "run-cycle-cash-from-margin-held-fallback",
+          symbol,
+          heldContract: held.symbol,
+          heldDte,
+          minDte: CASH_SEED_HELD_FALLBACK_MIN_DTE,
+          originalSkippedReason: result.skippedReason,
+        }));
+        result = await seedSymbol(evaluation.underlyingSymbol, side, accountNumber, {
+          orderSource: CASH_SEED_FROM_MARGIN_ORDER_SOURCE,
+          explicitContract: {
+            symbol: held.symbol,
+            quoteSymbol: held.quoteSymbol,
+            dte: heldDte,
+          },
+        });
+      } else {
+        console.log(JSON.stringify({
+          scope: "run-cycle-cash-from-margin-held-fallback",
+          symbol,
+          heldContract: held.symbol ?? null,
+          heldDte,
+          minDte: CASH_SEED_HELD_FALLBACK_MIN_DTE,
+          gated: true,
+          gateReason:
+            held.skippedReason ??
+            (heldDte !== null
+              ? `held contract has ${heldDte} DTE < ${CASH_SEED_HELD_FALLBACK_MIN_DTE} min`
+              : "held contract DTE unavailable"),
+        }));
+      }
+    }
 
     if (result.placedOrder) {
       await recordPositionOpened(accountNumber, symbol, side);
@@ -348,6 +404,7 @@ export async function maybeSeedCashAccountFromMarginAccount(
       ivRank: decision.ivRank,
       decisionReason: decision.reason,
       placedOrder: result.placedOrder,
+      usedHeldContractFallback: result.usedHeldContractFallback ?? false,
       skippedReason: result.skippedReason ?? null,
       candidateSymbol: result.candidateSymbol ?? null,
       limitPrice: result.limitPrice ?? null,

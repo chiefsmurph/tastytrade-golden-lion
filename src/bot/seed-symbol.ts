@@ -11,6 +11,7 @@ import {
   CASH_ACCOUNT_SEED_MIN_DTE,
   CASH_ACCOUNT_SEED_MAX_DTE,
   getSeedSelectionOptionsForAccountType,
+  type TopOptionCandidateForSymbolResult,
 } from "~/strategy/option-candidate";
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
 import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
@@ -25,6 +26,14 @@ export interface SeedSymbolOptions {
   // Reject the seed if the computed limit price exceeds this value.
   // Used to gate averaging-down seeds to entries cheaper than the cash fill.
   maxLimitPrice?: number;
+  // Skip chain candidate search and seed this exact contract instead.
+  // Used by the cash-from-margin held-contract fallback when no candidate
+  // fits the cash seed DTE window. Caller is responsible for DTE/spread gating.
+  explicitContract?: {
+    symbol: string;
+    quoteSymbol?: string;
+    dte?: number;
+  };
 }
 
 export interface SeedSymbolResult {
@@ -50,6 +59,7 @@ export interface SeedSymbolResult {
   strategy?: ProgrammaticAction | null;
   symbol: string;
   usedDteFallback?: boolean;
+  usedHeldContractFallback?: boolean;
 }
 
 function getMaxSeedOrderCost(): number {
@@ -168,16 +178,24 @@ export async function seedSymbol(
     };
   }
 
-  const candidate = await getTopOptionCandidateForSymbol(
-    symbol,
-    side,
-    undefined,
-    getSeedSelectionOptionsForAccountType(resolvedAccountType),
-  );
+  const explicitContract = options.explicitContract;
+  const candidate: TopOptionCandidateForSymbolResult | null | undefined = explicitContract
+    ? {
+        symbol: explicitContract.symbol,
+        streamerSymbol: explicitContract.quoteSymbol ?? explicitContract.symbol,
+        dte: explicitContract.dte,
+        strategy: "MANAGE_ALLOCATION",
+      }
+    : await getTopOptionCandidateForSymbol(
+        symbol,
+        side,
+        undefined,
+        getSeedSelectionOptionsForAccountType(resolvedAccountType),
+      );
   const strategy = candidate?.strategy;
   const candidateDte = candidate?.dte != null ? Number(candidate.dte) : undefined;
 
-  if (resolvedAccountType === "cash") {
+  if (resolvedAccountType === "cash" && !explicitContract) {
     if (candidate?.usedDteFallback) {
       return {
         accountNumber: resolvedAccountNumber,
@@ -221,6 +239,7 @@ export async function seedSymbol(
         resolvedAccountNumber,
         resolvedAccountType,
         fallbackToMargin: resolvedSeedAccount.fallbackToMargin,
+        explicitContract: explicitContract?.symbol ?? null,
         strategy,
         candidateDTE: candidateDte,
         minDTE: candidate?.minDTE,
@@ -498,6 +517,7 @@ export async function seedSymbol(
     strategy,
     symbol: normalizedSymbol,
     usedDteFallback,
+    usedHeldContractFallback: explicitContract ? true : undefined,
   };
 }
 
