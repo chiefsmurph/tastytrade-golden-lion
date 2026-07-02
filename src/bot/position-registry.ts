@@ -16,8 +16,6 @@ type RegistryKey = string;
 type RegistryData = Record<RegistryKey, PositionRegistryEntry>;
 
 function getRegistryPath(): string {
-  const specific = process.env.BOT_RUN_HISTORY_DIR?.trim();
-  if (specific) return path.join(specific, "position-registry.json");
   const dataDir = process.env.BOT_DATA_DIR?.trim() || undefined;
   return path.join(dataDir ?? path.join(process.cwd(), "data"), "runs", "position-registry.json");
 }

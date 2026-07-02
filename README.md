@@ -105,8 +105,7 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `BOT_RUN_ON_SCHEDULE` — Set to `true` to start the market-open scheduler when the process boots. Defaults to `false`.
 - `BOT_RUN_INTERVAL_MS` — Scheduler interval in milliseconds while the market is open.
 - `BOT_RUN_INTERVAL_MINUTES` — Scheduler interval in minutes. Used when `BOT_RUN_INTERVAL_MS` is not set.
-- `BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; controls where run history, day reports, and the position registry are stored.
-- `BOT_RUN_HISTORY_DIR` — Override the run history directory specifically (within the data dir).
+- `BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; run history and the position registry live in `runs/` and day reports in `day-reports/` beneath it.
 - `BOT_DO_NOT_TOUCH_GROUPS` — Comma-separated group keys the bot should leave alone.
 - `BOT_READ_ONLY_ACCOUNTS` — Comma-separated account numbers the bot can inspect but should not trade.
 - `BOT_MAX_SEED_ORDER_COST` — Maximum estimated dollar cost for a single seed order. Defaults to `200`.
