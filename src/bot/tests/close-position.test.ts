@@ -109,6 +109,66 @@ test("shouldSkipClosePositionForMorningSpread allows a strong bid through the ga
   assert.equal(result.shouldSkip, false);
 });
 
+test("shouldSkipClosePositionForMorningSpread still gates a losing wide-spread close mid-morning (LCID 2026-07-02)", () => {
+  // Production shape: fill 0.61, bid 0.42 / ask 0.56 → 28.57% spread, -31% bid return at 07:46
+  const evaluation = buildEvaluation("2026-06-25T07:46:00", {
+    metrics: {
+      currentAskPrice: 0.56,
+      currentBidPrice: 0.42,
+      currentTime: new Date("2026-06-25T07:46:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 0.61,
+    },
+  });
+
+  const result = shouldSkipClosePositionForMorningSpread(evaluation);
+
+  assert.equal(result.shouldSkip, true);
+  assert.match(result.skippedReason ?? "", /Morning spread gate active/);
+});
+
+test("shouldSkipClosePositionForMorningSpread never blocks closes at or after 12:55 EOD liquidation", () => {
+  // Production shape from margin.ndjson: 55%+ spread blocked the 12:55 liquidation
+  const evaluation = buildEvaluation("2026-06-25T12:55:00", {
+    metrics: {
+      currentAskPrice: 1.77,
+      currentBidPrice: 1.00,
+      currentTime: new Date("2026-06-25T12:55:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1.55,
+    },
+  });
+
+  const result = shouldSkipClosePositionForMorningSpread(evaluation);
+
+  assert.equal(result.shouldSkip, false);
+});
+
+test("closePosition places EOD orders even when the spread is wide", async () => {
+  const evaluation = buildEvaluation("2026-06-25T12:56:00", {
+    metrics: {
+      currentAskPrice: 1.77,
+      currentBidPrice: 1.00,
+      currentTime: new Date("2026-06-25T12:56:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1.55,
+    },
+  });
+
+  let createOrderCalls = 0;
+  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+    createOrder: async () => {
+      createOrderCalls += 1;
+      return { order: { id: "1" } } as never;
+    },
+    checkOrderFilled: async () => true,
+  });
+
+  assert.equal(createOrderCalls, 1);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.placedOrder, true);
+});
+
 test("closePosition skips all order placement when the morning gate is active", async () => {
   const evaluation = buildEvaluation("2026-06-25T06:30:00", {
     metrics: {

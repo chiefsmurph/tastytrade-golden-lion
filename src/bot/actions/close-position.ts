@@ -2,6 +2,10 @@ import tastytradeApi from "~/core/tastytrade-client";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { PositionGroupEvaluation } from "../evaluate-position";
 import { ExecutionTargets, getDynamicTakeProfitTarget } from "~/strategy/evaluate-trading-strategy";
+import {
+  EOD_FORCED_CLOSE_MINUTE,
+  getMorningSpreadThresholdPct,
+} from "~/strategy/spread-thresholds";
 import { buildClosingOrderPayload } from "./order-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
@@ -149,32 +153,8 @@ async function cancelOrderById(
   }
 }
 
-const MORNING_CLOSE_SPREAD_THRESHOLDS = [
-  { minute: 6 * 60 + 30, maxSpreadPct: 0.05 },
-  { minute: 6 * 60 + 45, maxSpreadPct: 0.10 },
-  { minute: 7 * 60 + 0, maxSpreadPct: 0.15 },
-  { minute: 7 * 60 + 15, maxSpreadPct: 0.20 },
-  { minute: 7 * 60 + 30, maxSpreadPct: 0.25 },
-  { minute: 8 * 60 + 0, maxSpreadPct: 0.30 },
-];
-
 function getTimeInMinutes(currentTime: Date): number {
   return currentTime.getHours() * 60 + currentTime.getMinutes();
-}
-
-function getMorningCloseSpreadThresholdPct(currentTime: Date): number {
-  const currentMinute = getTimeInMinutes(currentTime);
-  let threshold = MORNING_CLOSE_SPREAD_THRESHOLDS[0]?.maxSpreadPct ?? 0;
-
-  for (const spreadThreshold of MORNING_CLOSE_SPREAD_THRESHOLDS) {
-    if (currentMinute < spreadThreshold.minute) {
-      break;
-    }
-
-    threshold = spreadThreshold.maxSpreadPct;
-  }
-
-  return threshold;
 }
 
 function getSpreadPct(bidPrice: number, askPrice: number): number {
@@ -191,6 +171,13 @@ export function shouldSkipClosePositionForMorningSpread(
   evaluation: PositionGroupEvaluation,
 ): { skippedReason?: string; shouldSkip: boolean } {
   const currentTime = evaluation.metrics.currentTime;
+
+  // EOD closes must execute regardless of spread — a skipped liquidation
+  // leaves margin exposure held overnight.
+  if (getTimeInMinutes(currentTime) >= EOD_FORCED_CLOSE_MINUTE) {
+    return { shouldSkip: false };
+  }
+
   const bidReturnPct =
     evaluation.metrics.weightedAverageFill > 0
       ? (evaluation.metrics.currentBidPrice - evaluation.metrics.weightedAverageFill) /
@@ -206,7 +193,7 @@ export function shouldSkipClosePositionForMorningSpread(
     evaluation.metrics.currentBidPrice,
     evaluation.metrics.currentAskPrice,
   );
-  const maxAllowedSpreadPct = getMorningCloseSpreadThresholdPct(currentTime);
+  const maxAllowedSpreadPct = getMorningSpreadThresholdPct(currentTime);
 
   if (spreadPct > maxAllowedSpreadPct) {
     return {
