@@ -9,14 +9,14 @@ export function isInOvernightReductionWindow(currentTime: Date): boolean {
 }
 
 export function getNumDaysToSellOff(): number {
-  const raw = process.env.BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF?.trim();
+  const raw = process.env.STRATEGY_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF?.trim();
   if (!raw) return 6;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 2 ? Math.round(parsed) : 6;
 }
 
 function getReductionStartFloorPct(): number {
-  const raw = process.env.BOT_OVERNIGHT_REDUCTION_START_FLOOR_PCT?.trim();
+  const raw = process.env.STRATEGY_OVERNIGHT_REDUCTION_START_FLOOR_PCT?.trim();
   if (!raw) return 0.20;
   const parsed = Number(raw) / 100;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.20;

@@ -6,11 +6,11 @@ function parseEnvFraction(key: string, fallback: number): number {
 }
 
 export function getMarginMaxBuyExposurePct(): number {
-  return parseEnvFraction("BOT_MARGIN_MAX_BUY_EXPOSURE_PCT", 0.12);
+  return parseEnvFraction("STRATEGY_MARGIN_MAX_BUY_EXPOSURE_PCT", 0.12);
 }
 
 export function getCashMaxBuyExposurePct(): number {
-  return parseEnvFraction("BOT_CASH_MAX_BUY_EXPOSURE_PCT", 0.05);
+  return parseEnvFraction("STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT", 0.05);
 }
 
 export function getMaxBuyExposurePctForAccountType(

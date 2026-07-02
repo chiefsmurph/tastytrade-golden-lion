@@ -68,7 +68,7 @@ export function getMarginSpendableFunds(
 }
 
 function parseCashAccountMaxBuyingPowerPct(): number {
-  const raw = process.env.BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT;
+  const raw = process.env.CORE_CASH_ACCOUNT_MAX_BUYING_POWER_PCT;
   if (!raw) return 0.6;
   const parsed = Number(raw);
   // Leave at least 10% undeployed to avoid GFV the next day

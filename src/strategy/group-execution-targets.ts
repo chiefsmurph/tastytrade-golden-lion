@@ -12,7 +12,7 @@ import {
 } from "~/strategy/secret";
 
 function getMaxAskReturnPercForBuy(): number | null {
-  const raw = process.env.BOT_MAX_ASK_RETURN_PERC_FOR_BUY?.trim();
+  const raw = process.env.STRATEGY_MAX_ASK_RETURN_PERC_FOR_BUY?.trim();
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
