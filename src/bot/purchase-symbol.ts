@@ -13,7 +13,7 @@ import {
   buildRouteOrders,
   placeRouteOrders,
 } from "./actions/manage-allocation";
-import { getTimeOfDayExecutionTargets } from "./evaluate-trading-strategy";
+import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 
 const EQUAL_ROUTE_TARGETS = {
   askWeight: 0.33,

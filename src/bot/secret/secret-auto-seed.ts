@@ -1,9 +1,9 @@
 import seedSymbol from "../seed-symbol";
 import { SECRET_AUTO_SEED_ORDER_SOURCE } from "../order-sources";
-import { isWithinSecretAutoSeedWindow } from "../seeding-windows";
+import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "../position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened } from "../position-registry";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();

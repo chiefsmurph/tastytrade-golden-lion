@@ -7,7 +7,7 @@ import {
   ExecutionStrategy,
   PositionMetrics,
   StrategyAccountType,
-} from "./evaluate-trading-strategy";
+} from "~/strategy/evaluate-trading-strategy";
 
 export interface PositionQuoteSnapshot {
   position: CurrentPosition;

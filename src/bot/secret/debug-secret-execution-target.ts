@@ -1,5 +1,5 @@
-import { getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime } from "../evaluate-trading-strategy";
-import { buildGroupExecutionTargets } from "../group-execution-targets";
+import { getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime } from "~/strategy/evaluate-trading-strategy";
+import { buildGroupExecutionTargets } from "~/strategy/group-execution-targets";
 
 export interface DebugSecretExecutionTargetInputs {
   askReturnPerc?: number;

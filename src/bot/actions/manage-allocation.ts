@@ -21,8 +21,8 @@ import {
   OrderPayload,
   roundOrderPrice,
 } from "./order-utils";
-import { ExecutionTargets } from "../evaluate-trading-strategy";
-import { getMaxBuyExposurePctForAccountType } from "../risk-limits";
+import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
+import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 
 const DEFAULT_CONTRACT_MULTIPLIER = 100;

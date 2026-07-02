@@ -1,4 +1,4 @@
-import { ExecutionTargets } from "../evaluate-trading-strategy";
+import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import {
   getCachedSecretSourcePositions,
   getSecretPositionsSourceKey,

@@ -12,7 +12,7 @@ import {
 import { getPositionsAndBalances } from "./core/get-positions-and-balances";
 import {
   getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime,
-} from "./bot/evaluate-trading-strategy";
+} from "~/strategy/evaluate-trading-strategy";
 import { getCurrentAllocationBudget } from "./bot/actions/manage-allocation";
 import { getOptionCandidates } from "./bot/option-contracts";
 import runBotCycle, {

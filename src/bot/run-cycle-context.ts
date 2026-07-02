@@ -6,7 +6,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "./position-gate";
+import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "~/strategy/position-gate";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -19,7 +19,7 @@ import {
   averageExecutionTargets,
   getDynamicTakeProfitTarget,
   getTimeOfDayExecutionTargets,
-} from "./evaluate-trading-strategy";
+} from "~/strategy/evaluate-trading-strategy";
 import {
   RunGroupReturn,
   RunPlanSelectedGroup,
@@ -40,7 +40,7 @@ import {
   getSecretSocketStatus,
   startSecretSocketConnection,
 } from "./secret";
-import { buildGroupExecutionTargets } from "./group-execution-targets";
+import { buildGroupExecutionTargets } from "~/strategy/group-execution-targets";
 
 export interface RunCyclePreview {
   accountNumber: string;

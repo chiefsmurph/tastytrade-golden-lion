@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   isWithinSecretAutoSeedWindow,
-} from "../seeding-windows";
+} from "~/strategy/seeding-windows";
 
 test("isWithinSecretAutoSeedWindow stays open through 13:00", () => {
   assert.equal(

@@ -1,7 +1,7 @@
 import tastytradeApi from "~/core/tastytrade-client";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { PositionGroupEvaluation } from "../evaluate-position";
-import { ExecutionTargets, getDynamicTakeProfitTarget } from "../evaluate-trading-strategy";
+import { ExecutionTargets, getDynamicTakeProfitTarget } from "~/strategy/evaluate-trading-strategy";
 import { buildClosingOrderPayload } from "./order-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;

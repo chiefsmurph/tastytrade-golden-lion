@@ -5,7 +5,7 @@ import type {
   TastytradeOrderAction,
 } from "~/core/types";
 import { PositionQuoteSnapshot } from "../evaluate-position";
-import { ExecutionTargets } from "../evaluate-trading-strategy";
+import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 
 export interface OrderLeg {
   action: TastytradeOrderAction;

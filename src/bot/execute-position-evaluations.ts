@@ -13,7 +13,7 @@ import { PositionGroupEvaluation } from "./evaluate-position";
 import {
   ExecutionTargets,
   getTimeOfDayExecutionTargets,
-} from "./evaluate-trading-strategy";
+} from "~/strategy/evaluate-trading-strategy";
 import { closePosition, ClosePositionResult } from "./actions/close-position";
 import { recordPositionClosed } from "./position-registry";
 import {
