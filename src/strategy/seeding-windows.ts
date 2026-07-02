@@ -1,4 +1,3 @@
-const DEFAULT_SECRET_AUTO_SEED_START_MINUTE = 6 * 60 + 30;
 const CASH_ACCOUNT_SEED_END_MINUTE = 13 * 60;
 
 function parseMinuteOfDay(value: string | undefined): number | null {
@@ -29,7 +28,7 @@ function getMinuteOfDay(currentTime: Date): number {
 export function getSecretAutoSeedWindowStartMinute(): number {
   return (
     parseMinuteOfDay(process.env.SECRET_AUTO_SEED_START_TIME) ??
-    DEFAULT_SECRET_AUTO_SEED_START_MINUTE
+    6 * 60 + 30
   );
 }
 
