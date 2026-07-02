@@ -287,6 +287,7 @@ export async function getTopOptionCandidateForSymbol(
     if (ivRank < minIvRank) {
       return {
         ivRank,
+        skippedByIvGate: true,
         skippedReason: `IV rank ${ivRank.toFixed(1)} below minimum ${minIvRank} — low premium environment`,
       };
     }

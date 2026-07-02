@@ -13,7 +13,9 @@ import {
   getOptionHealthForSymbol,
   getTopOptionCandidateForSymbol,
   getMarginTargetCallDelta,
+  TopOptionCandidateForSymbolResult,
 } from "~/strategy/option-candidate";
+import { getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
 import {
   getGroupMarketValue,
   inferOptionSide,
@@ -55,6 +57,7 @@ export interface AllocationExecutionResult {
   skippedReason?: string;
   underlyingSymbol: string;
   usedDteFallback?: boolean;
+  usedHeldContractFallback?: boolean;
 }
 
 export interface AllocationBudget {
@@ -361,6 +364,87 @@ export async function placeRouteOrders(
   return placedOrders;
 }
 
+// OCC option symbol: 6-char padded root, YYMMDD expiration, C/P, strike ×1000
+const OCC_OPTION_SYMBOL_PATTERN = /^.{6}(\d{6})[CP]\d{8}$/;
+
+function getOccExpirationDate(symbol: string): Date | null {
+  const match = OCC_OPTION_SYMBOL_PATTERN.exec(symbol);
+  if (!match) return null;
+  const yymmdd = match[1];
+  return new Date(
+    2000 + Number(yymmdd.slice(0, 2)),
+    Number(yymmdd.slice(2, 4)) - 1,
+    Number(yymmdd.slice(4, 6)),
+  );
+}
+
+// When the chain search finds nothing buyable for a group we already hold,
+// fall back to adding to the held contract instead of skipping the group —
+// gated by the same time-aware entry spread limit and a DTE floor so the
+// fallback can't average into an expiring contract.
+export function getHeldContractFallbackCandidate(
+  evaluation: PositionGroupEvaluation,
+  accountMarginOrCash: "margin" | "cash" | "unknown",
+  currentTime = new Date(),
+): TopOptionCandidateForSymbolResult {
+  const snapshot = [...evaluation.positionSnapshots]
+    .filter((positionSnapshot) =>
+      Boolean(getOccExpirationDate(String(positionSnapshot.position.symbol ?? ""))),
+    )
+    .sort((a, b) => b.quantityWeight - a.quantityWeight)[0];
+
+  if (!snapshot) {
+    return { skippedReason: "no held option contract to fall back to" };
+  }
+
+  const symbol = String(snapshot.position.symbol);
+  const expiration = getOccExpirationDate(symbol) as Date;
+  const dte = Math.max(
+    0,
+    Math.ceil((expiration.getTime() - currentTime.getTime()) / 86_400_000),
+  );
+  const minHeldDte = accountMarginOrCash === "margin" ? 0 : 1;
+
+  if (dte < minHeldDte) {
+    return {
+      dte,
+      skippedReason: `held contract too close to expiry (${dte} DTE < ${minHeldDte})`,
+    };
+  }
+
+  const bid = snapshot.currentBidPrice;
+  const ask = snapshot.currentAskPrice;
+
+  if (!(bid > 0) || !(ask > 0)) {
+    return { dte, skippedReason: "held contract quote unavailable" };
+  }
+
+  const spreadPct = (ask - bid) / ((ask + bid) / 2);
+  const maxAllowedSpreadPct = getMaxOptionSpreadPctForTime(currentTime);
+
+  if (spreadPct > maxAllowedSpreadPct) {
+    return {
+      dte,
+      spreadPct,
+      skippedReason: `held contract spread ${(spreadPct * 100).toFixed(2)}% exceeds ${(maxAllowedSpreadPct * 100).toFixed(2)}% max`,
+    };
+  }
+
+  return {
+    askPrice: ask,
+    bidPrice: bid,
+    dte,
+    maxAllowedSpreadPct,
+    meetsSpreadRequirement: true,
+    quoteSymbol:
+      (snapshot.position["streamer-symbol"] as string | undefined) ||
+      (snapshot.position["quote-symbol"] as string | undefined) ||
+      symbol,
+    spreadPct,
+    symbol,
+  };
+}
+
 export async function manageAllocationForGroup(
   accountNumber: string,
   evaluation: PositionGroupEvaluation,
@@ -451,7 +535,7 @@ export async function manageAllocationForGroup(
   }
 
   const accountMarginOrCash = await getAccountMarginOrCash(accountNumber);
-  const candidate = await getTopOptionCandidateForSymbol(
+  let candidate = await getTopOptionCandidateForSymbol(
     evaluation.underlyingSymbol,
     optionSide,
     targets.targetDTE,
@@ -459,6 +543,33 @@ export async function manageAllocationForGroup(
       ? { strikeTarget: "otm", targetDelta: getMarginTargetCallDelta() }
       : undefined,
   );
+  let usedHeldContractFallback = false;
+
+  // Fallback only — the chain pick stays authoritative. IV-gate skips are an
+  // intentional entry filter, so they do not fall back.
+  if (!candidate?.symbol && !candidate?.skippedByIvGate) {
+    const heldFallback = getHeldContractFallbackCandidate(
+      evaluation,
+      accountMarginOrCash,
+    );
+
+    console.log(
+      JSON.stringify({
+        scope: "manage-allocation-held-contract-fallback",
+        underlyingSymbol: evaluation.underlyingSymbol,
+        targetDTE: targets.targetDTE,
+        chainSkippedReason: candidate?.skippedReason ?? "no candidate",
+        fallbackSymbol: heldFallback.symbol ?? null,
+        fallbackDTE: heldFallback.dte ?? null,
+        fallbackSkippedReason: heldFallback.skippedReason ?? null,
+      }),
+    );
+
+    if (heldFallback.symbol) {
+      candidate = heldFallback;
+      usedHeldContractFallback = true;
+    }
+  }
 
   console.log(
     JSON.stringify({
@@ -566,6 +677,7 @@ export async function manageAllocationForGroup(
       skippedReason: "dry-run plan",
       underlyingSymbol: evaluation.underlyingSymbol,
       usedDteFallback: candidate.usedDteFallback,
+      usedHeldContractFallback: usedHeldContractFallback || undefined,
     };
   }
 
@@ -605,6 +717,7 @@ export async function manageAllocationForGroup(
     routeOrders: placedRouteOrders,
     underlyingSymbol: evaluation.underlyingSymbol,
     usedDteFallback: candidate.usedDteFallback,
+    usedHeldContractFallback: usedHeldContractFallback || undefined,
   };
 }
 
