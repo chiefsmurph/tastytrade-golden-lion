@@ -32,11 +32,11 @@ function toBooleanFlag(raw: unknown): boolean {
   return ["true", "1", "yes"].includes(String(raw ?? "").trim().toLowerCase());
 }
 
-// BOT_CROSS_ACCOUNT_YES_DOWN_PCT is the late-day (lenient) threshold for the cross-account YES signal.
+// STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT is the late-day (lenient) threshold for the cross-account YES signal.
 // At window start (9:30am): requires 2x that dip (strict).
 // At window end (1pm): requires exactly the configured dip.
 function getCrossAccountYesDownPct(currentTime: Date): number {
-  const base = readEnvPct("BOT_CROSS_ACCOUNT_YES_DOWN_PCT", 10);
+  const base = readEnvPct("STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT", 10);
   const minuteOfDay = currentTime.getHours() * 60 + currentTime.getMinutes();
   const startMinute = getSecretAutoSeedWindowStartMinute();
   const endMinute = getCashAccountSeedEndMinute();
@@ -51,39 +51,39 @@ function getCrossAccountYesDownPct(currentTime: Date): number {
 // Max percentOfBalance required at end-of-day (1pm) for strong YES.
 // At window start (9:30am) the threshold is max/2.
 function getStrongStockYesMaxPct(): number {
-  return readEnvPct("BOT_GATE_STRONG_STOCK_YES_MAX_PCT", 30);
+  return readEnvPct("STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT", 30);
 }
 
 // daytradeScore magnitude for strong YES.
 // At window start (9:30am): score must be < -max (strict).
 // At window end (1pm): score must be < -max/2 (relaxed).
 function getStrongDaytradeScoreMax(): number {
-  return readEnvPct("BOT_GATE_STRONG_DAYTRADE_SCORE_MAX", 100);
+  return readEnvPct("STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX", 100);
 }
 
 // Additional maxTargetPct added per "good" boolean signal (isAboveMinSinFloor etc.)
 function getBooleanBoostPct(): number {
-  return readEnvPct("BOT_GATE_BOOLEAN_BOOST_PCT", 0.03);
+  return readEnvPct("STRATEGY_GATE_BOOLEAN_BOOST_PCT", 0.03);
 }
 
 export function getSingleYesMaxTargetPct(): number {
-  return readEnvPct("BOT_GATE_SINGLE_YES_MAX_TARGET_PCT", 0.15);
+  return readEnvPct("STRATEGY_GATE_SINGLE_YES_MAX_TARGET_PCT", 0.15);
 }
 
 export function getBothYesMaxTargetPct(): number {
-  return readEnvPct("BOT_GATE_BOTH_YES_MAX_TARGET_PCT", 0.25);
+  return readEnvPct("STRATEGY_GATE_BOTH_YES_MAX_TARGET_PCT", 0.25);
 }
 
 export function getStrongYesMaxTargetPct(): number {
-  return readEnvPct("BOT_GATE_STRONG_YES_MAX_TARGET_PCT", 0.35);
+  return readEnvPct("STRATEGY_GATE_STRONG_YES_MAX_TARGET_PCT", 0.35);
 }
 
 export function getMarginTargetMultiplier(): number {
-  return readEnvPct("BOT_MARGIN_MAX_TARGET_MULTIPLIER", 1.33);
+  return readEnvPct("STRATEGY_MARGIN_MAX_TARGET_MULTIPLIER", 1.33);
 }
 
 export function getCrossAccountThresholdMultiplier(): number {
-  return readEnvPct("BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER", 2);
+  return readEnvPct("STRATEGY_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER", 2);
 }
 
 // percentOfBalance: max/2 at window start → max at window end (gets stricter late)

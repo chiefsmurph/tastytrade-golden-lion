@@ -15,10 +15,10 @@ import type {
 config();
 
 const rawTastytradeApi = new TastytradeClient({
-  baseUrl: process.env.BASE_URL as string,
+  baseUrl: process.env.CORE_BASE_URL as string,
   accountStreamerUrl: "wss://streamer.cert.tastyworks.com/streamer",
-  refreshToken: process.env.API_REFRESH_TOKEN as string,
-  clientSecret: process.env.API_CLIENT_SECRET as string,
+  refreshToken: process.env.CORE_API_REFRESH_TOKEN as string,
+  clientSecret: process.env.CORE_API_CLIENT_SECRET as string,
   oauthScopes: ["read", "trade"],
 });
 

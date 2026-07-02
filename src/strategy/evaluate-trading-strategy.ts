@@ -23,14 +23,14 @@ function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {
 }
 
 function getIntradayStopLossFloor(): number {
-  const raw = process.env.BOT_INTRADAY_STOP_LOSS_PCT?.trim();
+  const raw = process.env.STRATEGY_INTRADAY_STOP_LOSS_PCT?.trim();
   if (!raw) return 0.30;
   const parsed = Number(raw) / 100;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.30;
 }
 
 function getEodStopLossFloor(): number {
-  const raw = process.env.BOT_EOD_STOP_LOSS_PCT?.trim();
+  const raw = process.env.STRATEGY_EOD_STOP_LOSS_PCT?.trim();
   if (!raw) return 0.10;
   const parsed = Number(raw) / 100;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.10;
@@ -222,8 +222,8 @@ function getTimeOfDayExecutionTargetsForMinute(
   const ELEVEN_THIRTY_AM   = 11 * 60 + 30;
   const noBuyCutoffMinute = getNoBuyCutoffMinute(accountType);
 
-  const marginMaxDTE = parseInt(process.env.BOT_MARGIN_MAX_TARGET_DTE ?? "7", 10);
-  const cashMinDTE   = parseInt(process.env.BOT_CASH_MIN_TARGET_DTE ?? "7", 10);
+  const marginMaxDTE = parseInt(process.env.STRATEGY_MARGIN_MAX_TARGET_DTE ?? "7", 10);
+  const cashMinDTE   = parseInt(process.env.STRATEGY_CASH_MIN_TARGET_DTE ?? "7", 10);
 
   const rawTargetDTE = Math.round(
     blendBySchedule(timeInMinutes, [

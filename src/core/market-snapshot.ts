@@ -30,7 +30,7 @@ let optionMarketSnapshotCacheHitCount = 0;
 let optionMarketSnapshotCacheMissCount = 0;
 
 function getOptionMarketSnapshotTtlMs(): number {
-  const raw = process.env.BOT_OPTION_MARKET_SNAPSHOT_TTL_MS;
+  const raw = process.env.CORE_OPTION_MARKET_SNAPSHOT_TTL_MS;
   if (!raw) return 30_000;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30_000;

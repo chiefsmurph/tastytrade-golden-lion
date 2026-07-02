@@ -238,7 +238,7 @@ export async function buildTopOptionCandidateResult(
     return sanitizeTopCandidateResponse({
       ...fallbackWideSpreadCandidate,
       symbol: undefined,
-      skippedReason: "all candidate spreads exceeded BOT_MAX_OPTION_SPREAD_PCT",
+      skippedReason: "all candidate spreads exceeded STRATEGY_MAX_OPTION_SPREAD_PCT",
     });
   }
 

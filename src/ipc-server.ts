@@ -60,14 +60,17 @@ type IpcResponse = {
 };
 
 const socketPath =
-  process.env.TASTYTRADE_BOT_SOCKET ||
+  process.env.CORE_IPC_SOCKET ||
   path.join(process.cwd(), ".tastytrade-golden-lion.sock");
 
 const commandHandlers: Record<string, CommandHandler> = {
   "core:listCommands": async () => {
-    return Object.keys(commandHandlers).sort((left, right) =>
-      left.localeCompare(right),
-    );
+    const prefixOrder = (cmd: string) =>
+      cmd.startsWith("core:") ? 0 : cmd.startsWith("bot:") ? 1 : 2;
+    return Object.keys(commandHandlers).sort((a, b) => {
+      const po = prefixOrder(a) - prefixOrder(b);
+      return po !== 0 ? po : a.localeCompare(b);
+    });
   },
   "core:getBidAskForSymbol": async ([symbol, timeoutMs]) => {
     assertArg(symbol, "symbol");
@@ -106,81 +109,9 @@ const commandHandlers: Record<string, CommandHandler> = {
     const normalizedSide = side === "put" ? "put" : "call";
     return getOptionCandidates(symbol, normalizedSide);
   },
-  "strategy:getTopOptionCandidateForSymbol": async ([symbol, side, accountNumber]) => {
-    assertArg(symbol, "symbol");
-    const normalizedSide = side === "put" ? "put" : "call";
-    return getTopOptionCandidateForAccount(symbol, normalizedSide, accountNumber);
-  },
-  "strategy:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
-    assertArg(symbol, "symbol");
-    const normalizedSide = side === "put" ? "put" : "call";
-    const parsedTargetDTE =
-      targetDTE != null && targetDTE !== "" ? Number(targetDTE) : undefined;
-
-    if (
-      parsedTargetDTE != null &&
-      (!Number.isFinite(parsedTargetDTE) || parsedTargetDTE <= 0)
-    ) {
-      throw new Error("targetDTE must be a number greater than 0");
-    }
-
-    return getOptionHealthForSymbol(
-      symbol,
-      normalizedSide,
-      undefined,
-      parsedTargetDTE,
-    );
-  },
-  "strategy:getOptionMarketSnapshotCacheStats": async () => {
-    return getOptionMarketSnapshotCacheStats();
-  },
-  "strategy:resetOptionMarketSnapshotCacheStats": async ([clearCache]) => {
-    const normalized = clearCache?.trim().toLowerCase();
-    const shouldClearCache =
-      normalized === "1" || normalized === "true" || normalized === "yes";
-    return resetOptionMarketSnapshotCacheStats(shouldClearCache);
-  },
-  "strategy:getTimeOfDayExecutionTargets": async ([timeOfDay]) => {
-    return getTargetsForPstTime(timeOfDay);
-  },
   "bot:getCurrentAllocationBudget": async ([accountNumber]) => {
     const resolvedAccountNumber = accountNumber ?? (await getDefaultAccountNumber());
     return getCurrentAllocationBudget(resolvedAccountNumber);
-  },
-  "strategy:getSecretSocketStatus": async () => {
-    const status = getSecretSocketStatus();
-    console.log(
-      JSON.stringify(
-        {
-          scope: "secret-socket-status",
-          status,
-          timestamp: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-    return status;
-  },
-  "strategy:debugSecretExecutionTargetForSymbol": async ([
-    symbol,
-    askReturnPercArg,
-    timeSinceLastActionMinutesArg,
-    currentExposurePctArg,
-  ]) => {
-    assertArg(symbol, "symbol");
-    const debugPayload = buildDebugSecretExecutionTargetPayload({
-      askReturnPerc: parseOptionalNumberArg(askReturnPercArg, 0),
-      currentExposurePct: parseOptionalNumberArg(currentExposurePctArg, 0),
-      symbol,
-      timeSinceLastActionMinutes: parseOptionalNumberArg(
-        timeSinceLastActionMinutesArg,
-        20,
-      ),
-    });
-
-    logDebugSecretExecutionTargetPayload(debugPayload);
-    return debugPayload;
   },
   "bot:seedSymbol": async ([symbol, side, accountNumber]) => {
     assertArg(symbol, "symbol");
@@ -235,6 +166,78 @@ const commandHandlers: Record<string, CommandHandler> = {
   "bot:getDayTrend": async (args) => getDayTrend(args),
   "bot:getClosedPositionsToday": async (args) => getClosedPositionsToday(args),
   "bot:recordDayReport": async ([accountNumber]) => recordDayReportNow(accountNumber),
+  "strategy:getTopOptionCandidateForSymbol": async ([symbol, side, accountNumber]) => {
+    assertArg(symbol, "symbol");
+    const normalizedSide = side === "put" ? "put" : "call";
+    return getTopOptionCandidateForAccount(symbol, normalizedSide, accountNumber);
+  },
+  "strategy:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
+    assertArg(symbol, "symbol");
+    const normalizedSide = side === "put" ? "put" : "call";
+    const parsedTargetDTE =
+      targetDTE != null && targetDTE !== "" ? Number(targetDTE) : undefined;
+
+    if (
+      parsedTargetDTE != null &&
+      (!Number.isFinite(parsedTargetDTE) || parsedTargetDTE <= 0)
+    ) {
+      throw new Error("targetDTE must be a number greater than 0");
+    }
+
+    return getOptionHealthForSymbol(
+      symbol,
+      normalizedSide,
+      undefined,
+      parsedTargetDTE,
+    );
+  },
+  "strategy:getOptionMarketSnapshotCacheStats": async () => {
+    return getOptionMarketSnapshotCacheStats();
+  },
+  "strategy:resetOptionMarketSnapshotCacheStats": async ([clearCache]) => {
+    const normalized = clearCache?.trim().toLowerCase();
+    const shouldClearCache =
+      normalized === "1" || normalized === "true" || normalized === "yes";
+    return resetOptionMarketSnapshotCacheStats(shouldClearCache);
+  },
+  "strategy:getTimeOfDayExecutionTargets": async ([timeOfDay]) => {
+    return getTargetsForPstTime(timeOfDay);
+  },
+  "strategy:getSecretSocketStatus": async () => {
+    const status = getSecretSocketStatus();
+    console.log(
+      JSON.stringify(
+        {
+          scope: "secret-socket-status",
+          status,
+          timestamp: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
+    return status;
+  },
+  "strategy:debugSecretExecutionTargetForSymbol": async ([
+    symbol,
+    askReturnPercArg,
+    timeSinceLastActionMinutesArg,
+    currentExposurePctArg,
+  ]) => {
+    assertArg(symbol, "symbol");
+    const debugPayload = buildDebugSecretExecutionTargetPayload({
+      askReturnPerc: parseOptionalNumberArg(askReturnPercArg, 0),
+      currentExposurePct: parseOptionalNumberArg(currentExposurePctArg, 0),
+      symbol,
+      timeSinceLastActionMinutes: parseOptionalNumberArg(
+        timeSinceLastActionMinutesArg,
+        20,
+      ),
+    });
+
+    logDebugSecretExecutionTargetPayload(debugPayload);
+    return debugPayload;
+  },
 };
 
 export function startIpcServer() {

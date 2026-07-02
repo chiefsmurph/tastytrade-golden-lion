@@ -49,6 +49,20 @@ flowchart TD
     ExtClient["ipc-client.js\n(another Node process)"] -->|Unix socket| IPC
 ```
 
+## Code Architecture
+
+The source tree is split into three layers, each with a matching env var prefix:
+
+| Layer | Directory | Env prefix | Responsibility |
+|---|---|---|---|
+| Core | `src/core/` | `CORE_` | Tastytrade API client, market data, balances, sessions, option chain snapshots |
+| Bot | `src/bot/` | `BOT_` | Run cycle orchestration, scheduling, order execution, data persistence |
+| Strategy | `src/strategy/` | `STRATEGY_` | Trading decisions — DTE/exposure targets, entry filters, risk limits, seed logic, option candidate selection |
+
+The optional external signal feed lives under `src/strategy/secret/` and uses `SECRET_` env vars.
+
+Dependencies flow one way: `strategy` → `core`, `bot` → `core`, `bot` → `strategy`. The IPC server commands follow the same namespacing: `core:` for infrastructure queries, `bot:` for execution and cycle control, `strategy:` for decision-layer introspection.
+
 ## Setup
 
 ### 1. Clone and Install
@@ -68,64 +82,75 @@ cp .env.example .env
 
 ### 3. Obtain API Credentials
 
-`API_CLIENT_SECRET` and `API_REFRESH_TOKEN` come from Tastytrade's OAuth2 flow. Follow the [Tastytrade OAuth2 guide](https://developer.tastytrade.com/oauth/) to register an application and obtain these values. The SDK automatically refreshes the access token at runtime — you only need to supply the long-lived refresh token.
+`CORE_API_CLIENT_SECRET` and `CORE_API_REFRESH_TOKEN` come from Tastytrade's OAuth2 flow. Follow the [Tastytrade OAuth2 guide](https://developer.tastytrade.com/oauth/) to register an application and obtain these values. The SDK automatically refreshes the access token at runtime — you only need to supply the long-lived refresh token.
 
 ## Environment Variables
 
-### Required
+Env vars are organized by the layer that owns them: `CORE_` for infrastructure, `BOT_` for orchestration, `STRATEGY_` for trading logic, and `SECRET_` for the optional external signal feed.
 
-- `BASE_URL` — Tastytrade API base URL. Defaults to `https://api.tastyworks.com`.
-- `API_CLIENT_SECRET` — OAuth2 client secret from Tastytrade.
-- `API_REFRESH_TOKEN` — long-lived refresh token from Tastytrade's OAuth2 flow.
+### Core (required)
 
-### Optional Runtime Controls
+- `CORE_BASE_URL` — Tastytrade API base URL. Defaults to `https://api.tastyworks.com`.
+- `CORE_API_CLIENT_SECRET` — OAuth2 client secret from Tastytrade.
+- `CORE_API_REFRESH_TOKEN` — Long-lived refresh token from Tastytrade's OAuth2 flow.
 
-#### Bot Scheduling
+### Core (optional overrides)
+
+- `CORE_IPC_SOCKET` — Override the Unix socket path for the IPC server.
+- `CORE_OPTION_MARKET_SNAPSHOT_TTL_MS` — Cache TTL for option chain snapshot lookups. Defaults to `30000`; set to `0` to disable.
+- `CORE_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` — Maximum fraction of cash buying power the bot can deploy in a day. Defaults to `0.6`, capped at `0.9`.
+
+### Bot
 
 - `BOT_RUN_ON_SCHEDULE` — Set to `true` to start the market-open scheduler when the process boots. Defaults to `false`.
 - `BOT_RUN_INTERVAL_MS` — Scheduler interval in milliseconds while the market is open.
 - `BOT_RUN_INTERVAL_MINUTES` — Scheduler interval in minutes. Used when `BOT_RUN_INTERVAL_MS` is not set.
-
-#### Bot Trading Controls
-
+- `BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; controls where run history, day reports, and the position registry are stored.
+- `BOT_RUN_HISTORY_DIR` — Override the run history directory specifically (within the data dir).
 - `BOT_DO_NOT_TOUCH_GROUPS` — Comma-separated group keys the bot should leave alone.
 - `BOT_READ_ONLY_ACCOUNTS` — Comma-separated account numbers the bot can inspect but should not trade.
-- `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` — Minimum cash-position ask-return loss percentage before the bot considers seeding the margin account. Leave unset to disable this feature.
-- `BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT` — Maximum loss percentage allowed for margin seeding. This prevents seeding when the cash position is already too close to the bid stop-loss floor. Defaults to `14`.
-- `BOT_INTRADAY_STOP_LOSS_PCT` — Intraday bid-return loss floor before the bot cuts off accumulation. Defaults to `30`.
-- `BOT_EOD_STOP_LOSS_PCT` — End-of-day bid-return loss floor after the accumulation cutoff. Defaults to `7`.
-- `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` — Optional override for the maximum ask-return threshold used on buy orders. Unset by default; `.env.example` uses `0.2`.
-
-#### Position Gate Signal Settings (both accounts)
-
-- `BOT_CROSS_ACCOUNT_YES_DOWN_PCT` — How far down the cash position must be before it can create a cross-account yes signal. Defaults to `7`.
-- `BOT_GATE_STRONG_STOCK_YES_MAX_PCT` — Maximum `percentOfBalance` allowed for a strong stock yes signal. Defaults to `30`.
-- `BOT_GATE_STRONG_DAYTRADE_SCORE_MAX` — Daytrade score magnitude threshold for a strong yes signal. Defaults to `100`.
-- `BOT_GATE_SINGLE_YES_MAX_TARGET_PCT` — Maximum target exposure when there is one yes signal. Defaults to `0.15`.
-- `BOT_GATE_BOTH_YES_MAX_TARGET_PCT` — Maximum target exposure when both the cross-account yes signal and the basic stock yes signal are true. Defaults to `0.25`.
-- `BOT_GATE_STRONG_YES_MAX_TARGET_PCT` — Maximum target exposure when a strong stock yes signal is present. Defaults to `0.35`.
-- `BOT_MARGIN_MAX_TARGET_MULTIPLIER` — Multiplier applied to the gate ceiling for margin accounts. Defaults to `1.33`.
-- `BOT_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` — Makes the cross-account threshold stricter for margin accounts. Defaults to `2`.
-- `BOT_GATE_BOOLEAN_BOOST_PCT` — Additional max target percentage added for each favorable boolean signal. Defaults to `0.03`.
-
-#### Position Management
-
 - `BOT_MAX_SEED_ORDER_COST` — Maximum estimated dollar cost for a single seed order. Defaults to `200`.
-- `BOT_MAX_OPTION_SPREAD_PCT` — Maximum bid/ask spread as a fraction of the midpoint. Defaults to `0.3`.
-- `BOT_MARGIN_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one margin allocation action. Defaults to `0.012`.
-- `BOT_CASH_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one cash allocation action. Defaults to `0.05`.
-- `BOT_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` — Maximum fraction of cash buying power the bot can deploy in a day. Defaults to `0.6`, capped at `0.9`.
-- `BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF` — Calendar days until a cash overnight position should be fully sold off. Defaults to `6`.
-- `BOT_OVERNIGHT_REDUCTION_START_FLOOR_PCT` — Exposure floor percentage on day 1 of overnight reduction; interpolates linearly to `0` by the selloff day. Defaults to `20`.
-- `BOT_MIN_IV_RANK_PCT` — Minimum IV rank (`0`–`100`) required before entering a position. Defaults to `20`; set to `0` to disable.
-- `BOT_MARGIN_TARGET_CALL_DELTA` — Target absolute delta for OTM call strike selection on margin accounts. Defaults to `0.35`.
-- `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` — Cache TTL for option snapshot lookups. Defaults to `30000`; set to `0` to disable.
-- `BOT_MARGIN_MAX_TARGET_DTE` — Hard ceiling on target DTE for margin accounts. Defaults to `7`.
-- `BOT_CASH_MIN_TARGET_DTE` — Hard floor on target DTE for cash accounts. Defaults to `7`.
 
-#### Secret Feed Integration (Optional)
+### Strategy: Seed Thresholds
 
-If these are omitted or the feed is disconnected, the runtime continues normally and manual IPC workflows remain fully available.
+- `STRATEGY_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` — Minimum cash-position ask-return loss percentage before the bot considers seeding the margin account. Leave unset to disable.
+- `STRATEGY_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT` — Maximum loss percentage allowed for margin seeding. Prevents seeding when the cash position is already too close to the bid stop-loss floor. Defaults to `14`.
+- `STRATEGY_CASH_SEED_FROM_MARGIN_MIN_DOWN_PCT` — Minimum margin-position loss percentage before considering seeding the cash account. Leave unset to disable.
+- `STRATEGY_CASH_SEED_FROM_MARGIN_MAX_DOWN_PCT` — Maximum loss percentage for cash-from-margin seeding. Defaults to `20`.
+- `STRATEGY_MAX_ASK_RETURN_PERC_FOR_BUY` — Maximum ask-return threshold for buy orders. Unset by default; `.env.example` uses `0.2`.
+
+### Strategy: Position Gate Signal Settings
+
+- `STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT` — How far down the cash position must be before it generates a cross-account yes signal. Defaults to `10`.
+- `STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT` — Maximum `percentOfBalance` allowed for a strong stock yes signal. Defaults to `30`.
+- `STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX` — Daytrade score magnitude threshold for a strong yes signal. Defaults to `100`.
+- `STRATEGY_GATE_SINGLE_YES_MAX_TARGET_PCT` — Maximum target exposure with one yes signal. Defaults to `0.15`.
+- `STRATEGY_GATE_BOTH_YES_MAX_TARGET_PCT` — Maximum target exposure when both yes signals are true. Defaults to `0.25`.
+- `STRATEGY_GATE_STRONG_YES_MAX_TARGET_PCT` — Maximum target exposure with a strong stock yes signal. Defaults to `0.35`.
+- `STRATEGY_MARGIN_MAX_TARGET_MULTIPLIER` — Multiplier applied to the gate ceiling for margin accounts. Defaults to `1.33`.
+- `STRATEGY_MARGIN_CROSS_ACCOUNT_THRESHOLD_MULTIPLIER` — Makes the cross-account threshold stricter for margin accounts. Defaults to `2`.
+- `STRATEGY_GATE_BOOLEAN_BOOST_PCT` — Additional max target percentage per favorable boolean signal. Defaults to `0.03`.
+
+### Strategy: Stop Loss Floors
+
+- `STRATEGY_INTRADAY_STOP_LOSS_PCT` — Intraday bid-return loss floor before the bot cuts off accumulation. Defaults to `30`.
+- `STRATEGY_EOD_STOP_LOSS_PCT` — End-of-day bid-return loss floor after the accumulation cutoff. Defaults to `10`.
+
+### Strategy: Position Sizing and Exposure
+
+- `STRATEGY_MAX_OPTION_SPREAD_PCT` — Maximum bid/ask spread as a fraction of the midpoint. Defaults to `0.3`.
+- `STRATEGY_MARGIN_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one margin allocation action. Defaults to `0.12`.
+- `STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one cash allocation action. Defaults to `0.05`.
+- `STRATEGY_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF` — Calendar days until a cash overnight position should be fully sold off. Defaults to `6`.
+- `STRATEGY_OVERNIGHT_REDUCTION_START_FLOOR_PCT` — Exposure floor percentage on day 1 of overnight reduction; interpolates linearly to `0` by the selloff day. Defaults to `20`.
+- `STRATEGY_MIN_IV_RANK_PCT` — Minimum IV rank (`0`–`100`) required before entering a position. Defaults to `20`; set to `0` to disable.
+- `STRATEGY_MARGIN_TARGET_CALL_DELTA` — Target absolute delta for OTM call strike selection on margin accounts. Defaults to `0.35`.
+- `STRATEGY_MARGIN_MAX_TARGET_DTE` — Hard ceiling on target DTE for margin accounts. Defaults to `7`.
+- `STRATEGY_CASH_MIN_TARGET_DTE` — Hard floor on target DTE for cash accounts. Defaults to `7`.
+
+### Secret Feed (Optional)
+
+If these are omitted or the feed is disconnected, the runtime continues normally and all IPC workflows remain available.
 
 - `SECRET_SOCKET_URL` — Private feed socket URL.
 - `SECRET_SOCKET_TIMEOUT_MS` — Timeout for feed requests in milliseconds. Defaults to `5000`.
@@ -134,11 +159,6 @@ If these are omitted or the feed is disconnected, the runtime continues normally
 - `SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE` — Set to `true` to allow auto-seeding when ticker recommendations update. Defaults to `false`.
 - `SECRET_AUTO_SEED_START_TIME` — Start of the auto-seed window in `HH:mm` format. Defaults to `06:30`.
 - `SECRET_AUTO_SEED_COOLDOWN_MS` — Minimum delay between secret-feed auto-seeds for the same symbol. Defaults to `600000`.
-
-#### Paths / Overrides
-
-- `TASTYTRADE_BOT_SOCKET` — Override the IPC socket path.
-- `TASTYTRADE_BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; controls where run history, day reports, and the position registry are stored.
 
 ## Running Tests
 
@@ -195,26 +215,26 @@ node run core:isEquityOptionsMarketOpen
 
 ```bash
 node run bot:getOptionCandidates RUM call
-node run bot:getTopOptionCandidateForSymbol RUM call 5WI88116
-node run bot:getTopOptionCandidateForSymbol RUM call 5WU18519
-node run bot:getOptionHealthForSymbol RUM call
-node run bot:getOptionHealthForSymbol RUM call 14
+node run strategy:getTopOptionCandidateForSymbol RUM call 5WI88116
+node run strategy:getTopOptionCandidateForSymbol RUM call 5WU18519
+node run strategy:getOptionHealthForSymbol RUM call
+node run strategy:getOptionHealthForSymbol RUM call 14
 ```
 
-`bot:getOptionHealthForSymbol` returns target checks for `7`, `14`, and `30` DTE and includes summary fields like `healthyTargets`, `missingTargets`, and `fallbackTargets`.
+`strategy:getOptionHealthForSymbol` returns target checks for `7`, `14`, and `30` DTE and includes summary fields like `healthyTargets`, `missingTargets`, and `fallbackTargets`.
 
 ### Allocation / Run Cycle Examples
 
 ```bash
 node run bot:getCurrentAllocationBudget
-node run bot:getTimeOfDayExecutionTargets 10:14
+node run strategy:getTimeOfDayExecutionTargets 10:14
 node run bot:getRecentRunHistory 20
 node run bot:getRunCyclePreview
 node run bot:runCycleLogOnly
 node run bot:runCycle
 node run bot:seedSymbol RUM call
 node run bot:purchaseSymbol RUM 1000
-node run bot:getSecretSocketStatus
+node run strategy:getSecretSocketStatus
 node run bot:getLastRunGroupsByTickers RUM,TSLA
 ```
 
@@ -248,23 +268,17 @@ core:cancelAllLiveOrders [accountNumber]
 core:fetchOptionChainWithVolume <symbol>
 core:getCurrentEquitiesSession
 core:isEquityOptionsMarketOpen
+core:listCommands
 bot:getOptionCandidates <symbol> [call|put]
-bot:getTopOptionCandidateForSymbol <symbol> [call|put] [accountNumber]
-bot:getOptionHealthForSymbol <symbol> [call|put] [targetDTE]
-bot:getOptionMarketSnapshotCacheStats
-bot:resetOptionMarketSnapshotCacheStats [clearCache=true|false]
 bot:getCurrentAllocationBudget [accountNumber]
-bot:getSecretSocketStatus
-bot:debugSecretExecutionTargetForSymbol <symbol> [askReturnPerc] [timeSinceLastActionMinutes] [currentExposurePct]
 bot:seedSymbol <symbol> [call|put] [accountNumber]
-bot:getTimeOfDayExecutionTargets <HH:mm>
+bot:purchaseSymbol <symbol> <dollars> [call|put] [accountNumber]
 bot:getRecentRunHistory [limit]
 bot:getLastRunGroupsByTickers <commaSeparatedSymbols>
+bot:getLastRunCycle
 bot:getRunCyclePreview [accountNumber]
 bot:runCycleLogOnly [accountNumber]
 bot:runCycle [accountNumber]
-bot:purchaseSymbol <symbol> <dollars> [call|put] [accountNumber]
-bot:getLastRunCycle
 bot:startMarketOpenScheduler
 bot:stopMarketOpenScheduler
 bot:getMarketOpenSchedulerStatus
@@ -272,12 +286,18 @@ bot:getDayReport [accountNumber] [date YYYY-MM-DD]
 bot:getDayTrend [accountNumber]
 bot:getClosedPositionsToday [accountNumber]
 bot:recordDayReport [accountNumber]
-core:listCommands
+strategy:getTopOptionCandidateForSymbol <symbol> [call|put] [accountNumber]
+strategy:getOptionHealthForSymbol <symbol> [call|put] [targetDTE]
+strategy:getOptionMarketSnapshotCacheStats
+strategy:resetOptionMarketSnapshotCacheStats [clearCache=true|false]
+strategy:getTimeOfDayExecutionTargets <HH:mm>
+strategy:getSecretSocketStatus
+strategy:debugSecretExecutionTargetForSymbol <symbol> [askReturnPerc] [timeSinceLastActionMinutes] [currentExposurePct]
 ```
 
 ## Data Storage
 
-All persistent data lands under `data/` (or `TASTYTRADE_BOT_DATA_DIR` if set).
+All persistent data lands under `data/` (or `BOT_DATA_DIR` if set).
 
 | Path | Format | Contents |
 |---|---|---|
@@ -358,7 +378,7 @@ From another local Node process, you can call the server directly with the reusa
 import { sendIpcCommand } from "./ipc-client.js";
 
 const optionHealth = await sendIpcCommand(
-  "bot:getOptionHealthForSymbol",
+  "strategy:getOptionHealthForSymbol",
   ["RUM", "call"],
   {
     socketPath: "/absolute/path/to/tastytrade-golden-lion/.tastytrade-golden-lion.sock",
@@ -391,7 +411,7 @@ If you copy `ipc-client.js` into another project, either pass `socketPath` expli
 
 - If IPC calls fail to connect, start or restart the server.
 - API calls depend on valid `.env` credentials.
-- Socket path can be overridden with `TASTYTRADE_BOT_SOCKET`.
+- Socket path can be overridden with `CORE_IPC_SOCKET`.
 - Run interval can be tuned with `BOT_RUN_INTERVAL_MS` or `BOT_RUN_INTERVAL_MINUTES`.
-- All data output can be redirected with `TASTYTRADE_BOT_DATA_DIR`.
+- All data output can be redirected with `BOT_DATA_DIR`.
 - Source imports intentionally use extensionless TypeScript paths because runtime execution goes through `tsx` with bundler-style resolution.

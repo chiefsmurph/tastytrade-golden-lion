@@ -15,17 +15,17 @@ export interface SeedDecision {
   reason: string;
 }
 
-// Feature is opt-in: disabled if BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT is unset.
-// BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT caps how deep a loss will still trigger
+// Feature is opt-in: disabled if STRATEGY_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT is unset.
+// STRATEGY_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT caps how deep a loss will still trigger
 // a seed — beyond this the position is too close to the bid stop-loss floor.
 // Defaults to 18 if unset.
 export function getMarginSeedConfig(): MarginSeedConfig | null {
-  const rawMin = process.env.BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT?.trim();
+  const rawMin = process.env.STRATEGY_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT?.trim();
   if (!rawMin) return null;
   const minDownPct = Number(rawMin);
   if (!Number.isFinite(minDownPct) || minDownPct <= 0) return null;
 
-  const rawMax = process.env.BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT?.trim();
+  const rawMax = process.env.STRATEGY_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT?.trim();
   const parsedMax = rawMax ? Number(rawMax) : NaN;
   const maxDownPct = Number.isFinite(parsedMax) && parsedMax > minDownPct ? parsedMax : 18;
 
@@ -34,12 +34,12 @@ export function getMarginSeedConfig(): MarginSeedConfig | null {
 }
 
 export function getCashSeedFromMarginConfig(): MarginSeedConfig | null {
-  const rawMin = process.env.BOT_CASH_SEED_FROM_MARGIN_MIN_DOWN_PCT?.trim();
+  const rawMin = process.env.STRATEGY_CASH_SEED_FROM_MARGIN_MIN_DOWN_PCT?.trim();
   if (!rawMin) return null;
   const minDownPct = Number(rawMin);
   if (!Number.isFinite(minDownPct) || minDownPct <= 0) return null;
 
-  const rawMax = process.env.BOT_CASH_SEED_FROM_MARGIN_MAX_DOWN_PCT?.trim();
+  const rawMax = process.env.STRATEGY_CASH_SEED_FROM_MARGIN_MAX_DOWN_PCT?.trim();
   const parsedMax = rawMax ? Number(rawMax) : NaN;
   const maxDownPct = Number.isFinite(parsedMax) && parsedMax > minDownPct ? parsedMax : minDownPct + 10;
 
@@ -59,7 +59,7 @@ export function getTimeOfDaySeedMultiplier(currentTime: Date): number {
 }
 
 // Age multiplier: new position (day 0) = 1.5 (conservative).
-// Scales down to 0.7 at BOT_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF - 1 days.
+// Scales down to 0.7 at STRATEGY_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF - 1 days.
 export function getPositionAgeSeedMultiplier(positionAgeDays: number | null): number {
   if (positionAgeDays === null) return 1.0;
   const fullAgeDays = Math.max(1, getNumDaysToSellOff() - 1);
