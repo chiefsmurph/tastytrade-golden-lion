@@ -54,6 +54,11 @@ function getStrongStockYesMaxPct(): number {
   return readEnvPct("STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT", 30);
 }
 
+// daytradeScore below this (more negative) qualifies as a basic stock YES on its own.
+function getBasicDaytradeScoreThreshold(): number {
+  return readEnvPct("STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD", -40);
+}
+
 // daytradeScore magnitude for strong YES.
 // At window start (9:30am): score must be < -max (strict).
 // At window end (1pm): score must be < -max/2 (relaxed).
@@ -68,6 +73,10 @@ function getBooleanBoostPct(): number {
 
 export function getSingleYesMaxTargetPct(): number {
   return readEnvPct("STRATEGY_GATE_SINGLE_YES_MAX_TARGET_PCT", 0.15);
+}
+
+export function getBasicYesMaxTargetPct(): number {
+  return readEnvPct("STRATEGY_GATE_BASIC_YES_MAX_TARGET_PCT", 0.10);
 }
 
 export function getBothYesMaxTargetPct(): number {
@@ -199,8 +208,10 @@ export function computePositionGate(options: {
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
   const allBooleansGood = goodBooleanScore === 10;
 
-  // basic: just qualityToBuy
-  const basicStockYes = qualityToBuy;
+  // basic: qualityToBuy, or a bullish daytradeScore below the basic threshold
+  const basicStockYes =
+    qualityToBuy ||
+    (daytradeScore !== null && daytradeScore < getBasicDaytradeScoreThreshold());
 
   // strong: qualityToBuy + pct or daytradeScore crosses time-scaled threshold
   const strongStockYes =
@@ -225,6 +236,8 @@ export function computePositionGate(options: {
     maxTargetPct = getSingleYesMaxTargetPct();
   } else if (crossAccountYes) {
     maxTargetPct = getSingleYesMaxTargetPct();
+  } else if (basicStockYes) {
+    maxTargetPct = getBasicYesMaxTargetPct();
   }
 
   // Each good boolean adds a fixed boost on top of the signal tier
