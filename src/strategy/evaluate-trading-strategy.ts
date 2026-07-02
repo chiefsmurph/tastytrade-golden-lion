@@ -223,7 +223,7 @@ function getTimeOfDayExecutionTargetsForMinute(
   const noBuyCutoffMinute = getNoBuyCutoffMinute(accountType);
 
   const marginMaxDTE = parseInt(process.env.BOT_MARGIN_MAX_TARGET_DTE ?? "7", 10);
-  const cashMinDTE   = parseInt(process.env.BOT_CASH_MIN_TARGET_DTE ?? "10", 10);
+  const cashMinDTE   = parseInt(process.env.BOT_CASH_MIN_TARGET_DTE ?? "7", 10);
 
   const rawTargetDTE = Math.round(
     blendBySchedule(timeInMinutes, [

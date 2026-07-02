@@ -93,12 +93,12 @@ cp .env.example .env
 - `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT` — Minimum cash-position ask-return loss percentage before the bot considers seeding the margin account. Leave unset to disable this feature.
 - `BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT` — Maximum loss percentage allowed for margin seeding. This prevents seeding when the cash position is already too close to the bid stop-loss floor. Defaults to `14`.
 - `BOT_INTRADAY_STOP_LOSS_PCT` — Intraday bid-return loss floor before the bot cuts off accumulation. Defaults to `30`.
-- `BOT_EOD_STOP_LOSS_PCT` — End-of-day bid-return loss floor after the accumulation cutoff. Defaults to `10`.
+- `BOT_EOD_STOP_LOSS_PCT` — End-of-day bid-return loss floor after the accumulation cutoff. Defaults to `7`.
 - `BOT_MAX_ASK_RETURN_PERC_FOR_BUY` — Optional override for the maximum ask-return threshold used on buy orders. Unset by default; `.env.example` uses `0.2`.
 
 #### Position Gate Signal Settings (both accounts)
 
-- `BOT_CROSS_ACCOUNT_YES_DOWN_PCT` — How far down the cash position must be before it can create a cross-account yes signal. Defaults to `10`.
+- `BOT_CROSS_ACCOUNT_YES_DOWN_PCT` — How far down the cash position must be before it can create a cross-account yes signal. Defaults to `7`.
 - `BOT_GATE_STRONG_STOCK_YES_MAX_PCT` — Maximum `percentOfBalance` allowed for a strong stock yes signal. Defaults to `30`.
 - `BOT_GATE_STRONG_DAYTRADE_SCORE_MAX` — Daytrade score magnitude threshold for a strong yes signal. Defaults to `100`.
 - `BOT_GATE_SINGLE_YES_MAX_TARGET_PCT` — Maximum target exposure when there is one yes signal. Defaults to `0.15`.
@@ -121,7 +121,7 @@ cp .env.example .env
 - `BOT_MARGIN_TARGET_CALL_DELTA` — Target absolute delta for OTM call strike selection on margin accounts. Defaults to `0.35`.
 - `BOT_OPTION_MARKET_SNAPSHOT_TTL_MS` — Cache TTL for option snapshot lookups. Defaults to `30000`; set to `0` to disable.
 - `BOT_MARGIN_MAX_TARGET_DTE` — Hard ceiling on target DTE for margin accounts. Defaults to `7`.
-- `BOT_CASH_MIN_TARGET_DTE` — Hard floor on target DTE for cash accounts. Defaults to `10`.
+- `BOT_CASH_MIN_TARGET_DTE` — Hard floor on target DTE for cash accounts. Defaults to `7`.
 
 #### Secret Feed Integration (Optional)
 
