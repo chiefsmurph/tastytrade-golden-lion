@@ -8,7 +8,7 @@ import { CurrentPosition } from "~/core/types";
 import { getUnderlyingSymbolForPosition } from "./evaluate-position";
 import { getTopOptionCandidateForSymbol, getMarginTargetCallDelta } from "./option-candidate";
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
-import { ProgrammaticAction } from "./evaluate-trading-strategy";
+import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import { BOT_ORDER_SOURCE } from "./order-sources";

@@ -1,4 +1,4 @@
-import { ProgrammaticAction } from "../evaluate-trading-strategy";
+import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
 
 export interface TopOptionCandidateForSymbolResult {
   askPrice?: number;

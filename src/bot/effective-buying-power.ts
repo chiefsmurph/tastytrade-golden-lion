@@ -1,7 +1,7 @@
 import { getCurrentAllocationBudget } from "./actions/manage-allocation";
-import { getTimeOfDayExecutionTargets } from "./evaluate-trading-strategy";
+import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import { getAccountMarginOrCash } from "~/core/default-account";
-import { getMaxBuyExposurePctForAccountType } from "./risk-limits";
+import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
 
 export interface EffectiveBuyingPowerSummary {
   buyingPowerRemaining: number;

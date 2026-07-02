@@ -6,7 +6,7 @@ import {
   evaluateTradingStrategy,
   getTimeOfDayExecutionTargets,
   getTimeOfDayExecutionTargetsForPstTime,
-} from "../evaluate-trading-strategy";
+} from "~/strategy/evaluate-trading-strategy";
 
 function buildMetricsAtTime(hours: number, minutes: number) {
   const currentTime = new Date();

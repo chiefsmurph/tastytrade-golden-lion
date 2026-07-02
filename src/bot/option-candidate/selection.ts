@@ -10,7 +10,7 @@ import {
   getTimeOfDayExecutionTargets as _getTimeOfDayExecutionTargets,
   evaluateTradingStrategy,
   PositionMetrics,
-} from "../evaluate-trading-strategy";
+} from "~/strategy/evaluate-trading-strategy";
 import { getOptionMarketSnapshot, OptionChainWithVolume } from "./market-snapshot";
 import { TopOptionCandidateForSymbolResult } from "./types";
 

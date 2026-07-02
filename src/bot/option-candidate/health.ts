@@ -1,4 +1,4 @@
-import { getTimeOfDayExecutionTargets } from "../evaluate-trading-strategy";
+import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import { getOptionMarketSnapshot } from "./market-snapshot";
 import { buildTopOptionCandidateResult } from "./selection";
 import {

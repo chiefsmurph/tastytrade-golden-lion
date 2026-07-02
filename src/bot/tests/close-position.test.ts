@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { closePosition, shouldSkipClosePositionForMorningSpread } from "../actions/close-position";
 import type { PositionGroupEvaluation } from "../evaluate-position";
-import type { ExecutionTargets } from "../evaluate-trading-strategy";
+import type { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 
 function buildEvaluation(
   currentTime: string,

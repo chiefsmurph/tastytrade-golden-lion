@@ -9,7 +9,7 @@ import {
   getSecretExecutionTargetForSymbol,
   getSecretPositionSignalsForSymbol,
   type SecretPositionSignals,
-} from "./secret";
+} from "~/bot/secret";
 
 function getMaxAskReturnPercForBuy(): number | null {
   const raw = process.env.BOT_MAX_ASK_RETURN_PERC_FOR_BUY?.trim();
