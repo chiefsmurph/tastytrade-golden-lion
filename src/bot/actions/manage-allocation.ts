@@ -606,14 +606,14 @@ export async function manageAllocationForGroup(
     candidate.quoteSymbol ?? candidate.streamerSymbol ?? candidate.symbol,
     3000,
   );
-  const bid = bidAsk?.bid ?? 0;
-  const ask = bidAsk?.ask ?? bid;
+  let bid = bidAsk?.bid ?? 0;
+  let ask = bidAsk?.ask ?? bid;
   const availableCapital = Math.min(
     Math.max(0, perGroupExposureHeadroom),
     Math.max(0, perGroupMaxBuyAmount),
     budget.buyingPowerRemaining,
   );
-  const routeOrders = allocateContractsByWeight(
+  let routeOrders = allocateContractsByWeight(
     buildRouteOrders(bid, ask, targets),
     availableCapital,
   );
@@ -634,10 +634,58 @@ export async function manageAllocationForGroup(
     };
   }
 
-  const totalQuantity = routeOrders.reduce(
+  let totalQuantity = routeOrders.reduce(
     (sum, routeOrder) => sum + routeOrder.quantity,
     0,
   );
+
+  // The chain pick can be unaffordable under the per-action budget while the
+  // contract we already hold is not (e.g. cash's 5% cap vs a fresh ITM pick).
+  // Retry sizing with the held contract before giving up on the add.
+  if (totalQuantity < 1 && !usedHeldContractFallback) {
+    const heldFallback = getHeldContractFallbackCandidate(
+      evaluation,
+      accountMarginOrCash,
+    );
+
+    if (heldFallback.symbol && heldFallback.symbol !== candidate.symbol) {
+      const heldBidAsk = await tastytradeApi.johnsService.getBidAskForSymbol(
+        heldFallback.quoteSymbol ?? heldFallback.streamerSymbol ?? heldFallback.symbol,
+        3000,
+      );
+      const heldBid = heldBidAsk?.bid ?? heldFallback.bidPrice ?? 0;
+      const heldAsk = heldBidAsk?.ask ?? heldFallback.askPrice ?? heldBid;
+      const heldRouteOrders = allocateContractsByWeight(
+        buildRouteOrders(heldBid, heldAsk, targets),
+        availableCapital,
+      );
+      const heldQuantity = heldRouteOrders.reduce(
+        (sum, routeOrder) => sum + routeOrder.quantity,
+        0,
+      );
+
+      console.log(
+        JSON.stringify({
+          scope: "manage-allocation-held-contract-fallback",
+          underlyingSymbol: evaluation.underlyingSymbol,
+          reason: "chain candidate unaffordable for per-action budget",
+          chainCandidate: candidate.symbol,
+          heldContract: heldFallback.symbol,
+          availableCapital,
+          heldQuantity,
+        }),
+      );
+
+      if (heldQuantity >= 1) {
+        candidate = heldFallback;
+        bid = heldBid;
+        ask = heldAsk;
+        routeOrders = heldRouteOrders;
+        totalQuantity = heldQuantity;
+        usedHeldContractFallback = true;
+      }
+    }
+  }
 
   if (totalQuantity < 1) {
     return {
@@ -681,9 +729,23 @@ export async function manageAllocationForGroup(
     };
   }
 
+  const candidateSymbol = candidate.symbol;
+  if (!candidateSymbol) {
+    // Unreachable: both the chain guard above and the held fallback branch
+    // require a symbol — this exists to keep the narrowing after reassignment.
+    return {
+      accountNumber,
+      action: "MANAGE_ALLOCATION",
+      placedOrder: false,
+      routeOrders: [],
+      skippedReason: "no option candidate found",
+      underlyingSymbol: evaluation.underlyingSymbol,
+    };
+  }
+
   const placedRouteOrders = await placeRouteOrders(
     accountNumber,
-    candidate.symbol,
+    candidateSymbol,
     routeOrders,
     bid,
     ask,
