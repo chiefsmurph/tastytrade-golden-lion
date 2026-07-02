@@ -14,7 +14,7 @@ import {
 import { getOptionMarketSnapshot, OptionChainWithVolume } from "~/core/market-snapshot";
 import { TopOptionCandidateForSymbolResult } from "./types";
 
-import { getMarginTargetCallDelta, getMinIvRankPct, getMaxOptionSpreadPct } from "~/strategy/entry-filters";
+import { getMarginTargetCallDelta, getMinIvRankPct, getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
 
 export { getMarginTargetCallDelta };
 
@@ -188,7 +188,7 @@ export async function buildTopOptionCandidateResult(
     return bVolume - aVolume;
   });
 
-  const maxAllowedSpreadPct = getMaxOptionSpreadPct();
+  const maxAllowedSpreadPct = getMaxOptionSpreadPctForTime(new Date());
   let fallbackWideSpreadCandidate: TopOptionCandidateForSymbolResult | undefined;
 
   for (const candidate of sortedCandidates) {
@@ -238,7 +238,7 @@ export async function buildTopOptionCandidateResult(
     return sanitizeTopCandidateResponse({
       ...fallbackWideSpreadCandidate,
       symbol: undefined,
-      skippedReason: "all candidate spreads exceeded STRATEGY_MAX_OPTION_SPREAD_PCT",
+      skippedReason: `all candidate spreads exceeded max allowed spread (${(maxAllowedSpreadPct * 100).toFixed(2)}%)`,
     });
   }
 

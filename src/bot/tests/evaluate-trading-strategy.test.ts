@@ -73,8 +73,9 @@ test("getTimeOfDayExecutionTargets boundary at 12:30 is fully risk-off", () => {
 test("getTimeOfDayExecutionTargets keeps cash accounts active at 12:30", () => {
   const targets = getTimeOfDayExecutionTargetsForPstTime("12:30", "cash");
 
+  // Cash exposure ramps to 100% at 12:45; at 12:30 the blend sits at 0.98
   assert.equal(targets.targetDTE, 7);
-  assert.equal(targets.targetAccountExposure, 0.8);
+  assert.equal(targets.targetAccountExposure, 0.98);
   assert.equal(targets.bidWeight, 0);
   assert.equal(targets.midWeight, 0.15);
   assert.equal(targets.askWeight, 0.85);

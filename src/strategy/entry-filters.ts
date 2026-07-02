@@ -1,3 +1,5 @@
+import { getMorningSpreadThresholdPct } from "./spread-thresholds";
+
 function readEnv(key: string, fallback: number, validate: (n: number) => boolean = () => true): number {
   const raw = process.env[key]?.trim();
   if (!raw) return fallback;
@@ -15,4 +17,10 @@ export function getMinIvRankPct(): number {
 
 export function getMaxOptionSpreadPct(): number {
   return readEnv("STRATEGY_MAX_OPTION_SPREAD_PCT", 0.3, n => n > 0);
+}
+
+// Entries into wide morning spreads are born adjacent to the bid-based stop
+// loss, so buys follow the same ramp the close gate uses.
+export function getMaxOptionSpreadPctForTime(currentTime: Date): number {
+  return Math.min(getMaxOptionSpreadPct(), getMorningSpreadThresholdPct(currentTime));
 }
