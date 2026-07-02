@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getHeldContractFallbackCandidate } from "../actions/manage-allocation";
+import { isNoFittingSeedCandidateReason } from "../run-cycle-seed";
 import type { PositionGroupEvaluation } from "../evaluate-position";
 
 function occSymbol(root: string, yymmdd: string, strike: string): string {
@@ -129,4 +130,34 @@ test("rejects the held contract when its quote is missing", () => {
 
   assert.equal(result.symbol, undefined);
   assert.match(result.skippedReason ?? "", /quote unavailable/);
+});
+
+test("isNoFittingSeedCandidateReason matches only candidate-fit failures", () => {
+  assert.equal(
+    isNoFittingSeedCandidateReason("no candidate found in cash seed DTE window 14-30"),
+    true,
+  );
+  assert.equal(
+    isNoFittingSeedCandidateReason("cash seed candidate DTE must be within 14-30"),
+    true,
+  );
+  assert.equal(isNoFittingSeedCandidateReason("no option candidate found"), true);
+  assert.equal(isNoFittingSeedCandidateReason("candidate quote symbol unavailable"), true);
+
+  assert.equal(isNoFittingSeedCandidateReason(null), false);
+  assert.equal(isNoFittingSeedCandidateReason(undefined), false);
+  assert.equal(
+    isNoFittingSeedCandidateReason("underlying already has an open position"),
+    false,
+  );
+  assert.equal(
+    isNoFittingSeedCandidateReason("time-of-day strategy is not allowing new accumulation"),
+    false,
+  );
+  assert.equal(
+    isNoFittingSeedCandidateReason(
+      "insufficient effective buying power for seed order at current time-of-day exposure target",
+    ),
+    false,
+  );
 });
