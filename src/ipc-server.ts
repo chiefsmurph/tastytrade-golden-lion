@@ -8,7 +8,7 @@ import {
   getOptionHealthForSymbol,
   resetOptionMarketSnapshotCacheStats,
   getTopOptionCandidateForAccount,
-} from "./bot/option-candidate";
+} from "./strategy/option-candidate";
 import { getPositionsAndBalances } from "./core/get-positions-and-balances";
 import {
   getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime,
@@ -42,7 +42,7 @@ import {
   buildDebugSecretExecutionTargetPayload,
   getSecretSocketStatus,
   logDebugSecretExecutionTargetPayload,
-} from "./bot/secret";
+} from "./strategy/secret";
 
 type CommandHandler = (args: string[]) => Promise<unknown>;
 
@@ -106,12 +106,12 @@ const commandHandlers: Record<string, CommandHandler> = {
     const normalizedSide = side === "put" ? "put" : "call";
     return getOptionCandidates(symbol, normalizedSide);
   },
-  "bot:getTopOptionCandidateForSymbol": async ([symbol, side, accountNumber]) => {
+  "strategy:getTopOptionCandidateForSymbol": async ([symbol, side, accountNumber]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";
     return getTopOptionCandidateForAccount(symbol, normalizedSide, accountNumber);
   },
-  "bot:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
+  "strategy:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";
     const parsedTargetDTE =
@@ -131,23 +131,23 @@ const commandHandlers: Record<string, CommandHandler> = {
       parsedTargetDTE,
     );
   },
-  "bot:getOptionMarketSnapshotCacheStats": async () => {
+  "strategy:getOptionMarketSnapshotCacheStats": async () => {
     return getOptionMarketSnapshotCacheStats();
   },
-  "bot:resetOptionMarketSnapshotCacheStats": async ([clearCache]) => {
+  "strategy:resetOptionMarketSnapshotCacheStats": async ([clearCache]) => {
     const normalized = clearCache?.trim().toLowerCase();
     const shouldClearCache =
       normalized === "1" || normalized === "true" || normalized === "yes";
     return resetOptionMarketSnapshotCacheStats(shouldClearCache);
   },
-  "bot:getTimeOfDayExecutionTargets": async ([timeOfDay]) => {
+  "strategy:getTimeOfDayExecutionTargets": async ([timeOfDay]) => {
     return getTargetsForPstTime(timeOfDay);
   },
   "bot:getCurrentAllocationBudget": async ([accountNumber]) => {
     const resolvedAccountNumber = accountNumber ?? (await getDefaultAccountNumber());
     return getCurrentAllocationBudget(resolvedAccountNumber);
   },
-  "bot:getSecretSocketStatus": async () => {
+  "strategy:getSecretSocketStatus": async () => {
     const status = getSecretSocketStatus();
     console.log(
       JSON.stringify(
@@ -162,7 +162,7 @@ const commandHandlers: Record<string, CommandHandler> = {
     );
     return status;
   },
-  "bot:debugSecretExecutionTargetForSymbol": async ([
+  "strategy:debugSecretExecutionTargetForSymbol": async ([
     symbol,
     askReturnPercArg,
     timeSinceLastActionMinutesArg,

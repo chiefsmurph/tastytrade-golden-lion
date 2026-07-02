@@ -1,6 +1,4 @@
 import tastytradeApi from "~/core/tastytrade-client";
-import { OptionMarketSnapshotCacheStats } from "./types";
-
 
 type OptionChainWithVolume = Awaited<
   ReturnType<typeof tastytradeApi.johnsService.fetchOptionChainWithVolume>
@@ -17,6 +15,15 @@ interface CachedOptionMarketSnapshot {
 }
 
 export type { OptionChainWithVolume };
+
+export interface OptionMarketSnapshotCacheStats {
+  cacheSize: number;
+  hitRate: number;
+  hits: number;
+  misses: number;
+  requests: number;
+  ttlMs: number;
+}
 
 const optionMarketSnapshotCache = new Map<string, CachedOptionMarketSnapshot>();
 let optionMarketSnapshotCacheHitCount = 0;

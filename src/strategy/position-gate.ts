@@ -1,4 +1,4 @@
-import { SecretSourcePosition } from "~/bot/secret/types";
+import { SecretSourcePosition } from "~/strategy/secret/types";
 import {
   getCashAccountSeedEndMinute,
   getSecretAutoSeedWindowStartMinute,

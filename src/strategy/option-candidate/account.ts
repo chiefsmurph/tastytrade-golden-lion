@@ -1,8 +1,20 @@
 import { getAccountMarginOrCash, getMarginAccountNumber } from "~/core/default-account";
-import { getEffectiveBuyingPowerSummary } from "../effective-buying-power";
-import { getSeedSelectionOptionsForAccountType } from "../seed-symbol";
+import { getEffectiveBuyingPowerSummary } from "~/bot/effective-buying-power";
+import { getMarginTargetCallDelta } from "~/strategy/entry-filters";
 import { getTopOptionCandidateForSymbol } from "./selection";
 import { TopOptionCandidateForAccountResult } from "./types";
+import type { OptionCandidateSelectionOptions } from "~/bot/option-contracts";
+
+export const CASH_ACCOUNT_SEED_MIN_DTE = 14;
+export const CASH_ACCOUNT_SEED_MAX_DTE = 30;
+
+export function getSeedSelectionOptionsForAccountType(
+  accountType: "margin" | "cash" | "unknown",
+): OptionCandidateSelectionOptions {
+  return accountType === "cash"
+    ? { minDTE: CASH_ACCOUNT_SEED_MIN_DTE, maxDTE: CASH_ACCOUNT_SEED_MAX_DTE }
+    : { strikeTarget: "otm" as const, targetDelta: getMarginTargetCallDelta() };
+}
 
 export async function getTopOptionCandidateForAccount(
   symbol: string,
