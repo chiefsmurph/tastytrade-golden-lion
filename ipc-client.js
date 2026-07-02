@@ -2,7 +2,7 @@ import net from "node:net";
 import path from "node:path";
 
 export const DEFAULT_IPC_SOCKET_FILENAME = ".tastytrade-golden-lion.sock";
-export const DEFAULT_IPC_SOCKET_ENV_VAR = "TASTYTRADE_BOT_SOCKET";
+export const DEFAULT_IPC_SOCKET_ENV_VAR = "CORE_IPC_SOCKET";
 
 export function getIpcSocketPath(options = {}) {
   const {
@@ -12,7 +12,7 @@ export function getIpcSocketPath(options = {}) {
     socketPath,
   } = options;
 
-  return socketPath ?? process.env[envVarName] ?? path.join(cwd, socketFileName);
+  return socketPath ?? (process.env[envVarName] || path.join(cwd, socketFileName));
 }
 
 export function sendIpcRequest(command, args = [], options = {}) {

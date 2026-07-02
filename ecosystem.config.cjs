@@ -1,5 +1,3 @@
-const path = require("node:path");
-
 module.exports = {
   apps: [
     {
@@ -15,10 +13,6 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         BOT_RUN_ON_SCHEDULE: "true",
-        TASTYTRADE_BOT_SOCKET: path.join(
-          __dirname,
-          ".tastytrade-golden-lion.sock",
-        ),
       },
     },
   ],
