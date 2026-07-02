@@ -206,8 +206,6 @@ function getAccountTypeFromHistoryFileName(fileName: string): AccountTypeLabel {
 }
 
 function getRunHistoryDirectory(): string {
-  const specific = process.env.BOT_RUN_HISTORY_DIR?.trim();
-  if (specific) return specific;
   const dataDir = process.env.BOT_DATA_DIR?.trim() || undefined;
   return path.join(dataDir ?? path.join(process.cwd(), "data"), "runs");
 }
