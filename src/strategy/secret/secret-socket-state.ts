@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { io } from "socket.io-client";
 import {
   isAnySecretAutoSeedEnabled,
@@ -11,6 +13,76 @@ import {
 } from "./types";
 
 const SECRET_SOCKET_EVENT = "server:data-update";
+
+// The cache is plain module state, so a process restart used to blank it until
+// the server's next push — minutes of "no boolean data" after every restart.
+// Persist it to disk on each update and rehydrate on boot while still fresh.
+const SECRET_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+
+function getSecretCacheFilePath(): string {
+  const dataDir = process.env.BOT_DATA_DIR?.trim() || path.join(process.cwd(), "data");
+  return path.join(dataDir, "secret-cache.json");
+}
+
+function persistSecretCacheToDisk(): void {
+  try {
+    const filePath = getSecretCacheFilePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const tmpPath = `${filePath}.tmp`;
+    fs.writeFileSync(
+      tmpPath,
+      JSON.stringify({
+        positions: cachedSourcePositions,
+        positionsUpdatedAt: lastSecretPositionsUpdateAt?.toISOString() ?? null,
+        tickerRecsPicks: cachedTickerRecsPicks,
+        tickerRecsUpdatedAt: lastSecretTickerRecsUpdateAt?.toISOString() ?? null,
+      }),
+      "utf8",
+    );
+    fs.renameSync(tmpPath, filePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[secret] failed to persist cache to disk: ${message}`);
+  }
+}
+
+// Rehydrates caches and timestamps only — deliberately does not trigger
+// auto-seeding, which should only react to live pushes.
+function rehydrateSecretCacheFromDisk(): void {
+  try {
+    const raw = fs.readFileSync(getSecretCacheFilePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+
+    const positionsUpdatedAt = Date.parse(parsed?.positionsUpdatedAt ?? "");
+    if (
+      Array.isArray(parsed?.positions) &&
+      Number.isFinite(positionsUpdatedAt) &&
+      now - positionsUpdatedAt <= SECRET_CACHE_MAX_AGE_MS
+    ) {
+      cachedSourcePositions = parsed.positions as SecretSourcePosition[];
+      lastSecretPositionsUpdateAt = new Date(positionsUpdatedAt);
+      console.log(
+        `[secret] rehydrated ${cachedSourcePositions.length} cached positions from disk (age ${Math.round((now - positionsUpdatedAt) / 1000)}s)`,
+      );
+    }
+
+    const tickerRecsUpdatedAt = Date.parse(parsed?.tickerRecsUpdatedAt ?? "");
+    if (
+      Array.isArray(parsed?.tickerRecsPicks) &&
+      Number.isFinite(tickerRecsUpdatedAt) &&
+      now - tickerRecsUpdatedAt <= SECRET_CACHE_MAX_AGE_MS
+    ) {
+      cachedTickerRecsPicks = parsed.tickerRecsPicks as SecretTickerRecPick[];
+      lastSecretTickerRecsUpdateAt = new Date(tickerRecsUpdatedAt);
+      console.log(
+        `[secret] rehydrated ${cachedTickerRecsPicks.length} cached ticker-rec picks from disk (age ${Math.round((now - tickerRecsUpdatedAt) / 1000)}s)`,
+      );
+    }
+  } catch {
+    // Missing or unreadable cache file — start cold like before.
+  }
+}
 
 let secretSocket: ReturnType<typeof io> | null = null;
 let cachedSourcePositions: SecretSourcePosition[] = [];
@@ -67,6 +139,7 @@ function updateCachedPositionsFromPayload(payload: SecretDataUpdatePayload): voi
 
   cachedSourcePositions = sourcePositions as SecretSourcePosition[];
   lastSecretPositionsUpdateAt = new Date();
+  persistSecretCacheToDisk();
 
   void maybeAutoSeedFromSecretPositions(cachedSourcePositions);
 }
@@ -84,6 +157,7 @@ function updateTickerRecsFromPayload(payload: SecretDataUpdatePayload): void {
 
   cachedTickerRecsPicks = picks as SecretTickerRecPick[];
   lastSecretTickerRecsUpdateAt = new Date();
+  persistSecretCacheToDisk();
 
   void maybeAutoSeedFromTickerRecs(cachedTickerRecsPicks);
 }
@@ -102,6 +176,8 @@ export function startSecretSocketConnection(): void {
   if (!socketUrl || timeoutMs == null) {
     return;
   }
+
+  rehydrateSecretCacheFromDisk();
 
   secretSocket = io(socketUrl, {
     reconnection: true,
