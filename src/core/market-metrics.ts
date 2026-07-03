@@ -14,6 +14,20 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// The API returns implied-volatility-index-rank as a 0–1 decimal (live-verified
+// 2026-07-03: MARA "0.355173693"); every threshold in this codebase (entry min
+// 20, seed fallbacks 50/70) is 0–100, so values ≤ 1 are scaled up here.
+export function parseUnderlyingIvMetricsEntry(entry: unknown): UnderlyingIvMetrics | null {
+  const record = entry as Record<string, unknown> | null | undefined;
+  const rawIvRank = toNumber(record?.["implied-volatility-index-rank"]);
+  if (rawIvRank == null) return null;
+
+  return {
+    ivRank: rawIvRank <= 1 ? rawIvRank * 100 : rawIvRank,
+    impliedVolatility: toNumber(record?.["implied-volatility-index"]),
+  };
+}
+
 export async function getUnderlyingIvMetrics(
   symbol: string,
 ): Promise<UnderlyingIvMetrics | null> {
@@ -26,8 +40,10 @@ export async function getUnderlyingIvMetrics(
   }
 
   try {
+    // Must be the comma-separated string form: the SDK serializes arrays as
+    // symbols[]=X (qs brackets), which the API rejects with a bare 400.
     const data = await tastytradeApi.marketMetricsService.getMarketMetrics({
-      symbols: [key],
+      symbols: key,
     });
 
     // Response is an array of per-symbol objects
@@ -42,17 +58,12 @@ export async function getUnderlyingIvMetrics(
       return null;
     }
 
-    const ivRank = toNumber(entry["implied-volatility-index-rank"]);
-    if (ivRank == null) {
+    const metrics = parseUnderlyingIvMetricsEntry(entry);
+    if (metrics == null) {
       console.error(`[market-metrics] implied-volatility-index-rank missing/invalid for ${key} (raw: ${JSON.stringify(entry["implied-volatility-index-rank"])}) — ivRank unavailable (cached ${IV_METRICS_CACHE_TTL_MS / 60000} min)`);
       ivMetricsCache.set(key, { cachedAt: now, metrics: null });
       return null;
     }
-
-    const metrics: UnderlyingIvMetrics = {
-      ivRank,
-      impliedVolatility: toNumber(entry["implied-volatility-index"]),
-    };
 
     ivMetricsCache.set(key, { cachedAt: now, metrics });
     return metrics;
