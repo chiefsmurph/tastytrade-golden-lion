@@ -189,6 +189,32 @@ export async function buildTopOptionCandidateResult(
   });
 
   const maxAllowedSpreadPct = getMaxOptionSpreadPctForTime(new Date());
+
+  // The loop below early-returns on the first spread-passing candidate, so the
+  // alternatives never surface anywhere. Their volume/OI/greeks are already in
+  // the sampled chain (no extra fetches), so log the considered set for the
+  // liquidity-distribution collection (IMPROVEMENTS.v4 strategy #4 step 1).
+  // Spread/sizes are deliberately absent here — those need per-candidate quote
+  // fetches the cycle can't afford; the chosen candidate's own log carries them.
+  console.log(
+    JSON.stringify({
+      scope: "top-candidate-considered",
+      symbol,
+      side,
+      preferredDTE,
+      maxAllowedSpreadPct,
+      candidates: sortedCandidates.slice(0, 6).map((candidate) => ({
+        sym: side === "call" ? candidate.call : candidate.put,
+        dte: candidate.dte,
+        strike: candidate.strike,
+        vol: getOptionCandidateVolume(candidate, side),
+        oi: side === "call" ? (candidate.callOpenInterest ?? null) : (candidate.putOpenInterest ?? null),
+        ivx: (side === "call" ? candidate.callIv : candidate.putIv) ?? null,
+        delta: (side === "call" ? candidate.callDelta : candidate.putDelta) ?? null,
+      })),
+    }),
+  );
+
   let fallbackWideSpreadCandidate: TopOptionCandidateForSymbolResult | undefined;
 
   for (const candidate of sortedCandidates) {
@@ -219,6 +245,7 @@ export async function buildTopOptionCandidateResult(
       askSize: bidAsk?.askSize,
       bidSize: bidAsk?.bidSize,
       openInterest: candidateOpenInterest,
+      dayVolume: getOptionCandidateVolume(candidate, side),
       ivx: candidateIvx,
       maxAllowedSpreadPct,
       meetsSpreadRequirement,

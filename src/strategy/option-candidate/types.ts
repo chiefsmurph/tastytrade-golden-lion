@@ -7,6 +7,7 @@ export interface TopOptionCandidateForSymbolResult {
   bidPrice?: number;
   bidSize?: number;
   openInterest?: number; // requested side's OI (standing depth, distinct from day volume)
+  dayVolume?: number; // requested side's traded volume today
   "call-streamer-symbol"?: string;
   call?: string;
   dte?: number;
