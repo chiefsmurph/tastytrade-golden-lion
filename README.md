@@ -219,8 +219,8 @@ node run core:isEquityOptionsMarketOpen
 
 ```bash
 node run bot:getOptionCandidates RUM call
-node run strategy:getTopOptionCandidateForSymbol RUM call 5WI88116
-node run strategy:getTopOptionCandidateForSymbol RUM call 5WU18519
+node run strategy:getTopOptionCandidateForSymbol RUM call <MARGIN_ACCOUNT>
+node run strategy:getTopOptionCandidateForSymbol RUM call <CASH_ACCOUNT>
 node run strategy:getOptionHealthForSymbol RUM call
 node run strategy:getOptionHealthForSymbol RUM call 14
 ```
@@ -246,13 +246,13 @@ node run bot:getLastRunGroupsByTickers RUM,TSLA
 
 ```bash
 node run bot:getDayReport                          # latest snapshot for all accounts
-node run bot:getDayReport 5WI88116                 # history for one account
-node run bot:getDayReport 5WI88116 2026-06-30      # specific date
-node run bot:getDayTrend                           # live snapshot vs last stored baseline
-node run bot:getDayTrend 5WI88116                  # single account
-node run bot:getClosedPositionsToday               # all positions closed today with realized P&L
-node run bot:recordDayReport                       # force-record a snapshot now (bypasses 1pm gate)
-node run bot:recordDayReport 5WI88116              # single account
+node run bot:getDayReport <MARGIN_ACCOUNT>                 # history for one account
+node run bot:getDayReport <MARGIN_ACCOUNT> 2026-06-30      # specific date
+node run bot:getDayTrend                                   # live snapshot vs last stored baseline
+node run bot:getDayTrend <MARGIN_ACCOUNT>                  # single account
+node run bot:getClosedPositionsToday                       # all positions closed today with realized P&L
+node run bot:recordDayReport                               # force-record a snapshot now (bypasses 1pm gate)
+node run bot:recordDayReport <MARGIN_ACCOUNT>              # single account
 ```
 
 `bot:purchaseSymbol` format:
