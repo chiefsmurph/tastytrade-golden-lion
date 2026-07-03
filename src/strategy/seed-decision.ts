@@ -77,6 +77,17 @@ export function getPositionAgeMinutesSeedMultiplier(positionAgeMinutes: number |
   return 1.5 - 0.8 * t;
 }
 
+// Position-fill multiplier: how much of its exposure target the margin
+// position already occupies (pctOfNetLiq / targetExposurePct). Barely deployed
+// (margin can still average down on its own) = 1.5 (conservative — cash holds
+// back). At/beyond target (margin fully committed, cash is the only way to
+// keep pressing) = 0.7 (aggressive).
+export function getPositionFillSeedMultiplier(fillRatio: number | null): number {
+  if (fillRatio === null || !Number.isFinite(fillRatio)) return 1.0;
+  const t = Math.max(0, Math.min(1, fillRatio));
+  return 1.5 - 0.8 * t;
+}
+
 // Boolean multiplier: good signals lower thresholds so seeding fires on smaller losses.
 // Score 0–10: <3=neutral (1.0×), 3-4=slight boost (0.95×), 5-7=good (0.85×), 8+=great (0.7×).
 export function getBooleanSeedMultiplier(goodBooleanScore: number | null): number {
@@ -87,15 +98,17 @@ export function getBooleanSeedMultiplier(goodBooleanScore: number | null): numbe
   return 1.0;
 }
 
-// Returns effective thresholds after applying time-of-day, position-age, and boolean scaling.
+// Returns effective thresholds after applying time-of-day, position-age, boolean,
+// and position-fill scaling.
 // maxDownPct is capped at the configured max — scaling can only lower it, never raise it.
 export function getScaledThresholds(
   config: MarginSeedConfig,
   timeFactor: number,
   ageFactor: number,
   booleanFactor: number,
+  fillFactor = 1,
 ): MarginSeedConfig {
-  const combined = timeFactor * ageFactor * booleanFactor;
+  const combined = timeFactor * ageFactor * booleanFactor * fillFactor;
   return {
     minDownPct: Math.max(config.minDownPct * combined, 1),
     maxDownPct: Math.min(config.maxDownPct * combined, config.maxDownPct),
