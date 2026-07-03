@@ -158,6 +158,11 @@ export interface TastytradeStrikeWithVolumes extends TastytradeStrike {
   callVolume?: number;
   putVolume?: number;
   volume?: number; // generic fallback
+  // Open interest tracked separately from volume: OI is standing market depth
+  // (Summary events), volume is today's traded activity (Trade events).
+  callOpenInterest?: number;
+  putOpenInterest?: number;
+  openInterest?: number; // generic fallback
   callIv?: number;    // implied volatility for call (decimal, e.g. 1.187 = 118.7%)
   putIv?: number;     // implied volatility for put
   callDelta?: number; // delta for call (0 to 1)

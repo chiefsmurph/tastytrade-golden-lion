@@ -160,7 +160,8 @@ function mergeIvMaps(
 }
 
 export interface OptionMarketSample {
-  volumes: Record<string, number>;
+  volumes: Record<string, number>;        // streamer symbol → day volume (traded today)
+  openInterestBySymbol: Record<string, number>; // streamer symbol → open interest (standing)
   ivBySymbol: Record<string, number>;    // streamer symbol → implied volatility (decimal)
   deltaBySymbol: Record<string, number>; // streamer symbol → delta
 }
@@ -201,12 +202,13 @@ async function fetchOptionVolumesInner(
         "No streamer symbols found in nested option chain for",
         optionChain["underlying-symbol"],
       );
-      return { volumes: {}, ivBySymbol: {}, deltaBySymbol: {} };
+      return { volumes: {}, openInterestBySymbol: {}, ivBySymbol: {}, deltaBySymbol: {} };
     }
 
     await tastytradeApi.quoteStreamer.connect();
 
     const volumes: Record<string, number> = {};
+    const openInterestBySymbol: Record<string, number> = {};
     const ivBySymbol: Record<string, number> = {};
     const deltaBySymbol: Record<string, number> = {};
     let rawEventCount = 0;
@@ -238,9 +240,12 @@ async function fetchOptionVolumesInner(
       return maxFinite;
     }
 
+    // Volume and open interest are extracted separately — OI is standing
+    // depth from Summary events, volume is today's traded activity. They
+    // used to be max()-merged into one number, which made "volume" ambiguous.
     function extractVolumeFromEvent(
       ev: any,
-    ): { symbol?: string; volume?: number; source?: string } | null {
+    ): { symbol?: string; volume?: number; openInterest?: number } | null {
       if (!ev) return null;
 
       const symbol =
@@ -252,22 +257,18 @@ async function fetchOptionVolumesInner(
         ev["day-volume"],
         ev.totalVolume,
         ev["total-volume"],
+      );
+      const openInterest = getMaxFiniteNumber(
         ev.openInterest,
         ev["open-interest"],
         ev.oi,
       );
-      if (vol != null) {
+
+      if (vol != null || openInterest != null) {
         return {
           symbol,
-          source:
-            ev.volume != null ||
-            ev.dayVolume != null ||
-            ev["day-volume"] != null ||
-            ev.totalVolume != null ||
-            ev["total-volume"] != null
-              ? "volume"
-              : "openInterest",
-          volume: vol,
+          volume: vol ?? undefined,
+          openInterest: openInterest ?? undefined,
         };
       }
 
@@ -301,10 +302,16 @@ async function fetchOptionVolumesInner(
 
           try {
             const parsed = extractVolumeFromEvent(ev);
-            if (parsed && parsed.symbol && typeof parsed.volume === "number") {
+            if (parsed?.symbol && typeof parsed.volume === "number") {
               volumes[parsed.symbol] = Math.max(
                 volumes[parsed.symbol] || 0,
                 parsed.volume,
+              );
+            }
+            if (parsed?.symbol && typeof parsed.openInterest === "number") {
+              openInterestBySymbol[parsed.symbol] = Math.max(
+                openInterestBySymbol[parsed.symbol] || 0,
+                parsed.openInterest,
               );
             }
 
@@ -344,7 +351,7 @@ async function fetchOptionVolumesInner(
       );
     }
 
-    return { volumes, ivBySymbol, deltaBySymbol };
+    return { volumes, openInterestBySymbol, ivBySymbol, deltaBySymbol };
   } catch (err: any) {
     console.error("Error collecting option volumes:", err?.message || err);
     restartOnFatalQuoteStreamerError("fetchOptionVolumes", err);
@@ -364,9 +371,28 @@ export function candidateSymbolsFor(raw: string | undefined) {
   return Array.from(out);
 }
 
+export interface ChainMetricFieldNames {
+  call: string;
+  put: string;
+  generic: string;
+}
+
+export const VOLUME_FIELD_NAMES: ChainMetricFieldNames = {
+  call: "callVolume",
+  put: "putVolume",
+  generic: "volume",
+};
+
+export const OPEN_INTEREST_FIELD_NAMES: ChainMetricFieldNames = {
+  call: "callOpenInterest",
+  put: "putOpenInterest",
+  generic: "openInterest",
+};
+
 export function mergeVolumesIntoChain(
   chain: TastytradeOptionChain,
   volumes: Record<string, number>,
+  fieldNames: ChainMetricFieldNames = VOLUME_FIELD_NAMES,
 ) {
   if (!chain || typeof chain !== "object") return chain;
   const hasVolumeForKey = (key: string) =>
@@ -392,10 +418,10 @@ export function mergeVolumesIntoChain(
           for (const c of candidates) {
             if (hasVolumeForKey(c)) {
               const short = k.includes("call")
-                ? "callVolume"
+                ? fieldNames.call
                 : k.includes("put")
-                  ? "putVolume"
-                  : "volume";
+                  ? fieldNames.put
+                  : fieldNames.generic;
               obj[short] = volumes[c];
               attached = true;
               break;
@@ -480,13 +506,19 @@ export async function fetchOptionChainWithVolume(symbol: string) {
     optionChain,
     resolvedUnderlyingPrice,
   );
-  const { volumes: optionVolumes, ivBySymbol: optionIvBySymbol, deltaBySymbol: optionDeltaBySymbol } =
-    await fetchOptionVolumes(filteredForVolumeSampling, 5000);
-  const { volumes: mandatoryCandidateVolumes, ivBySymbol: mandatoryIvBySymbol, deltaBySymbol: mandatoryDeltaBySymbol } =
-    await fetchOptionVolumes(mandatoryCandidateSamplingChain, 7000);
-  const mergedOptionVolumes = mergeVolumeMaps(optionVolumes, mandatoryCandidateVolumes);
-  const mergedIvBySymbol = mergeIvMaps(optionIvBySymbol, mandatoryIvBySymbol);
-  const mergedDeltaBySymbol = mergeIvMaps(optionDeltaBySymbol, mandatoryDeltaBySymbol);
-  const merged = mergeVolumesIntoChain(optionChain, mergedOptionVolumes);
+  const optionSample = await fetchOptionVolumes(filteredForVolumeSampling, 5000);
+  const mandatorySample = await fetchOptionVolumes(mandatoryCandidateSamplingChain, 7000);
+  const mergedOptionVolumes = mergeVolumeMaps(optionSample.volumes, mandatorySample.volumes);
+  const mergedOpenInterest = mergeVolumeMaps(
+    optionSample.openInterestBySymbol,
+    mandatorySample.openInterestBySymbol,
+  );
+  const mergedIvBySymbol = mergeIvMaps(optionSample.ivBySymbol, mandatorySample.ivBySymbol);
+  const mergedDeltaBySymbol = mergeIvMaps(optionSample.deltaBySymbol, mandatorySample.deltaBySymbol);
+  const merged = mergeVolumesIntoChain(
+    mergeVolumesIntoChain(optionChain, mergedOptionVolumes),
+    mergedOpenInterest,
+    OPEN_INTEREST_FIELD_NAMES,
+  );
   return mergeGreeksIntoChain(merged, mergedIvBySymbol, mergedDeltaBySymbol);
 }
