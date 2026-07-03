@@ -121,10 +121,10 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 ### Strategy: Position Gate Signal Settings
 
 - `STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT` — How far down the cash position must be before it generates a cross-account yes signal. Defaults to `10`.
-- `STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT` — Maximum `percentOfBalance` allowed for a strong stock yes signal. Defaults to `30`.
-- `STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX` — Daytrade score magnitude threshold for a strong yes signal. Defaults to `100`.
-- `STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD` — Daytrade score below which a position qualifies as a basic stock yes on its own (in addition to `qualityToBuy`). Defaults to `-40`.
-- `STRATEGY_GATE_BASIC_PERCENT_OF_BALANCE_THRESHOLD` — `percentOfBalance` above which a position qualifies as a basic stock yes on its own. Defaults to `50`.
+- `STRATEGY_GATE_BASIC_PERCENT_OF_BALANCE_THRESHOLD` — `percentOfBalance` base for basic stock yes qualification. Time-scaled: half the base at window start, rising to the base by 1pm. Keep below the strong threshold so the basic bar stays easier. Defaults to `25`.
+- `STRATEGY_GATE_STRONG_PERCENT_OF_BALANCE_THRESHOLD` — `percentOfBalance` base for strong stock yes qualification (with `qualityToBuy`). Time-scaled the same way. Defaults to `30`. Legacy alias: `STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT`.
+- `STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD` — Daytrade score base for basic stock yes qualification (in addition to `qualityToBuy`). Time-scaled: half the base at window start, tightening to the base by 1pm (scores build magnitude through the session). Defaults to `-40`.
+- `STRATEGY_GATE_STRONG_DAYTRADE_SCORE_THRESHOLD` — Daytrade score base for strong stock yes qualification (with `qualityToBuy`). Time-scaled the same way. Defaults to `-100`. Legacy alias: `STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX` (positive magnitude).
 - `STRATEGY_GATE_SINGLE_YES_MAX_TARGET_PCT` — Maximum target exposure with one yes signal. Defaults to `0.15`.
 - `STRATEGY_GATE_BASIC_YES_MAX_TARGET_PCT` — Maximum target exposure with only a basic stock yes signal. Defaults to `0.10`.
 - `STRATEGY_GATE_BOTH_YES_MAX_TARGET_PCT` — Maximum target exposure when both yes signals are true. Defaults to `0.25`.
