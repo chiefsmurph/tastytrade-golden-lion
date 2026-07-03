@@ -196,6 +196,25 @@ const TICK_UP_CHASE_ENABLED = true;
 const TICK_UP_INTERVAL_MS = 30_000; // 30 seconds
 const MAX_TICK_UPS = 10; // Maximum number of ticks
 
+// Cap a single allocation buy relative to the group's current market value,
+// so adds scale with the position rather than the account: a $87 position
+// with a 2.5x multiple can add at most ~$217 in one action, while a $1,000
+// position can add $2,500. Keeps the first adds small without limiting later
+// dip-averaging. Off unless set.
+export function getMaxAllocationBuyPositionMultiple(): number {
+  const raw = process.env.STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE;
+  if (!raw) {
+    return Infinity;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return Infinity;
+  }
+
+  return parsed;
+}
+
 function calculateDynamicTickSize(midPrice: number, askPrice: number): number {
   // If we don't have a valid ask, fall back to SEC minimum tick rules
   if (askPrice <= midPrice || !Number.isFinite(askPrice)) {
@@ -608,10 +627,15 @@ export async function manageAllocationForGroup(
   );
   let bid = bidAsk?.bid ?? 0;
   let ask = bidAsk?.ask ?? bid;
+  const buyPositionMultiple = getMaxAllocationBuyPositionMultiple();
+  const positionValueBuyCap = Number.isFinite(buyPositionMultiple)
+    ? getGroupMarketValue(evaluation.positionSnapshots) * buyPositionMultiple
+    : Infinity;
   const availableCapital = Math.min(
     Math.max(0, perGroupExposureHeadroom),
     Math.max(0, perGroupMaxBuyAmount),
     budget.buyingPowerRemaining,
+    positionValueBuyCap,
   );
   let routeOrders = allocateContractsByWeight(
     buildRouteOrders(bid, ask, targets),

@@ -143,7 +143,8 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `STRATEGY_MAX_OPTION_SPREAD_PCT` — Maximum bid/ask spread as a fraction of the midpoint. Defaults to `0.3`.
 - `STRATEGY_MARGIN_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one margin allocation action. Defaults to `0.12`.
 - `STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one cash allocation action. Defaults to `0.05`.
-- `STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT` — Maximum boost to a margin group's target exposure as its ask loss deepens from `2%` to `12%`, applied only while boolean signals stay good (`>= 4`). Defaults to `0` (disabled).
+- `STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT` — Maximum boost to a margin group's target exposure as its ask loss deepens from `2%` to `12%`, applied only while boolean signals stay good (`>= 4`). Unset disables the boost.
+- `STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE` — Cap on a single allocation buy as a multiple of the group's current market value (e.g. `3` lets a `$87` position add at most `~$261` in one action), applied on top of the pct-of-capital caps. Unset disables the cap.
 - `STRATEGY_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF` — Calendar days until a cash overnight position should be fully sold off. Defaults to `6`.
 - `STRATEGY_OVERNIGHT_REDUCTION_START_FLOOR_PCT` — Exposure floor percentage on day 1 of overnight reduction; interpolates linearly to `0` by the selloff day. Defaults to `20`.
 - `STRATEGY_MIN_IV_RANK_PCT` — Minimum IV rank (`0`–`100`) required before entering a position. Defaults to `20`; set to `0` to disable.

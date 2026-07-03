@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
+import { getMaxAllocationBuyPositionMultiple } from "~/bot/actions/manage-allocation";
 
 function withBoostEnv<T>(value: string | undefined, fn: () => T): T {
   const previous = process.env.STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT;
@@ -49,4 +50,20 @@ test("dip boost scales with loss depth between 2% and 12%", () => {
     // Gains never boost.
     assert.equal(getMarginDipTargetBoostPct(0.1, 8), 0);
   });
+});
+
+test("max allocation buy position multiple is off unless set", () => {
+  const key = "STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE";
+  const previous = process.env[key];
+  try {
+    delete process.env[key];
+    assert.equal(getMaxAllocationBuyPositionMultiple(), Infinity);
+    process.env[key] = "2.5";
+    assert.equal(getMaxAllocationBuyPositionMultiple(), 2.5);
+    process.env[key] = "-5";
+    assert.equal(getMaxAllocationBuyPositionMultiple(), Infinity);
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
 });
