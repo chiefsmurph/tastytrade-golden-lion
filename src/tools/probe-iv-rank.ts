@@ -8,11 +8,11 @@
 //   2. What does a real market-metrics entry look like (field names present)?
 //   3. Is `implied-volatility-index-rank` on a 0–1 or 0–100 scale?
 //
-// Accepts both current (CORE_*) and legacy (BASE_URL/API_*) env names via
-// env-compat so it runs against the server's un-migrated .env as well as a
-// local one. Each request is reported independently, with the failing URL on
-// error, so an auth failure is distinguishable from a market-metrics failure.
-import "./env-compat";
+// Each request is reported independently, with the failing URL on error, so
+// an auth failure is distinguishable from a market-metrics failure.
+import { config } from "dotenv";
+
+config();
 
 interface HttpishError {
   message?: string;

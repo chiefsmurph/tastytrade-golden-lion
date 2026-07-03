@@ -16,7 +16,9 @@
 // prod bot is mid-cycle (session limits). On a closed market day expect thin
 // volume; openInterest and last greeks usually still populate. If the streamer
 // yields zero events this process exits via the quote-streamer restart path.
-import "./env-compat";
+import { config } from "dotenv";
+
+config();
 
 interface Strikeish {
   [key: string]: unknown;
