@@ -484,10 +484,14 @@ export async function manageAllocationForGroup(
     };
   }
 
+  // The dip boost multiplies after the normalization/gate clamp so it survives
+  // both — a boost baked into targetAccountExposure gets rescaled away when
+  // group targets are normalized to the account schedule (see ExecutionTargets).
   const effectiveTargetAccountExposure =
-    targets.maxTargetAccountExposure != null
+    (targets.maxTargetAccountExposure != null
       ? Math.min(targets.targetAccountExposure, targets.maxTargetAccountExposure)
-      : targets.targetAccountExposure;
+      : targets.targetAccountExposure) *
+    (1 + (targets.dipTargetBoostPct ?? 0));
   const targetExposure = budget.totalCapital * effectiveTargetAccountExposure;
   const exposureHeadroom = targetExposure - budget.portfolioExposure;
   const baseBuyExposurePct = getMaxBuyExposurePctForAccountType(options.accountMarginOrCash ?? "cash");

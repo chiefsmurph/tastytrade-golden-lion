@@ -435,9 +435,7 @@ export async function buildRunCycleContext(
         goodBooleanScore,
       );
       const scaledTargetAccountExposure =
-        finalTargets.targetAccountExposure *
-        marginMaxTargetPct *
-        (1 + dipTargetBoostPct);
+        finalTargets.targetAccountExposure * marginMaxTargetPct;
 
       console.log(
         JSON.stringify({
@@ -462,6 +460,7 @@ export async function buildRunCycleContext(
           targetAccountExposure: scaledTargetAccountExposure,
           maxTargetAccountExposure: marginMaxTargetPct,
           booleanSurplusPct,
+          dipTargetBoostPct,
           positionGate: gate,
         },
       };
