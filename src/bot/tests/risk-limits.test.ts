@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
 import { getPositionFillSeedMultiplier } from "~/strategy/seed-decision";
+import { computePositionGate } from "~/strategy/position-gate";
 import { getMaxAllocationBuyPositionMultiple } from "~/bot/actions/manage-allocation";
 
 function withBoostEnv<T>(value: string | undefined, fn: () => T): T {
@@ -79,4 +80,31 @@ test("position-fill seed multiplier scales from conservative to aggressive", () 
   // At or beyond target: margin fully committed, cash acts sooner.
   assert.ok(Math.abs(getPositionFillSeedMultiplier(1) - 0.7) < 1e-9);
   assert.ok(Math.abs(getPositionFillSeedMultiplier(2) - 0.7) < 1e-9);
+});
+
+test("basic stock-yes thresholds scale across the gate window", () => {
+  const windowStart = new Date(2026, 6, 6, 6, 30);
+  const windowEnd = new Date(2026, 6, 6, 13, 0);
+
+  // percentOfBalance 15 vs base 25: beats the early bar (12.5), not the late bar (25).
+  const pctPosition = { ticker: "TEST", percentOfBalance: 15 } as never;
+  assert.equal(
+    computePositionGate({ crossAccountAskReturnFraction: null, secretPosition: pctPosition, currentTime: windowStart }).signals.basicStockYes,
+    true,
+  );
+  assert.equal(
+    computePositionGate({ crossAccountAskReturnFraction: null, secretPosition: pctPosition, currentTime: windowEnd }).signals.basicStockYes,
+    false,
+  );
+
+  // daytradeScore -25 vs base -40: beats the relaxed early bar (-20), misses the strict late bar (-40).
+  const scorePosition = { ticker: "TEST", daytradeScore: -25 } as never;
+  assert.equal(
+    computePositionGate({ crossAccountAskReturnFraction: null, secretPosition: scorePosition, currentTime: windowStart }).signals.basicStockYes,
+    true,
+  );
+  assert.equal(
+    computePositionGate({ crossAccountAskReturnFraction: null, secretPosition: scorePosition, currentTime: windowEnd }).signals.basicStockYes,
+    false,
+  );
 });
