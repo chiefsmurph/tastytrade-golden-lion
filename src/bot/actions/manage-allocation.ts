@@ -606,6 +606,12 @@ export async function manageAllocationForGroup(
       preferredDTE: candidate?.preferredDTE,
       usedDteFallback: candidate?.usedDteFallback ?? false,
       symbol: candidate?.symbol ?? null,
+      // Liquidity distribution collection (IMPROVEMENTS.v4 strategy #4 step 1)
+      dayVolume: candidate?.dayVolume ?? null,
+      openInterest: candidate?.openInterest ?? null,
+      bidSize: candidate?.bidSize ?? null,
+      askSize: candidate?.askSize ?? null,
+      spreadPct: candidate?.spreadPct ?? null,
     }),
   );
 
