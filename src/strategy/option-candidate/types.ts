@@ -3,7 +3,10 @@ export type { OptionMarketSnapshotCacheStats } from "~/core/market-snapshot";
 
 export interface TopOptionCandidateForSymbolResult {
   askPrice?: number;
+  askSize?: number;
   bidPrice?: number;
+  bidSize?: number;
+  openInterest?: number; // requested side's OI (standing depth, distinct from day volume)
   "call-streamer-symbol"?: string;
   call?: string;
   dte?: number;

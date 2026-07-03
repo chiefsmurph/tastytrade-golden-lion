@@ -29,9 +29,13 @@ function isMatchingQuoteEvent(event: QuoteEvent, candidates: string[]): boolean 
 function extractBidAsk(event: QuoteEvent) {
   const bid = toNumber(event.bidPrice ?? event.b ?? event.bid);
   const ask = toNumber(event.askPrice ?? event.a ?? event.ask);
+  const bidSize = toNumber(event.bidSize ?? event["bid-size"]);
+  const askSize = toNumber(event.askSize ?? event["ask-size"]);
   return {
     bid: bid ?? undefined,
     ask: ask ?? undefined,
+    bidSize: bidSize ?? undefined,
+    askSize: askSize ?? undefined,
   };
 }
 
@@ -146,12 +150,12 @@ async function ensureQuoteStreamerConnected(): Promise<void> {
 export async function getBidAskForSymbol(
   symbol: string,
   timeoutMs = 3000,
-): Promise<{ bid?: number; ask?: number } | null> {
+): Promise<{ bid?: number; ask?: number; bidSize?: number; askSize?: number } | null> {
   try {
     return await withQuoteSubscription(symbol, timeoutMs, (event, resolve) => {
-      const { bid, ask } = extractBidAsk(event);
+      const { bid, ask, bidSize, askSize } = extractBidAsk(event);
       if (bid != null || ask != null) {
-        resolve({ bid, ask });
+        resolve({ bid, ask, bidSize, askSize });
       }
     });
   } catch (err) {

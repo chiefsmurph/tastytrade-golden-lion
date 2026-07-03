@@ -208,10 +208,17 @@ export async function buildTopOptionCandidateResult(
 
     const candidateIvx =
       side === "call" ? (candidate.callIv ?? undefined) : (candidate.putIv ?? undefined);
+    const candidateOpenInterest =
+      side === "call"
+        ? (candidate.callOpenInterest ?? undefined)
+        : (candidate.putOpenInterest ?? undefined);
 
     const candidateResult: TopOptionCandidateForSymbolResult = {
       ...normalizedCandidate,
       ...spreadStats,
+      askSize: bidAsk?.askSize,
+      bidSize: bidAsk?.bidSize,
+      openInterest: candidateOpenInterest,
       ivx: candidateIvx,
       maxAllowedSpreadPct,
       meetsSpreadRequirement,

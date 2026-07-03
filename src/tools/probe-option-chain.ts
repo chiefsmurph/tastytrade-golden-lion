@@ -24,6 +24,8 @@ interface Strikeish {
   [key: string]: unknown;
   callVolume?: number;
   putVolume?: number;
+  callOpenInterest?: number;
+  putOpenInterest?: number;
   callIv?: number;
   putIv?: number;
   callDelta?: number;
@@ -53,16 +55,17 @@ async function main(): Promise<void> {
   console.log(`underlying price: ${underlyingPrice}`);
 
   console.log("\n=== per-expiration data coverage ===");
-  console.log("dte | strikes | callVol>0 | maxCallVol | callIv | callDelta | putVol>0");
+  console.log("dte | strikes | callVol>0 | maxCallVol | callOI>0 | maxCallOI | callIv | callDelta");
   for (const exp of chain.expirations ?? []) {
     const strikes = (exp.strikes ?? []) as unknown as Strikeish[];
     const withCallVol = strikes.filter((s) => Number(s.callVolume ?? 0) > 0).length;
-    const withPutVol = strikes.filter((s) => Number(s.putVolume ?? 0) > 0).length;
+    const withCallOI = strikes.filter((s) => Number(s.callOpenInterest ?? 0) > 0).length;
     const withCallIv = strikes.filter((s) => s.callIv != null).length;
     const withCallDelta = strikes.filter((s) => s.callDelta != null).length;
     const maxCallVol = Math.max(0, ...strikes.map((s) => Number(s.callVolume ?? 0)));
+    const maxCallOI = Math.max(0, ...strikes.map((s) => Number(s.callOpenInterest ?? 0)));
     console.log(
-      `${String(exp["days-to-expiration"]).padStart(3)} | ${String(strikes.length).padStart(7)} | ${String(withCallVol).padStart(9)} | ${String(maxCallVol).padStart(10)} | ${String(withCallIv).padStart(6)} | ${String(withCallDelta).padStart(9)} | ${String(withPutVol).padStart(8)}`,
+      `${String(exp["days-to-expiration"]).padStart(3)} | ${String(strikes.length).padStart(7)} | ${String(withCallVol).padStart(9)} | ${String(maxCallVol).padStart(10)} | ${String(withCallOI).padStart(8)} | ${String(maxCallOI).padStart(9)} | ${String(withCallIv).padStart(6)} | ${String(withCallDelta).padStart(9)}`,
     );
   }
 
@@ -75,6 +78,8 @@ async function main(): Promise<void> {
           dte: candidate.dte,
           strike: candidate.strike,
           volume: getOptionCandidateVolume(candidate, side),
+          openInterest:
+            side === "call" ? candidate.callOpenInterest : candidate.putOpenInterest,
           iv: side === "call" ? candidate.callIv : candidate.putIv,
           delta: side === "call" ? candidate.callDelta : candidate.putDelta,
         }),
@@ -105,6 +110,9 @@ async function main(): Promise<void> {
         symbol: top?.symbol ?? null,
         dte: top?.dte,
         ivRank: top?.ivRank,
+        openInterest: top?.openInterest,
+        bidSize: top?.bidSize,
+        askSize: top?.askSize,
         spreadPct: top?.spreadPct,
         maxAllowedSpreadPct: top?.maxAllowedSpreadPct,
         meetsSpreadRequirement: top?.meetsSpreadRequirement,
