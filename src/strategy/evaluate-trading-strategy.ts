@@ -15,6 +15,11 @@ export interface ExecutionTargets {
   askWeight: number;
   maxTargetAccountExposure?: number;
   booleanSurplusPct?: number;
+  // Applied by manage-allocation AFTER group-target normalization and the gate
+  // ceiling clamp — normalization rescales targetAccountExposure to the
+  // account schedule (and hands a lone group the full account target), so a
+  // boost baked into targetAccountExposure would be normalized away.
+  dipTargetBoostPct?: number;
   positionGate?: PositionGateResult;
 }
 
