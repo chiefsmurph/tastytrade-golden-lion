@@ -70,6 +70,15 @@ Everything else from v3 is still open. The ones that matter most are re-listed b
 
 10. [ ] **Asymmetry: the margin-from-cash seed path has no held-contract fallback** — `maybeSeedCashAccountFromMarginAccount` retries the exact held contract on DTE/cost skips; `maybeSeedMarginAccountFromCashAccount` (`run-cycle-seed.ts:108-246`) gives up on the first skip. Margin's OTM delta-targeted picks are usually cheaper so this bites less often, but on a cost-blocked morning the cash side holds the exact (often cheaper) contract margin wants. Mirror the fallback with the margin DTE floor (≥0).
 
+## Older ideas from v1/v2 — adopt or strike
+
+These predate the gate/seed architecture and were never explicitly adopted or rejected. Parked here so v4 is the single live list — promote them into the ranked list or strike them here.
+
+- [ ] **Structured logging with a per-cycle `runId`** (v1) — 100+ raw `console.log` JSON lines make prod triage grep-only; the 07-02 11MB error log was one symptom of unleveled logging.
+- [ ] **Dynamic profit targets scaled by IV rank** (v1) — blocked on strategy #3 above (the IV metric has to return values before anything can scale by it).
+- [ ] **Front-loaded exposure ramp** (v1) — 60–70% at open instead of 40%, capturing richer morning premium. Interacts with the 07-02 morning spread ramp (entries before 8:00 AM are gated to 5–30% spreads), so evaluate with post-fix fill data rather than adopting blind.
+- [ ] **Bid-lean adds on profitable positions** (v2) — `getPositionGroupExecutionTargets` only shifts route weights when a position is losing; when up ≥5%, lean toward patient bid fills instead of flat 33/33/33.
+
 ## Efficiency / code quality (carryovers, re-verified)
 
 - [ ] **Each cycle still does the expensive work 2–3×** — full dry-run allocation pipeline in `buildRunCycleContext` (option snapshot + health across 3 DTE checkpoints + serial per-candidate quote fetches at 2s timeout each) then again for real in `executePositionEvaluations`; sibling-account `getPositionEvaluations` (live quotes per position) fetched in run-cycle-context *and* again inside the active seed path. Memoize per cycle (evaluations by account; candidate/health by symbol+side+DTE).
