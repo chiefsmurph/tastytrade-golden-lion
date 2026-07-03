@@ -19,9 +19,11 @@ import {
   getPositionAgeSeedMultiplier,
   getPositionAgeMinutesSeedMultiplier,
   getBooleanSeedMultiplier,
+  getPositionFillSeedMultiplier,
   getScaledThresholds,
   getSeedDecision,
 } from "~/strategy/seed-decision";
+import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 
 export type MarginSeedResult = RunSeedOrder;
 
@@ -301,8 +303,17 @@ export async function maybeSeedCashAccountFromMarginAccount(
     const positionMarketValue = getGroupMarketValue(evaluation.positionSnapshots);
     const pctOfNetLiq = marginNetLiq > 0 ? positionMarketValue / marginNetLiq : 0;
 
+    // How full the margin position is vs. its exposure target: cash holds back
+    // while margin still has room to average down on its own, and gets more
+    // willing as margin approaches full deployment on the name.
+    const targetExposurePct =
+      evaluation.executionTargets?.targetAccountExposure ??
+      getTimeOfDayExecutionTargets(currentTime, "margin").targetAccountExposure;
+    const fillRatio = targetExposurePct > 0 ? pctOfNetLiq / targetExposurePct : null;
+    const fillFactor = getPositionFillSeedMultiplier(fillRatio);
+
     const booleanFactor = getBooleanSeedMultiplier(goodBooleanScore);
-    const thresholds = getScaledThresholds(config, timeFactor, ageFactor, booleanFactor);
+    const thresholds = getScaledThresholds(config, timeFactor, ageFactor, booleanFactor, fillFactor);
 
     const lossDepth = -askReturnPct;
     if (lossDepth < thresholds.minDownPct || lossDepth > thresholds.maxDownPct) continue;
@@ -319,9 +330,11 @@ export async function maybeSeedCashAccountFromMarginAccount(
         lossDepth,
         positionAgeMinutes: positionAgeMinutes !== null ? +positionAgeMinutes.toFixed(1) : null,
         pctOfNetLiq: +pctOfNetLiq.toFixed(4),
+        fillRatio: fillRatio !== null ? +fillRatio.toFixed(3) : null,
         timeFactor: +timeFactor.toFixed(3),
         ageFactor: +ageFactor.toFixed(3),
         booleanFactor: +booleanFactor.toFixed(3),
+        fillFactor: +fillFactor.toFixed(3),
         thresholds,
         goodBooleanScore,
         ivRank: decision.ivRank,
@@ -413,8 +426,10 @@ export async function maybeSeedCashAccountFromMarginAccount(
       lossDepth,
       positionAgeMinutes: positionAgeMinutes !== null ? +positionAgeMinutes.toFixed(1) : null,
       pctOfNetLiq: +pctOfNetLiq.toFixed(4),
+      fillRatio: fillRatio !== null ? +fillRatio.toFixed(3) : null,
       timeFactor: +timeFactor.toFixed(3),
       ageFactor: +ageFactor.toFixed(3),
+      fillFactor: +fillFactor.toFixed(3),
       thresholds,
       goodBooleanScore,
       booleanSurplusPct,

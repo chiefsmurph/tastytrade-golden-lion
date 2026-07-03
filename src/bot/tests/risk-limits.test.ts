@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
+import { getPositionFillSeedMultiplier } from "~/strategy/seed-decision";
 import { getMaxAllocationBuyPositionMultiple } from "~/bot/actions/manage-allocation";
 
 function withBoostEnv<T>(value: string | undefined, fn: () => T): T {
@@ -66,4 +67,16 @@ test("max allocation buy position multiple is off unless set", () => {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;
   }
+});
+
+test("position-fill seed multiplier scales from conservative to aggressive", () => {
+  // No data: neutral.
+  assert.equal(getPositionFillSeedMultiplier(null), 1.0);
+  // Barely deployed vs target: cash holds back.
+  assert.equal(getPositionFillSeedMultiplier(0), 1.5);
+  // Halfway to target: midpoint.
+  assert.ok(Math.abs(getPositionFillSeedMultiplier(0.5) - 1.1) < 1e-9);
+  // At or beyond target: margin fully committed, cash acts sooner.
+  assert.ok(Math.abs(getPositionFillSeedMultiplier(1) - 0.7) < 1e-9);
+  assert.ok(Math.abs(getPositionFillSeedMultiplier(2) - 0.7) < 1e-9);
 });
