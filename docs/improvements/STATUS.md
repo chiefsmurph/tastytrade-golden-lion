@@ -4,6 +4,8 @@
 
 Three buckets, as requested: **DONE** (shipped this session, under the `monday-2026-07-06` tag) · **BEFORE MONDAY–ELIGIBLE** (safe to land in Monday's deploy — pure cleanup, docs, tests, diagnostics) · **AFTER MONDAY** (needs Monday's data, or behavior-changing enough that it should follow verification).
 
+*(fable)* = use Fable 5 for implementation — safety-critical logic, multi-site correctness bugs where a subtle mistake silently gives wrong answers, or new architectural mechanisms with non-obvious invariants. Everything else is fine on Sonnet/Opus.
+
 Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (same day, second pass) added **20 new items** — 10 code, 10 profitability — none overlapping v1–v4; all folded into the buckets below.
 
 ---
@@ -45,7 +47,7 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 - **Remove the dead weighted close price** — `getWeightedOrderPrice` is always overwritten by mid in `closePosition`; route weights have never affected closes. (v5 code #8)
 - **DI + tests for `placeRouteOrders`** — the Monday route-chase loop is untestable (hard-wired API client, unlike `closePosition`); test-only refactor, most valuable *before* Monday. (v5 code #4)
 - **Error run-history entries for failed cycles** — a mid-cycle throw currently leaves no NDJSON trace; additive diagnostics. (v5 code #9)
-- **Realized-P&L attribution ledger** — persist per-round-trip P&L tagged by decision type/route/hour/DTE/gate score; landing it before Monday means Monday's session is captured. Bigger diff, zero trading behavior change. (v5 strategy #9)
+- **Realized-P&L attribution ledger** *(fable)* — persist per-round-trip P&L tagged by decision type/route/hour/DTE/gate score; landing it before Monday means Monday's session is captured. Bigger diff, zero trading behavior change. (v5 strategy #9)
 
 ---
 
@@ -58,15 +60,15 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 - **Dip-boost ≥4 vs ≥7 boolean bar.** (open tuning Q)
 
 ### Behavior-changing strategy work (build any time, deploy after Monday clears)
-- **Stop-loss grace period + mid-based catastrophic floor, and move the stop above the 10-min cooldown** — the LCID-churn fix; the one item robust to whatever Monday shows (best "build now" candidate). (v1, v3, v4 #5 + #39)
+- **Stop-loss grace period + mid-based catastrophic floor, and move the stop above the 10-min cooldown** *(fable)* — the LCID-churn fix; the one item robust to whatever Monday shows (best "build now" candidate). (v1, v3, v4 #5 + #39)
 - **Re-entry cooldown after a close** — `isClosedToday` exists, zero consumers. (v2 #1, v3, v4 #6)
 - **Secret-signal staleness gate** — `secondsSinceLastPositionsUpdate` tracked, gates nothing; stale `willBuy` still scores. (v2, v4 staleness)
 - **Take-profit scale-out** — partial-close plumbing exists; sell half at target, trail the rest. (v3, v4 #8)
 - **Conviction-sized seeds** — qty fixed at 1; size to a $ target, apply boolean surplus to the seed cap. (v3, v4 #7)
-- **Account-level daily-loss circuit breaker** — flip to close-only when NLV drops X% from day start. (v3, v4 #10)
+- **Account-level daily-loss circuit breaker** *(fable)* — flip to close-only when NLV drops X% from day start. (v3, v4 #10)
 - **Margin-from-cash seed: add the held-contract fallback** (asymmetry with the cash path). (v4 #11)
 - **Health gate: require only bracketing checkpoints**, not every DTE ≤ target (weekly liquidity for monthly buys). (v3, v4 #89)
-- **Gate exposure *scaling* is cancelled by normalization** — only the ceiling clamp works today; fix needs cap-aware normalization (real bug, but behavior-changing). (v4 #31)
+- **Gate exposure *scaling* is cancelled by normalization** *(fable)* — only the ceiling clamp works today; fix needs cap-aware normalization (real bug, but behavior-changing). (v4 #31)
 - **Buy results overstate fills / understate spend** — `placedOrder:true` unconditional, value from starting price not final chase; corrupts budget + run history. (v3, v4 #37)
 - **Dynamic profit targets scaled by IV rank** — now unblocked (IV flows); behavior. (v1)
 - **Front-loaded exposure ramp** — richer morning premium; interacts with the route change, want data. (v1, v4 #83)
@@ -74,25 +76,25 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 - **Seed-time "no accumulation" gate is dead code** — replace dummy-metrics strategy check with a real minute-of-day cutoff. (v3, v4 #90)
 - **Per-cycle memoization** — each cycle does the expensive plan/eval work 2–3×; perf, touches execution path. (v3, v4 #88)
 - **`_PCT` env-var unit standardization** — three unit conventions through look-alike readers; a rename, risky right before a deploy. (v3, v4 #92)
-- **Unify the two exposure normalizers** — same algorithm, different iteration order → plan vs execution can diverge. (v3, v4 #91)
+- **Unify the two exposure normalizers** *(fable)* — same algorithm, different iteration order → plan vs execution can diverge. (v3, v4 #91)
 
 ### New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.md))
 
 Bugs/correctness:
 - **One-sided quote guard** — `getBidAskForSymbol` resolves on the first event with a bid *or* ask; bid-only events yield fake 0% spreads that pass the spread gate. (v5 code #1)
-- **Record registry closes/opens on confirmed fill, not placement** — phantom `closedAt`/`openedAt` from resting limits; matters more once the re-entry cooldown ships. (v5 code #3)
-- **Side-aware keying** — cross-account map, gate lookup, DO_NOT_TOUCH annotation, overnight override, and registry keys all drop `::side`; put/call groups on one underlying collide. (v5 code #5)
+- **Record registry closes/opens on confirmed fill, not placement** *(fable)* — phantom `closedAt`/`openedAt` from resting limits; matters more once the re-entry cooldown ships. (v5 code #3)
+- **Side-aware keying** *(fable)* — cross-account map, gate lookup, DO_NOT_TOUCH annotation, overnight override, and registry keys all drop `::side`; put/call groups on one underlying collide. (v5 code #5)
 - **Consolidate the two `getPositionAgeDays`** — same name, calendar-day vs fractional-elapsed semantics feeding different multipliers. (v5 code #6)
 - **Single cancel sweep per cycle** — the second `cancelAllLiveOrders` inside `executePositionEvaluations` is redundant in the cycle path. (v5 code #7; subsumed by resting-orders work below)
 - **Single streamer session per chain snapshot** — merge the serial 5s+7s samples into one union subscription; halves per-symbol streamer time. (v5 code #10)
 
 Strategy/profitability:
-- **Persistent resting orders (diff-based order management)** — bid route's "patient" order lives ≤1 run interval because every cycle opens cancel-all; keep unchanged working orders for real queue priority. (v5 strategy #1)
+- **Persistent resting orders (diff-based order management)** *(fable)* — bid route's "patient" order lives ≤1 run interval because every cycle opens cancel-all; keep unchanged working orders for real queue priority. (v5 strategy #1)
 - **Fee-aware targets + min-premium floor** — no commission/fee model anywhere; on sub-$1 contracts friction is ~half the late-day 7% target. (v5 strategy #2)
-- **Cost-basis exposure accounting** — market-value exposure means decay reopens headroom and the bot refills burnt premium all day; the mechanism the daily-loss breaker doesn't catch. (v5 strategy #3)
+- **Cost-basis exposure accounting** *(fable)* — market-value exposure means decay reopens headroom and the bot refills burnt premium all day; the mechanism the daily-loss breaker doesn't catch. (v5 strategy #3)
 - **Conviction-first allocation order** — plan and allocator currently give capital to the deepest loser first; rank by gate/conviction instead. (v5 strategy #4)
 - **Per-expiration circuit breakers** — group-blended metrics let a long-dated leg mask a collapsing short-dated one; trigger stops/targets per expiration. (v5 strategy #5)
 - **Underlying stabilization gate for averaging down** — no code looks at the underlying's tape before adds/seeds; log-only first. (v5 strategy #6)
 - **Invert the IVX tiebreak** — selection prefers the *richest* vol on near-tie DTE; a premium buyer overpaying by design. (v5 strategy #7)
-- **Urgency-tiered close chase** — 12:55 EOD trigger + 30s×10 chase can still be walking at the 1:00 bell; hard-risk closes need a 5–10s clock and an earlier arm (~12:50). **Worth a hard look before Monday** — it's a safety margin measured in seconds on a full session of new route code. (v5 strategy #8)
+- **Urgency-tiered close chase** *(fable)* — 12:55 EOD trigger + 30s×10 chase can still be walking at the 1:00 bell; hard-risk closes need a 5–10s clock and an earlier arm (~12:50). **Worth a hard look before Monday** — it's a safety margin measured in seconds on a full session of new route code. (v5 strategy #8)
 - **Time-scaled margin delta target** — flat 0.35 delta while DTE ramps to ≤7 and the forced close approaches; ramp toward 0.50–0.55 late morning. (v5 strategy #10)
