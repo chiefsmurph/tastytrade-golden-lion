@@ -3,6 +3,7 @@ import {
   getCashAccountSeedEndMinute,
   getSecretAutoSeedWindowStartMinute,
 } from "./seeding-windows";
+import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
 export interface PositionGateSignals {
   crossAccountYes: boolean;
@@ -19,19 +20,6 @@ export interface PositionGateResult {
   strongStockYesScoreThreshold: number;
   basicStockYesPctThreshold: number;
   basicStockYesScoreThreshold: number;
-}
-
-function readEnvPct(key: string, fallback: number): number {
-  const raw = process.env[key]?.trim();
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toBooleanFlag(raw: unknown): boolean {
-  if (typeof raw === "boolean") return raw;
-  if (typeof raw === "number") return raw === 1;
-  return ["true", "1", "yes"].includes(String(raw ?? "").trim().toLowerCase());
 }
 
 // STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT is the late-day (lenient) threshold for the cross-account YES signal.
