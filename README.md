@@ -9,7 +9,7 @@ The scheduler runs a full allocation and risk-management cycle at a configurable
 Golden Lion is built as an execution control plane, not just a script runner.
 
 - Deterministic run cycle: each cycle builds a full context snapshot, evaluates group-level strategy decisions, then executes allocation, close, and seed actions with explicit reasoning recorded for every step.
-- Execution quality controls: IV rank filtering and bid/ask spread checks gate every entry. Orders are routed across bid/mid/ask using configurable weights, and aggressiveness can tick toward ask in bounded steps to improve fill probability without unconstrained price chasing.
+- Execution quality controls: IV rank filtering and bid/ask spread checks gate every entry. Orders are routed across bid/mid/ask using configurable weights, where each route concedes a different amount of the spread: bid rests at the bid, mid concedes at most a few ticks, and ask starts at the midpoint and chases to the ask on a fast clock — no route pays the full spread instantly.
 - Risk-first circuit breakers: strategy logic enforces profit capture targets, drawdown floors, cooldown periods, no-buy cutoffs, and end-of-day position constraints before any order is placed.
 - Multi-account aware: the cycle can run account-specific or fan out across all managed accounts, with cash and margin policies — including position sizing and exposure caps — applied independently per account type.
 - Session-gated automation: the scheduler checks live Tastytrade session status and only runs during regular equities options windows. Extended-hours sessions are never treated as open.
@@ -406,7 +406,7 @@ If you copy `ipc-client.js` into another project, either pass `socketPath` expli
 
 - Time-adaptive exposure control: target DTE and target exposure shift over the session, with account-specific behavior for cash vs margin.
 - Price-route allocation: orders are split across bid/mid/ask using weighted routes, then contract counts are allocated against real capital limits.
-- Controlled aggressiveness: route execution can tick up toward ask in bounded steps to improve fill probability without unconstrained chasing.
+- Controlled aggressiveness: routes differ in spread concession, not just starting price — bid rests without chasing, mid concedes up to 3 ticks, ask starts at the midpoint and chases to the full ask on a faster clock (straight to the ask only when the spread is already tight). A chase step is only placed after the previous order's cancellation is confirmed.
 - Risk-first circuit breakers: strategy logic can force closes on profit capture, severe loss thresholds, and end-of-day constraints.
 - Overnight handling: margin positions flagged as overnight can be force-closed at open, while cash accounts can execute gradual overnight reductions.
 - Cross-account seeding: cash-account conditions can trigger margin-account seed flow when configured thresholds are met.
