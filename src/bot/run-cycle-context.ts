@@ -400,6 +400,7 @@ export async function buildRunCycleContext(
 
     // Get position group-based targets
     const groupTargetComponents = buildGroupExecutionTargets({
+      accountType: accountMarginOrCash,
       askReturnPerc,
       baseExecutionTargets,
       currentExposurePct,
@@ -593,7 +594,13 @@ export async function buildRunCycleContext(
       evaluation,
       planningBudget,
       groupsRemainingForAllocation,
-      { dryRun: true },
+      {
+        dryRun: true,
+        // Without this the plan sizes margin buys with the cash per-action cap
+        // (5% vs 12%) — real execution passes it, so plan and reality diverged.
+        accountMarginOrCash:
+          accountMarginOrCash === "unknown" ? undefined : accountMarginOrCash,
+      },
     );
 
     for (const routeOrder of planResult.routeOrders) {

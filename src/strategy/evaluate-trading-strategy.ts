@@ -323,6 +323,7 @@ export function getPositionGroupExecutionTargets(
   askReturnPerc: number,
   timeSinceLastActionMs: number,
   currentTime: Date,
+  accountType: StrategyAccountType = "unknown",
 ): ExecutionTargets {
   // Scale targetExposureValue based on time since last action
   // 20 min → 40%, 60 min → 70%, 120+ min (2 hrs) → cap at 85%
@@ -366,8 +367,10 @@ export function getPositionGroupExecutionTargets(
     midWeight = roundToTwoDecimals(1 - askWeight - bidWeight);
   }
 
-  // Get time-of-day base targets for DTE
-  const timeOfDayTargets = getTimeOfDayExecutionTargets(currentTime);
+  // Get time-of-day base targets for DTE. accountType must flow through here:
+  // dropping it took the cash branch (max(raw, cashMinDTE) → 30 in the
+  // morning) and margin plans blended to 15-30 DTE despite the 7-DTE cap.
+  const timeOfDayTargets = getTimeOfDayExecutionTargets(currentTime, accountType);
 
   return {
     targetDTE: timeOfDayTargets.targetDTE,
