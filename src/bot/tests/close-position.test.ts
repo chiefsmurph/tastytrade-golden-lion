@@ -246,3 +246,51 @@ test("closePosition chases sell-to-close from midpoint down to bid", async () =>
   assert.equal(results.length, 1);
   assert.equal(results[0]?.placedOrder, true);
 });
+
+test("closePosition stops chasing when a cancel cannot be confirmed (no double-sell)", async () => {
+  const evaluation = buildEvaluation("2026-06-25T09:30:00", {
+    metrics: {
+      currentAskPrice: 1.2,
+      currentBidPrice: 1,
+      currentTime: new Date("2026-06-25T09:30:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1,
+    },
+    positionSnapshots: [
+      {
+        currentAskPrice: 1.2,
+        currentBidPrice: 1,
+        lastActionTime: new Date("2026-06-25T05:30:00"),
+        position: {
+          "account-number": "ACC-1",
+          "instrument-type": "Option",
+          quantity: 1,
+          symbol: "AAPL   260619C00100000",
+        },
+        quantityWeight: 1,
+        weightedAverageFill: 1,
+      },
+    ],
+  });
+
+  const submittedPrices: string[] = [];
+
+  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+    createOrder: async (_accountNumber, order) => {
+      submittedPrices.push(String((order as { price?: string }).price ?? ""));
+      return { order: { id: String(submittedPrices.length) } } as never;
+    },
+    cancelOrder: async () => {
+      throw new Error("cancel rejected");
+    },
+    checkOrderFilled: async () => false,
+    tickIntervalMs: 1,
+    maxTickMoves: 2,
+  });
+
+  // One order placed at mid; the failed cancel must break the chase before a
+  // second sell goes live against the still-working first order.
+  assert.deepEqual(submittedPrices, ["1.10"]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.placedOrder, true);
+});

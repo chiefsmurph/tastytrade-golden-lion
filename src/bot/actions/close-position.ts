@@ -6,7 +6,7 @@ import {
   EOD_FORCED_CLOSE_MINUTE,
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
-import { buildClosingOrderPayload } from "./order-utils";
+import { buildClosingOrderPayload, waitForOrderFillById } from "./order-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
 const CLOSE_TICK_INTERVAL_MS = 30_000;
@@ -103,53 +103,24 @@ function pricesAreEqual(left: number, right: number): boolean {
   return Math.abs(left - right) < 1e-9;
 }
 
-async function waitForOrderFill(
-  accountNumber: string,
-  orderId: string,
-  timeoutMs: number,
-): Promise<boolean> {
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const orders = await tastytradeApi.orderService.getOrders(accountNumber);
-      const order = orders.find((currentOrder) => currentOrder.id === orderId);
-
-      if (!order) {
-        return true;
-      }
-
-      if (order.status === "Filled" || order.status === "Partially Filled") {
-        return true;
-      }
-
-      if (!order.status || !["Pending", "Open", "Pending Cancel"].includes(order.status)) {
-        return false;
-      }
-    } catch {
-      // If we fail to inspect status, keep waiting until timeout.
-    }
-
-    await new Promise((res) => setTimeout(res, 1000));
-  }
-
-  return false;
-}
-
+// Returns whether the cancellation was confirmed. Callers must stop chasing on
+// false — an unconfirmed cancel followed by a fresh sell can double-sell the
+// position (the buy side has had this guard since v1; this mirrors it).
 async function cancelOrderById(
   accountNumber: string,
   orderId: string,
   cancelOrder: typeof tastytradeApi.orderService.cancelOrder,
-): Promise<void> {
+): Promise<boolean> {
   const numericOrderId = Number(orderId);
   if (!Number.isFinite(numericOrderId)) {
-    return;
+    return false;
   }
 
   try {
     await cancelOrder(accountNumber, numericOrderId);
+    return true;
   } catch {
-    // Best effort cancellation before placing next chase attempt.
+    return false;
   }
 }
 
@@ -218,7 +189,7 @@ export async function closePosition(
   const cancelOrder =
     dependencies.cancelOrder ??
     tastytradeApi.orderService.cancelOrder.bind(tastytradeApi.orderService);
-  const checkOrderFilled = dependencies.checkOrderFilled ?? waitForOrderFill;
+  const checkOrderFilled = dependencies.checkOrderFilled ?? waitForOrderFillById;
   const tickChaseEnabled =
     dependencies.tickChaseEnabled ?? CLOSE_TICK_CHASE_ENABLED;
   const tickIntervalMs =
@@ -304,7 +275,13 @@ export async function closePosition(
 
     while (tickMoveCount <= maxTickMoves) {
       if (activeOrderId && tickChaseEnabled && tickMoveCount > 0) {
-        await cancelOrderById(accountNumber, activeOrderId, cancelOrder);
+        const cancelled = await cancelOrderById(accountNumber, activeOrderId, cancelOrder);
+        if (!cancelled) {
+          // Can't confirm the previous sell died — placing another would risk
+          // a double-sell. Leave the existing order working; the next cycle's
+          // cancelAllLiveOrders sweep owns cleanup.
+          break;
+        }
       }
 
       const order = {
