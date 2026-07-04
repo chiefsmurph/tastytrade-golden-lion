@@ -5,7 +5,6 @@ import type {
   TastytradeOrderAction,
 } from "~/core/types";
 import { PositionQuoteSnapshot } from "../evaluate-position";
-import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 
 export interface OrderLeg {
   action: TastytradeOrderAction;
@@ -57,43 +56,19 @@ export function normalizeInstrumentType(
   }
 }
 
-export function getWeightedOrderPrice(
-  bid: number,
-  ask: number,
-  targets: Pick<ExecutionTargets, "bidWeight" | "midWeight" | "askWeight">,
-): number {
-  const midpoint = bid > 0 && ask > 0 ? (bid + ask) / 2 : ask || bid;
-  const totalWeight = targets.bidWeight + targets.midWeight + targets.askWeight;
-
-  if (totalWeight <= 0) {
-    return midpoint;
-  }
-
-  return (
-    bid * targets.bidWeight +
-    midpoint * targets.midWeight +
-    ask * targets.askWeight
-  ) / totalWeight;
-}
-
 export function roundOrderPrice(price: number): string {
   return (Math.round(price * 100) / 100).toFixed(2);
 }
 
 export function buildClosingOrderPayload(
   snapshot: PositionQuoteSnapshot,
-  targets: Pick<ExecutionTargets, "bidWeight" | "midWeight" | "askWeight">,
 ): OrderPayload | null {
   const quantity = getPositionQuantity(snapshot.position);
   if (quantity <= 0) {
     return null;
   }
 
-  const price = getWeightedOrderPrice(
-    snapshot.currentBidPrice,
-    snapshot.currentAskPrice,
-    targets,
-  );
+  const price = getMidpointPrice(snapshot.currentBidPrice, snapshot.currentAskPrice);
 
   if (!(price > 0)) {
     return null;
