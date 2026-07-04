@@ -1,10 +1,14 @@
 export type ProgrammaticAction = "MANAGE_ALLOCATION" | "CLOSE_POSITION";
 import type { PositionGateResult } from "./position-gate";
+import { EOD_ARMED_MINUTE } from "./spread-thresholds";
 
 // Unified return structure containing target state goals for the execution loop
 export interface ExecutionStrategy {
   action: ProgrammaticAction;
   reason: string;
+  // Hard-risk closes (EOD liquidation, stop-loss floors) chase fast and cross
+  // to the bid on the final tick; take-profit closes keep the slow chase.
+  isUrgentClose?: boolean;
 }
 
 export interface ExecutionTargets {
@@ -149,16 +153,18 @@ export function evaluateTradingStrategy(
   const timeInMinutes = getTimeInMinutes(currentTime);
 
   const accumulationCutoffMinute = getNoBuyCutoffMinute(accountType);
-  const TWELVE_FIFTY_FIVE_PM = 12 * 60 + 55;
 
   const currentReturn = (currentBidPrice - weightedAverageFill) / weightedAverageFill;
 
   // 2. HARD CIRCUIT BREAKERS (EOD Liquidation & Risk Floors)
 
-  if (timeInMinutes >= TWELVE_FIFTY_FIVE_PM && accountType === "margin") {
+  // Armed at 12:50 so a cycle starting late in the interval still fits a full
+  // urgent tick-chase before the 1:00 PM PT options close.
+  if (timeInMinutes >= EOD_ARMED_MINUTE && accountType === "margin") {
     return {
       action: "CLOSE_POSITION",
-      reason: "Market closed or closing - liquidate all positions immediately"
+      reason: "Market closed or closing - liquidate all positions immediately",
+      isUrgentClose: true
     };
   }
 
@@ -186,7 +192,8 @@ export function evaluateTradingStrategy(
   if (timeInMinutes < accumulationCutoffMinute && currentReturn <= -intradayFloor) {
     return {
       action: "CLOSE_POSITION",
-      reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered`
+      reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered`,
+      isUrgentClose: true
     };
   }
 
@@ -196,7 +203,8 @@ export function evaluateTradingStrategy(
     if (currentReturn <= -eodFloor) {
       return {
         action: "CLOSE_POSITION",
-        reason: `End-of-day risk management (${(currentReturn * 100).toFixed(2)}% <= -${(eodFloor * 100).toFixed(0)}%) - close losing positions before market close`
+        reason: `End-of-day risk management (${(currentReturn * 100).toFixed(2)}% <= -${(eodFloor * 100).toFixed(0)}%) - close losing positions before market close`,
+        isUrgentClose: true
       };
     }
   }

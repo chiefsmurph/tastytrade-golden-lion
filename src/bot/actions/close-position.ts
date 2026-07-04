@@ -3,13 +3,17 @@ import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { PositionGroupEvaluation } from "../evaluate-position";
 import { ExecutionTargets, getDynamicTakeProfitTarget } from "~/strategy/evaluate-trading-strategy";
 import {
-  EOD_FORCED_CLOSE_MINUTE,
+  EOD_ARMED_MINUTE,
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
 import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById } from "./order-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
 const CLOSE_TICK_INTERVAL_MS = 30_000;
+// Hard-risk closes (EOD liquidation, stop-loss) chase every 10s instead of 30s
+// so a full 10-move chase completes in ~100s, not ~5 minutes — a chase that
+// starts at 12:58 must finish before the 1:00 PM PT options close.
+const URGENT_CLOSE_TICK_INTERVAL_MS = 10_000;
 const MAX_CLOSE_TICK_MOVES = 10;
 
 export interface ClosePositionResult {
@@ -33,6 +37,10 @@ export interface ClosePositionDependencies {
   tickChaseEnabled?: boolean;
   tickIntervalMs?: number;
   maxTickMoves?: number;
+  // Hard-risk close (EOD liquidation, stop-loss): chase on the urgent tick
+  // interval and cross all the way to the edge price on the final tick move.
+  isUrgentClose?: boolean;
+  urgentTickIntervalMs?: number;
   // Partial close: stop after closing this many total contracts across all snapshots
   maxQuantityToClose?: number;
 }
@@ -137,7 +145,7 @@ export function shouldSkipClosePositionForMorningSpread(
 
   // EOD closes must execute regardless of spread — a skipped liquidation
   // leaves margin exposure held overnight.
-  if (getTimeInMinutes(currentTime) >= EOD_FORCED_CLOSE_MINUTE) {
+  if (getTimeInMinutes(currentTime) >= EOD_ARMED_MINUTE) {
     return { shouldSkip: false };
   }
 
@@ -184,8 +192,10 @@ export async function closePosition(
   const checkOrderFilled = dependencies.checkOrderFilled ?? waitForOrderFillById;
   const tickChaseEnabled =
     dependencies.tickChaseEnabled ?? CLOSE_TICK_CHASE_ENABLED;
-  const tickIntervalMs =
-    dependencies.tickIntervalMs ?? CLOSE_TICK_INTERVAL_MS;
+  const isUrgentClose = dependencies.isUrgentClose ?? false;
+  const tickIntervalMs = isUrgentClose
+    ? dependencies.urgentTickIntervalMs ?? URGENT_CLOSE_TICK_INTERVAL_MS
+    : dependencies.tickIntervalMs ?? CLOSE_TICK_INTERVAL_MS;
   const maxTickMoves = Math.max(
     0,
     dependencies.maxTickMoves ?? MAX_CLOSE_TICK_MOVES,
@@ -300,12 +310,17 @@ export async function closePosition(
         break;
       }
 
-      currentPrice = moveClosePriceTowardEdge(
-        orderAction,
-        currentPrice,
-        edgePrice,
-        tickSize,
-      );
+      // Urgent closes must fill: the final move crosses straight to the edge
+      // (the bid for a sell) instead of stepping one tick at a time.
+      const isFinalTickMove = tickMoveCount + 1 >= maxTickMoves;
+      currentPrice = isUrgentClose && isFinalTickMove
+        ? edgePrice
+        : moveClosePriceTowardEdge(
+            orderAction,
+            currentPrice,
+            edgePrice,
+            tickSize,
+          );
       tickMoveCount += 1;
     }
 
