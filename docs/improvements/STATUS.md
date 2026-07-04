@@ -1,12 +1,12 @@
 # Improvements — consolidated status
 
-**This is the live tracker.** `IMPROVEMENTS.v1`–`v5` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-03 against committed code (v5 items folded in same day).
+**This is the live tracker.** `IMPROVEMENTS.v1`–`v6` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-04 against committed code (v5 items folded in same day; v6 folded in 2026-07-04).
 
 Three buckets, as requested: **DONE** (shipped this session, under the `monday-2026-07-06` tag) · **BEFORE MONDAY–ELIGIBLE** (safe to land in Monday's deploy — pure cleanup, docs, tests, diagnostics) · **AFTER MONDAY** (needs Monday's data, or behavior-changing enough that it should follow verification).
 
 *(fable)* = use Fable 5 for implementation — safety-critical logic, multi-site correctness bugs where a subtle mistake silently gives wrong answers, or new architectural mechanisms with non-obvious invariants. Everything else is fine on Sonnet/Opus.
 
-Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (same day, second pass) added **20 new items** — 10 code, 10 profitability — none overlapping v1–v4; all folded into the buckets below.
+Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (2026-07-03 second pass) added **20 new items** — 10 code, 10 profitability. v6 (copilot pass, same day) added **20 more** — 8 code/ops, 9 strategy, 3 infra — none overlapping v1–v5; all folded into the buckets below.
 
 ---
 
@@ -50,6 +50,15 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 - ~~**Finish helper dedup**~~ ✅ — `src/core/env-utils.ts` created; `readEnvPct`/`toBooleanFlag` consolidated. (v2, v4 #91)
 - **DI + tests for `placeRouteOrders`** — the Monday route-chase loop is untestable (hard-wired API client, unlike `closePosition`); test-only refactor, most valuable *before* Monday. (v5 code #4)
 - **Realized-P&L attribution ledger** *(fable)* — persist per-round-trip P&L tagged by decision type/route/hour/DTE/gate score; landing it before Monday means Monday's session is captured. Bigger diff, zero trading behavior change. (v5 strategy #9)
+
+New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEMENTS.v6-copilot.md)):
+- **SIGTERM / graceful shutdown handler** — process exits mid-await on pm2 restart; orphaned orders, no NDJSON trace. Register handler: stop scheduler → wait for in-flight → cancelAllLiveOrders → exit. Additive, safety-critical before Monday's live session. (v6 code #3)
+- **Thread `orderSource` + capture buy-side order ID** — allocation buys are indistinguishable in broker history; no cross-reference to run entries. Additive traceability. (v6 code #6)
+- **Spread/stop coupling startup assertion** — `maxEntrySpreaderPct < stopLossFloor` invariant is unverified; add assertion + headroom in config log. One-liner. (v6 code #7)
+- **Webhook notifications for critical events** — stop-loss fires, EOD liquidations, feed silence, cycle exceptions, NLV drops all go unnotified; `notifyEvent` helper POSTs to `CORE_WEBHOOK_URL` if set, no-ops otherwise. Opt-in, additive. (v6 ops #10)
+- **Document bid-vs-mid basis in stop/target comments** — `STRATEGY_INTRADAY_STOP_LOSS_PCT=30` is bid-based, not mid; anyone tuning it reasons from a misleading model. Docs-only. (v6 strategy #17)
+- **Document aggressiveness thresholds in `signal-interpreter.ts`** — `daytradeScore ≤ −100/−200`, `returnPerc < −2%/−5%` are unexplained assumptions; add comments flagging them as unvalidated defaults. Docs-only. (v6 strategy #19)
+- **Log underlying price in run history** — additive `underlyingPriceAtCycleTime` field on `RunGroupReturn`; precursor to v5 strategy #6 stabilization gate, can be threaded from existing fetch. Additive schema change. (v6 strategy #20)
 
 ---
 
@@ -99,4 +108,5 @@ Strategy/profitability:
 - **Underlying stabilization gate for averaging down** — no code looks at the underlying's tape before adds/seeds; log-only first. (v5 strategy #6)
 - **Invert the IVX tiebreak** — selection prefers the *richest* vol on near-tie DTE; a premium buyer overpaying by design. (v5 strategy #7)
 - **Urgency-tiered close chase** *(fable)* — 12:55 EOD trigger + 30s×10 chase can still be walking at the 1:00 bell; hard-risk closes need a 5–10s clock and an earlier arm (~12:50). **Worth a hard look before Monday** — it's a safety margin measured in seconds on a full session of new route code. (v5 strategy #8)
+- **Re-evaluate strategy before executing close** *(fable)* — `evaluateTradingStrategy` runs at T₀; `closePosition` executes minutes later without re-checking if stop/target is still valid. A recovered stop = false sell; a fresh stop = 4-min gap. Re-run evaluation at execution time using fresh bid/ask; bypass for hard EOD closes. **Worth a hard look before Monday** — bid orders now rest longer, so positions can move between T₀ and execution. (v6 code #4)
 - **Time-scaled margin delta target** — flat 0.35 delta while DTE ramps to ≤7 and the forced close approaches; ramp toward 0.50–0.55 late morning. (v5 strategy #10)
