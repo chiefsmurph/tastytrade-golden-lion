@@ -1,6 +1,6 @@
 # Improvements — consolidated status
 
-**This is the live tracker.** `IMPROVEMENTS.v1`–`v4` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-03 against committed code.
+**This is the live tracker.** `IMPROVEMENTS.v1`–`v5` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-03 against committed code (v5 items folded in same day).
 
 Three buckets, as requested: **DONE** (shipped this session, under the `monday-2026-07-06` tag) · **BEFORE MONDAY–ELIGIBLE** (safe to land in Monday's deploy — pure cleanup, docs, tests, diagnostics) · **AFTER MONDAY** (needs Monday's data, or behavior-changing enough that it should follow verification).
 
