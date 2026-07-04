@@ -213,6 +213,8 @@ node run core:fetchOptionChainWithVolume RUM
 node run core:getBalanceSummary
 node run core:getCurrentEquitiesSession
 node run core:isEquityOptionsMarketOpen
+node run core:cancelAllLiveOrders                  # emergency: cancel all working orders
+node run core:cancelAllLiveOrders <ACCOUNT>        # cancel for one account only
 ```
 
 ### Candidate / Health Examples

@@ -4,7 +4,7 @@ module.exports = {
       name: "tastytrade-golden-lion",
       cwd: __dirname,
       script: "./build/index.js",
-      interpreter: "/home/deploy/.nvm/versions/node/v24.17.0/bin/node",
+      interpreter: "node",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,

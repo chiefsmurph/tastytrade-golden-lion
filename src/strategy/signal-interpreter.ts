@@ -21,6 +21,10 @@ export function normalizeBuyWeight(buyWeight: number): number {
 // Returns a raw buy-weight boost (0-400 scale) based on the max aggressiveness
 // level signalled by daytradeScore, returnPerc, and superRecScore.
 // Level 1 (aggressive): +100. Level 2 (very aggressive): +200.
+//
+// Thresholds below (≤ −100/−200 for daytradeScore; < −2%/−5% for returnPerc;
+// > 80 for superRecScore) are UNVALIDATED DEFAULTS chosen at implementation
+// time without backtesting. Tune from live distributions before relying on them.
 export function computeAggressivenessBoost(position: SecretSourcePosition): number {
   let level = 0;
 

@@ -54,10 +54,10 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEMENTS.v6-copilot.md)):
 - ~~**SIGTERM / graceful shutdown handler**~~ ✅ — `src/index.ts` registers SIGTERM/SIGINT; stops scheduler, waits up to 30s for in-flight, cancels all live orders. (v6 code #3)
 - **Thread `orderSource` + capture buy-side order ID** — allocation buys are indistinguishable in broker history; no cross-reference to run entries. Additive traceability. (v6 code #6)
-- **Spread/stop coupling startup assertion** — `maxEntrySpreaderPct < stopLossFloor` invariant is unverified; add assertion + headroom in config log. One-liner. (v6 code #7)
+- ~~**Spread/stop coupling startup assertion**~~ ✅ — warns at boot if `STRATEGY_MAX_OPTION_SPREAD_PCT >= STRATEGY_INTRADAY_STOP_LOSS_PCT`; `intradayStopLossFloor` added to resolved config log; both getters exported and bid-vs-mid basis documented in comments. (v6 code #7)
 - **Webhook notifications for critical events** — stop-loss fires, EOD liquidations, feed silence, cycle exceptions, NLV drops all go unnotified; `notifyEvent` helper POSTs to `CORE_WEBHOOK_URL` if set, no-ops otherwise. Opt-in, additive. (v6 ops #10)
-- **Document bid-vs-mid basis in stop/target comments** — `STRATEGY_INTRADAY_STOP_LOSS_PCT=30` is bid-based, not mid; anyone tuning it reasons from a misleading model. Docs-only. (v6 strategy #17)
-- **Document aggressiveness thresholds in `signal-interpreter.ts`** — `daytradeScore ≤ −100/−200`, `returnPerc < −2%/−5%` are unexplained assumptions; add comments flagging them as unvalidated defaults. Docs-only. (v6 strategy #19)
+- ~~**Document bid-vs-mid basis in stop/target comments**~~ ✅ — comment added to `getIntradayStopLossFloor`/`getEodStopLossFloor` noting both compare against `currentBidPrice`. (v6 strategy #17)
+- ~~**Document aggressiveness thresholds in `signal-interpreter.ts`**~~ ✅ — comment added to `computeAggressivenessBoost` flagging −100/−200/−2%/−5%/>80 as unvalidated defaults. (v6 strategy #19)
 - **Log underlying price in run history** — additive `underlyingPriceAtCycleTime` field on `RunGroupReturn`; precursor to v5 strategy #6 stabilization gate, can be threaded from existing fetch. Additive schema change. (v6 strategy #20)
 
 ---
@@ -116,10 +116,10 @@ Strategy/profitability:
 Bugs/correctness:
 - **`inferIsRegularSession` ignores explicit `state` field** — `state: "Open"` or `state: "Closed"` falls through to the 7.5h duration heuristic; an 8h session day misclassifies all day. Fix: treat state directly as primary signal. (v7 #1)
 - **`UNDERLYING::side` groups average across expirations** — a profitable long-dated leg masks a stopping short-dated leg; log per-leg return breakdown and flag spread ≥ 20pp as a diagnostic precursor to v5 strategy #5. (v7 #2)
-- **`ecosystem.config.cjs` interpreter path pinned to deploy host** — `interpreter` set to `/home/deploy/.nvm/...`; fails silently everywhere else. Change to `"node"`. (v7 #3)
+- ~~**`ecosystem.config.cjs` interpreter path pinned to deploy host**~~ ✅ — changed to `"node"`. (v7 #3)
 
 Ops/observability:
-- **`core:cancelAllLiveOrders` not documented** — emergency cancel command exists but isn't in README; operators can't discover it without grepping source. (v7 #4)
+- ~~**`core:cancelAllLiveOrders` not documented**~~ ✅ — added to README Core / Market Data Examples with emergency-cancel note. (v7 #4)
 - **No `config:show` IPC command** — startup banner covers boot-time snapshot; no mid-session query for effective strategy/risk parameters. Add read-only `config:show` via existing env helpers. (v7 #5)
 - **No named env-var profile sets** — 20+ env vars must be tuned individually; a conservative/balanced/aggressive `.env.profile.*` convention + docs lets posture flip atomically. (v7 #6)
 

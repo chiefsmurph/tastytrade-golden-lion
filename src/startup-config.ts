@@ -6,6 +6,7 @@
 import { getMaxOptionSpreadPct, getMinIvRankPct, getMarginTargetCallDelta } from "~/strategy/entry-filters";
 import { getMarginMaxBuyExposurePct, getCashMaxBuyExposurePct } from "~/strategy/risk-limits";
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
+import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
 
 export interface EnvNameFinding {
   name: string;
@@ -114,10 +115,15 @@ export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
   }
 
   let resolved: Record<string, unknown> = {};
+  let maxSpreadPct = 0;
+  let intradayStopFloor = 0;
   try {
+    maxSpreadPct = getMaxOptionSpreadPct();
+    intradayStopFloor = getIntradayStopLossFloor();
     resolved = {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      maxOptionSpreadPct: getMaxOptionSpreadPct(),
+      maxOptionSpreadPct: maxSpreadPct,
+      intradayStopLossFloor: intradayStopFloor,
       minIvRankPct: getMinIvRankPct(),
       marginTargetCallDelta: getMarginTargetCallDelta(),
       marginMaxBuyExposurePct: getMarginMaxBuyExposurePct(),
@@ -130,6 +136,12 @@ export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
   }
 
   console.log(JSON.stringify({ scope: "startup-config", vars, resolved }));
+
+  if (maxSpreadPct > 0 && intradayStopFloor > 0 && maxSpreadPct >= intradayStopFloor) {
+    console.warn(
+      `[config] SPREAD/STOP COUPLING: STRATEGY_MAX_OPTION_SPREAD_PCT (${(maxSpreadPct * 100).toFixed(0)}%) >= STRATEGY_INTRADAY_STOP_LOSS_PCT (${(intradayStopFloor * 100).toFixed(0)}%) — a position entered near the ask at max spread can be born within range of the stop-loss floor. Consider tightening the spread gate or widening the stop floor.`,
+    );
+  }
 
   const timezoneWarning = getTimezoneWarning();
   if (timezoneWarning) {

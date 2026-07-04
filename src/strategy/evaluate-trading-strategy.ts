@@ -31,14 +31,16 @@ function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {
   return accountType === "cash" ? 13 * 60 : 12 * 60 + 30;
 }
 
-function getIntradayStopLossFloor(): number {
+// Both stop floors compare against currentBidPrice (bid return), not mid.
+// Tune them relative to what the position looks like at the bid, not the midpoint.
+export function getIntradayStopLossFloor(): number {
   const raw = process.env.STRATEGY_INTRADAY_STOP_LOSS_PCT?.trim();
   if (!raw) return 0.30;
   const parsed = Number(raw) / 100;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.30;
 }
 
-function getEodStopLossFloor(): number {
+export function getEodStopLossFloor(): number {
   const raw = process.env.STRATEGY_EOD_STOP_LOSS_PCT?.trim();
   if (!raw) return 0.10;
   const parsed = Number(raw) / 100;
