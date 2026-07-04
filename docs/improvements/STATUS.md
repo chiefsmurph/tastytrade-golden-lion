@@ -111,6 +111,24 @@ Strategy/profitability:
 - **Re-evaluate strategy before executing close** *(fable)* — `evaluateTradingStrategy` runs at T₀; `closePosition` executes minutes later without re-checking if stop/target is still valid. A recovered stop = false sell; a fresh stop = 4-min gap. Re-run evaluation at execution time using fresh bid/ask; bypass for hard EOD closes. **Worth a hard look before Monday** — bid orders now rest longer, so positions can move between T₀ and execution. (v6 code #4)
 - **Time-scaled margin delta target** — flat 0.35 delta while DTE ramps to ≤7 and the forced close approaches; ramp toward 0.50–0.55 late morning. (v5 strategy #10)
 
+### New in v7 (2026-07-04 brother's branch review — see [IMPROVEMENTS.v7-brother-sm.md](IMPROVEMENTS.v7-brother-sm.md))
+
+Bugs/correctness:
+- **`inferIsRegularSession` ignores explicit `state` field** — `state: "Open"` or `state: "Closed"` falls through to the 7.5h duration heuristic; an 8h session day misclassifies all day. Fix: treat state directly as primary signal. (v7 #1)
+- **`UNDERLYING::side` groups average across expirations** — a profitable long-dated leg masks a stopping short-dated leg; log per-leg return breakdown and flag spread ≥ 20pp as a diagnostic precursor to v5 strategy #5. (v7 #2)
+- **`ecosystem.config.cjs` interpreter path pinned to deploy host** — `interpreter` set to `/home/deploy/.nvm/...`; fails silently everywhere else. Change to `"node"`. (v7 #3)
+
+Ops/observability:
+- **`core:cancelAllLiveOrders` not documented** — emergency cancel command exists but isn't in README; operators can't discover it without grepping source. (v7 #4)
+- **No `config:show` IPC command** — startup banner covers boot-time snapshot; no mid-session query for effective strategy/risk parameters. Add read-only `config:show` via existing env helpers. (v7 #5)
+- **No named env-var profile sets** — 20+ env vars must be tuned individually; a conservative/balanced/aggressive `.env.profile.*` convention + docs lets posture flip atomically. (v7 #6)
+
+Framing:
+- **"Preview is a promise, not a contract" — document the divergence risk** — preview quotes at T₀, execution re-fetches at T₁; add timestamp + divergence note to preview output. Related to v4 #88 and #91. (v7 #7)
+- **Monday verification hierarchy** — 4-check log-reading guide ordered by "if this fails, stop" priority; capture in `docs/plans/`. (v7 #8)
+
+---
+
 ### New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEMENTS.v6-copilot.md))
 
 Bugs/correctness:
