@@ -252,9 +252,12 @@ export async function executePositionEvaluations(
               accountNumber,
               evaluation,
               evaluation.executionTargets ?? sharedExecutionTargets,
-              // EOD liquidation and stop-loss closes chase fast and cross to
-              // the bid; take-profit closes keep the slow chase.
-              { isUrgentClose: evaluation.strategy.isUrgentClose === true },
+              {
+                // EOD liquidation and stop-loss closes chase fast and cross to
+                // the bid; take-profit closes keep the slow chase.
+                isUrgentClose: evaluation.strategy.isUrgentClose === true,
+                accountType: accountMarginOrCash === "unknown" ? undefined : accountMarginOrCash,
+              },
             ),
           ),
         )

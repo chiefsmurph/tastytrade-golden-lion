@@ -1,9 +1,15 @@
 import tastytradeApi from "~/core/tastytrade-client";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { PositionGroupEvaluation } from "../evaluate-position";
-import { ExecutionTargets, getDynamicTakeProfitTarget } from "~/strategy/evaluate-trading-strategy";
+import {
+  ExecutionTargets,
+  StrategyAccountType,
+  evaluateTradingStrategy,
+  getDynamicTakeProfitTarget,
+} from "~/strategy/evaluate-trading-strategy";
 import {
   EOD_ARMED_MINUTE,
+  EOD_FORCED_CLOSE_MINUTE,
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
 import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById } from "./order-utils";
@@ -43,6 +49,9 @@ export interface ClosePositionDependencies {
   urgentTickIntervalMs?: number;
   // Partial close: stop after closing this many total contracts across all snapshots
   maxQuantityToClose?: number;
+  // Account type for the execution-time strategy re-check — cutoff minutes and
+  // the EOD liquidation rule differ by account type.
+  accountType?: StrategyAccountType;
 }
 
 function getMinTickSize(referencePrice: number): number {
@@ -255,6 +264,45 @@ export async function closePosition(
         underlyingSymbol: evaluation.underlyingSymbol,
       });
       continue;
+    }
+
+    // The CLOSE_POSITION decision was made at cycle start with prices that can
+    // be minutes stale by the time this order goes out. Re-run the strategy
+    // against the prices this order is actually priced from — a position that
+    // recovered past its stop (or corrected back below its profit target)
+    // must not be sold on the stale trigger. EOD forced liquidation always
+    // bypasses this re-check: its trigger is the clock, not the price. The
+    // strategy.action gate exempts overnight partial reductions, which are
+    // exposure-driven closes, not stop/target closes.
+    const isEodForcedClose =
+      getTimeInMinutes(evaluation.metrics.currentTime) >= EOD_FORCED_CLOSE_MINUTE;
+    if (evaluation.strategy.action === "CLOSE_POSITION" && !isEodForcedClose) {
+      const freshStrategy = evaluateTradingStrategy(
+        {
+          currentBidPrice: snapshot.currentBidPrice,
+          currentAskPrice: snapshot.currentAskPrice,
+          weightedAverageFill: snapshot.weightedAverageFill,
+          currentTime: new Date(),
+          lastActionTime: evaluation.metrics.lastActionTime,
+        },
+        dependencies.accountType ?? "unknown",
+      );
+
+      if (freshStrategy.action === "MANAGE_ALLOCATION") {
+        console.warn(
+          `[close-position] ${snapshot.position.symbol}: strategy flipped to MANAGE_ALLOCATION at execution time — original close reason "${evaluation.strategy.reason}" no longer holds at bid ${snapshot.currentBidPrice} (${freshStrategy.reason}). Skipping close.`,
+        );
+        results.push({
+          accountNumber,
+          action: "CLOSE_POSITION",
+          placedOrder: false,
+          skippedReason:
+            "strategy flipped to MANAGE_ALLOCATION at execution time (recovered from stop/target)",
+          symbol: snapshot.position.symbol,
+          underlyingSymbol: evaluation.underlyingSymbol,
+        });
+        continue;
+      }
     }
 
     const edgePrice = getEdgePrice(
