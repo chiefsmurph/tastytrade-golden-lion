@@ -22,6 +22,7 @@ import {
   normalizeInstrumentType,
   OrderPayload,
   roundOrderPrice,
+  waitForOrderFillById,
 } from "./order-utils";
 import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
@@ -234,39 +235,6 @@ function calculateDynamicTickSize(midPrice: number, askPrice: number): number {
   return Math.max(tickSize, minTickSize);
 }
 
-async function waitForOrderFill(
-  accountNumber: string,
-  orderId: string,
-  timeoutMs: number,
-): Promise<boolean> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const orders = await tastytradeApi.orderService.getOrders(accountNumber);
-      const order = orders.find((o) => o.id === orderId);
-      
-      if (!order) {
-        // Order not found, might have been filled or cancelled
-        return true;
-      }
-      
-      if (order.status === "Filled" || order.status === "Partially Filled") {
-        return true;
-      }
-      
-      if (!order.status || !["Pending", "Open", "Pending Cancel"].includes(order.status)) {
-        return false;
-      }
-    } catch (err) {
-      // If we can't check status, assume it's still pending
-    }
-    
-    await new Promise((res) => setTimeout(res, 1000));
-  }
-  
-  return false;
-}
-
 async function cancelOrderById(
   accountNumber: string,
   orderId: string,
@@ -351,7 +319,7 @@ export async function placeRouteOrders(
       }
 
       // Wait for 30 seconds to see if order fills
-      const isFilled = orderId ? await waitForOrderFill(
+      const isFilled = orderId ? await waitForOrderFillById(
         accountNumber,
         orderId,
         TICK_UP_INTERVAL_MS,

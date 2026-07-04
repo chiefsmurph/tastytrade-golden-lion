@@ -139,3 +139,60 @@ export function inferOptionSide(symbol: string): "call" | "put" | null {
 
   return match[1].toUpperCase() === "P" ? "put" : "call";
 }
+
+type GetOrderFn = (
+  accountNumber: string,
+  orderId: number,
+) => Promise<{ status?: string } | null | undefined>;
+
+const LIVE_ORDER_STATUSES = ["Pending", "Open", "Pending Cancel"];
+
+// Polls a single order by id (not the full order list) until it fills or the
+// timeout lapses. A missing order (404) counts as NOT filled — the previous
+// copies of this loop treated a vanished order as filled, silently mislabeling
+// cancelled/expired/rejected orders and feeding phantom fills to the chase loops.
+export async function waitForOrderFillById(
+  accountNumber: string,
+  orderId: string,
+  timeoutMs: number,
+  options: { pollIntervalMs?: number; getOrder?: GetOrderFn } = {},
+): Promise<boolean> {
+  const numericOrderId = Number(orderId);
+  if (!Number.isFinite(numericOrderId)) {
+    return false;
+  }
+
+  const pollIntervalMs = options.pollIntervalMs ?? 2000;
+  const getOrder: GetOrderFn =
+    options.getOrder ??
+    (async (resolvedAccountNumber, resolvedOrderId) => {
+      const { default: tastytradeApi } = await import("~/core/tastytrade-client");
+      return tastytradeApi.orderService.getOrder(resolvedAccountNumber, resolvedOrderId);
+    });
+
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const order = await getOrder(accountNumber, numericOrderId);
+      const status = order?.status;
+
+      if (status === "Filled" || status === "Partially Filled") {
+        return true;
+      }
+
+      if (!status || !LIVE_ORDER_STATUSES.includes(status)) {
+        return false;
+      }
+    } catch (error) {
+      const httpStatus = (error as { response?: { status?: number } })?.response?.status;
+      if (httpStatus === 404) {
+        return false;
+      }
+      // Transient failure — keep polling until the timeout.
+    }
+
+    await new Promise((res) => setTimeout(res, pollIntervalMs));
+  }
+
+  return false;
+}
