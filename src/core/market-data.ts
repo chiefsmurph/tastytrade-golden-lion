@@ -111,7 +111,6 @@ async function withQuoteSubscription<T>(
       (events: any[]) => {
         const arr = Array.isArray(events) ? events : [events];
         for (const event of arr) {
-          console.log("Received quote event:", event);
           if (!isMatchingQuoteEvent(event, candidates)) {
             continue;
           }
