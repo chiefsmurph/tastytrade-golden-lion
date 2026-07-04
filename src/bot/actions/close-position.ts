@@ -2,7 +2,6 @@ import tastytradeApi from "~/core/tastytrade-client";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { PositionGroupEvaluation } from "../evaluate-position";
 import {
-  ExecutionTargets,
   StrategyAccountType,
   evaluateTradingStrategy,
   getDynamicTakeProfitTarget,
@@ -188,7 +187,6 @@ export function shouldSkipClosePositionForMorningSpread(
 export async function closePosition(
   accountNumber: string,
   evaluation: PositionGroupEvaluation,
-  targets: ExecutionTargets,
   dependencies: ClosePositionDependencies = {},
 ) {
   const results: ClosePositionResult[] = [];

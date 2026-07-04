@@ -89,8 +89,7 @@ export async function executeOvernightReductions(
       }),
     );
 
-    const targets = evaluation.executionTargets ?? sharedTargets;
-    const closeResults = await closePosition(accountNumber, evaluation, targets, {
+    const closeResults = await closePosition(accountNumber, evaluation, {
       maxQuantityToClose: contractsToClose,
     });
 

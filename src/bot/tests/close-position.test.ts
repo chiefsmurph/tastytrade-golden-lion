@@ -156,7 +156,7 @@ test("closePosition places EOD orders even when the spread is wide", async () =>
   });
 
   let createOrderCalls = 0;
-  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+  const results = await closePosition("ACC-1", evaluation, {
     createOrder: async () => {
       createOrderCalls += 1;
       return { order: { id: "1" } } as never;
@@ -181,7 +181,7 @@ test("closePosition skips all order placement when the morning gate is active", 
   });
 
   let createOrderCalls = 0;
-  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+  const results = await closePosition("ACC-1", evaluation, {
     createOrder: async () => {
       createOrderCalls += 1;
       return {} as never;
@@ -225,7 +225,7 @@ test("closePosition chases sell-to-close from midpoint down to bid", async () =>
   const submittedPrices: string[] = [];
   const cancelledOrderIds: number[] = [];
 
-  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+  const results = await closePosition("ACC-1", evaluation, {
     createOrder: async (_accountNumber, order) => {
       submittedPrices.push(String((order as { price?: string }).price ?? ""));
       return {
@@ -277,7 +277,7 @@ test("closePosition stops chasing when a cancel cannot be confirmed (no double-s
 
   const submittedPrices: string[] = [];
 
-  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+  const results = await closePosition("ACC-1", evaluation, {
     createOrder: async (_accountNumber, order) => {
       submittedPrices.push(String((order as { price?: string }).price ?? ""));
       return { order: { id: String(submittedPrices.length) } } as never;
@@ -331,7 +331,7 @@ test("closePosition skips the close when the strategy flips to MANAGE_ALLOCATION
   });
 
   let createOrderCalls = 0;
-  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+  const results = await closePosition("ACC-1", evaluation, {
     createOrder: async () => {
       createOrderCalls += 1;
       return { order: { id: "1" } } as never;
@@ -382,7 +382,7 @@ test("closePosition never re-checks EOD liquidations — recovered prices still 
   });
 
   let createOrderCalls = 0;
-  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+  const results = await closePosition("ACC-1", evaluation, {
     createOrder: async () => {
       createOrderCalls += 1;
       return { order: { id: "1" } } as never;

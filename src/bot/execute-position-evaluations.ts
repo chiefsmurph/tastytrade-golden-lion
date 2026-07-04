@@ -251,7 +251,6 @@ export async function executePositionEvaluations(
             closePosition(
               accountNumber,
               evaluation,
-              evaluation.executionTargets ?? sharedExecutionTargets,
               {
                 // EOD liquidation and stop-loss closes chase fast and cross to
                 // the bid; take-profit closes keep the slow chase.
