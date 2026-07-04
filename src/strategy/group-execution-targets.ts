@@ -3,6 +3,7 @@ import {
   averageExecutionTargets,
   ExecutionTargets,
   getPositionGroupExecutionTargets,
+  StrategyAccountType,
 } from "./evaluate-trading-strategy";
 import {
   getSecretBuyWeightForSymbol,
@@ -19,6 +20,7 @@ function getMaxAskReturnPercForBuy(): number | null {
 }
 
 export interface GroupExecutionTargetInputs {
+  accountType?: StrategyAccountType;
   askReturnPerc: number;
   baseExecutionTargets: ExecutionTargets;
   currentExposurePct: number;
@@ -41,6 +43,7 @@ export function buildGroupExecutionTargets(
   inputs: GroupExecutionTargetInputs,
 ): GroupExecutionTargetComponents {
   const {
+    accountType,
     askReturnPerc,
     baseExecutionTargets,
     currentExposurePct,
@@ -53,6 +56,7 @@ export function buildGroupExecutionTargets(
     askReturnPerc,
     timeSinceLastActionMs,
     currentTime,
+    accountType,
   );
 
   // Resolve secret ticker match early so debug output still shows buyWeight
