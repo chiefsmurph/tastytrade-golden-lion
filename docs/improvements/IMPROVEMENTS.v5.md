@@ -4,7 +4,7 @@
 
 Written 2026-07-03, same day as v4 but a separate pass with a different brief: find what v1–v4 *missed*. Every item below was cross-checked against v1–v4 and STATUS.md before inclusion — nothing here duplicates an open or shipped item; where a finding is adjacent to an existing one, the relation is stated inline. Unlike v3/v4 there was no new production pull for this pass, so nothing is marked **[prod]** — these are code-reading findings verified against the source at the baseline commit (a few were informed by the 07-02 pull already analyzed in v4).
 
-Baseline at time of writing: `main` clean at `acccb95`, typecheck clean, 88/88 tests pass across 16 test files.
+Baseline at time of writing: `main` clean at `b0602b0`, typecheck clean, 88/88 tests pass across 16 test files.
 
 ## Code quality / correctness
 

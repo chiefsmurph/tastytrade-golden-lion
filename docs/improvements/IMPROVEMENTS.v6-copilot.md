@@ -2,7 +2,7 @@
 
 > **Discovery log (2026-07-03).** Written after a full independent read of `src/` and all previous improvement docs + STATUS.md. Every item below was cross-checked against v1–v5 and STATUS.md before inclusion — nothing here duplicates an open, shipped, or deferred item. Where a finding is adjacent to an existing one, the relation is stated inline. No production pull was available for this pass, so nothing is marked **[prod]** — all findings are code-reading or structural.
 
-Baseline at time of writing: `main` at `acccb95`, typecheck clean, 88/88 tests across 16 files, all v5 items folded into STATUS.md.
+Baseline at time of writing: `main` at `b0602b0`, typecheck clean, 88/88 tests across 16 files, all v5 items folded into STATUS.md.
 
 ---
 

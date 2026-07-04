@@ -4,7 +4,7 @@
 
 Written 2026-07-03 after a full pass over `src/`, the 2026-07-02 production pull (`data-pull/2026-07-02/`: 121 margin + 108 cash run entries plus pm2 logs), and a live API probe attempt. Items marked **[prod]** are backed by production data from 07-02, not just code reading.
 
-Baseline at time of writing: `main` clean at `42e567f`, typecheck clean, 45/45 tests pass across 8 test files.
+Baseline at time of writing: `main` clean at `de87a0d`, typecheck clean, 45/45 tests pass across 8 test files.
 
 Doc housekeeping: the improvements docs now live in `docs/improvements/` (v1–v3 moved out of the repo root in this pass).
 
