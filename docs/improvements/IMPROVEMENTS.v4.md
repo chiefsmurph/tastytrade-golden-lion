@@ -1,5 +1,7 @@
 # Improvements v4
 
+> **Live status is in [STATUS.md](STATUS.md), not here.** This doc is the 2026-07-03 discovery log — its inline checkboxes are a snapshot and are NOT kept current as items ship. For "what's done / before-Monday / after-Monday," read STATUS.md.
+
 Written 2026-07-03 after a full pass over `src/`, the 2026-07-02 production pull (`data-pull/2026-07-02/`: 121 margin + 108 cash run entries plus pm2 logs), and a live API probe attempt. Items marked **[prod]** are backed by production data from 07-02, not just code reading.
 
 Baseline at time of writing: `main` clean at `42e567f`, typecheck clean, 45/45 tests pass across 8 test files.
