@@ -5,6 +5,7 @@ import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-acc
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
 import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened } from "~/bot/position-registry";
+import { toBooleanFlag } from "~/core/env-utils";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
@@ -56,21 +57,6 @@ function normalizeSideForSeed(
   }
 
   return null;
-}
-
-function toBooleanFlag(raw: unknown): boolean {
-  if (typeof raw === "boolean") {
-    return raw;
-  }
-
-  if (typeof raw === "number") {
-    return raw === 1;
-  }
-
-  const normalized = String(raw ?? "")
-    .trim()
-    .toLowerCase();
-  return normalized === "true" || normalized === "1" || normalized === "yes";
 }
 
 async function maybeAutoSeedSymbol(options: {

@@ -210,7 +210,7 @@ export async function closePosition(
     const snapshotQty = Math.abs(Number(snapshot.position.quantity) || 0);
     const qtyToClose = Math.min(snapshotQty, remainingToClose);
 
-    let baseOrder = buildClosingOrderPayload(snapshot, targets);
+    let baseOrder = buildClosingOrderPayload(snapshot);
     if (qtyToClose < snapshotQty && baseOrder) {
       baseOrder = {
         ...baseOrder,
