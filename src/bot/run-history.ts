@@ -40,6 +40,7 @@ export interface RunGroupReturn {
   totalCostBasis: number;
   totalUnrealizedReturnAsk: number;
   totalUnrealizedReturnBid: number;
+  underlyingPriceAtCycleTime: number | null;
   underlyingSymbol: string;
   weightedAverageFill: number;
 }
@@ -69,6 +70,18 @@ export interface RunCloseOrder {
   fills: RunCloseOrderFill[];
 }
 
+export interface RunAllocationOrder {
+  estimatedOrderValue: number;
+  limitPrice: number;
+  orderId: string | null;
+  placedOrder: boolean;
+  quantity: number;
+  route: string;
+  skippedReason: string | null;
+  symbol: string | null;
+  underlyingSymbol: string;
+}
+
 export interface RunSeedOrder {
   accountNumber: string;
   askReturnPctSource: number;
@@ -89,6 +102,7 @@ export interface RunSeedOrder {
 
 export interface RunHistoryEntry {
   accountNumber: string;
+  allocationOrders?: RunAllocationOrder[];
   closeOrders: RunCloseOrder[];
   executionSummary: {
     allocationEstimatedTotal: number;
@@ -162,6 +176,7 @@ export type LastRunGroupsByTickerMap = Record<string, LastRunGroupsByTicker>;
 
 interface AppendRunHistoryInput {
   accountNumber: string;
+  allocationOrders?: RunHistoryEntry["allocationOrders"];
   closeOrders: RunHistoryEntry["closeOrders"];
   executionSummary: RunHistoryEntry["executionSummary"];
   groups: RunHistoryEntry["groups"];

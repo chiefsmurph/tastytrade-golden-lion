@@ -53,12 +53,12 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 
 New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEMENTS.v6-copilot.md)):
 - ~~**SIGTERM / graceful shutdown handler**~~ ✅ — `src/index.ts` registers SIGTERM/SIGINT; stops scheduler, waits up to 30s for in-flight, cancels all live orders. (v6 code #3)
-- **Thread `orderSource` + capture buy-side order ID** — allocation buys are indistinguishable in broker history; no cross-reference to run entries. Additive traceability. (v6 code #6)
+- ~~**Thread `orderSource` + capture buy-side order ID**~~ ✅ — `RunAllocationOrder` added to run history (symbol, route, orderId, limitPrice, quantity, placedOrder per route); all allocation routes now appear in NDJSON for cross-referencing broker history. (v6 code #6)
 - ~~**Spread/stop coupling startup assertion**~~ ✅ — warns at boot if `STRATEGY_MAX_OPTION_SPREAD_PCT >= STRATEGY_INTRADAY_STOP_LOSS_PCT`; `intradayStopLossFloor` added to resolved config log; both getters exported and bid-vs-mid basis documented in comments. (v6 code #7)
 - **Webhook notifications for critical events** — stop-loss fires, EOD liquidations, feed silence, cycle exceptions, NLV drops all go unnotified; `notifyEvent` helper POSTs to `CORE_WEBHOOK_URL` if set, no-ops otherwise. Opt-in, additive. (v6 ops #10)
 - ~~**Document bid-vs-mid basis in stop/target comments**~~ ✅ — comment added to `getIntradayStopLossFloor`/`getEodStopLossFloor` noting both compare against `currentBidPrice`. (v6 strategy #17)
 - ~~**Document aggressiveness thresholds in `signal-interpreter.ts`**~~ ✅ — comment added to `computeAggressivenessBoost` flagging −100/−200/−2%/−5%/>80 as unvalidated defaults. (v6 strategy #19)
-- **Log underlying price in run history** — additive `underlyingPriceAtCycleTime` field on `RunGroupReturn`; precursor to v5 strategy #6 stabilization gate, can be threaded from existing fetch. Additive schema change. (v6 strategy #20)
+- ~~**Log underlying price in run history**~~ ✅ — `underlyingPriceAtCycleTime: number | null` added to `RunGroupReturn`; all unique symbols fetched in parallel via `getUnderlyingPrice` just before `computeGroupReturns` in `run-cycle-context.ts`. (v6 strategy #20)
 
 ---
 

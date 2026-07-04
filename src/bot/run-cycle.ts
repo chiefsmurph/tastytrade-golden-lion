@@ -1,6 +1,6 @@
 import { getManagedAccountNumbers, getMarginAccountNumber } from "~/core/default-account";
 import executePositionEvaluations, { cancelAllLiveOrders } from "./execute-position-evaluations";
-import { appendRunHistory, appendRunHistoryError, RunCloseOrder, RunHistoryEntry } from "./run-history";
+import { appendRunHistory, appendRunHistoryError, RunAllocationOrder, RunCloseOrder, RunHistoryEntry } from "./run-history";
 import { setLastBotRunState } from "./last-run-state";
 import {
   buildRunCycleContext,
@@ -287,8 +287,24 @@ export default async function runBotCycle(
     seedSkippedCount: allSeedResults.filter((order) => !order.placedOrder).length,
   };
 
+  const allocationOrders: RunAllocationOrder[] = executionResults.allocationOrders.flatMap(
+    (result) =>
+      result.routeOrders.map((routeOrder) => ({
+        estimatedOrderValue: routeOrder.estimatedOrderValue,
+        limitPrice: routeOrder.limitPrice,
+        orderId: routeOrder.orderResponse?.order?.id ?? null,
+        placedOrder: routeOrder.placedOrder,
+        quantity: routeOrder.quantity,
+        route: routeOrder.route,
+        skippedReason: routeOrder.skippedReason ?? null,
+        symbol: result.candidateSymbol ?? null,
+        underlyingSymbol: result.underlyingSymbol,
+      })),
+  );
+
   const runHistoryEntry = await appendRunHistory({
     accountNumber: context.preview.accountNumber,
+    allocationOrders,
     closeOrders: mapCloseOrdersForRunHistory([
       ...executionResults.closeOrders,
       ...overnightReductionOrders,

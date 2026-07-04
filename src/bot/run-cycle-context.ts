@@ -1,4 +1,5 @@
 import tastytradeApi from "~/core/tastytrade-client";
+import { getUnderlyingPrice } from "~/core/market-data";
 import {
   getDefaultAccountNumber,
   getAccountMarginOrCash,
@@ -136,6 +137,7 @@ function toRunPlanSelectedGroup(
 function computeGroupReturns(
   completedEvaluations: PositionGroupEvaluation[],
   gatedEvaluations: PositionGroupEvaluation[] = [],
+  underlyingPrices: Map<string, number | null> = new Map(),
 ): RunGroupReturn[] {
   const gateBySymbol = new Map(
     gatedEvaluations.map((e) => [
@@ -190,6 +192,7 @@ function computeGroupReturns(
       totalCostBasis,
       totalUnrealizedReturnAsk,
       totalUnrealizedReturnBid,
+      underlyingPriceAtCycleTime: underlyingPrices.get(evaluation.underlyingSymbol.toUpperCase()) ?? null,
       underlyingSymbol: evaluation.underlyingSymbol,
       weightedAverageFill,
     };
@@ -514,7 +517,16 @@ export async function buildRunCycleContext(
     };
   });
 
-  const groupReturns = computeGroupReturns(completedEvaluations, evaluationsWithGroupTargets);
+  const uniqueSymbols = [...new Set(completedEvaluations.map((e) => e.underlyingSymbol.toUpperCase()))];
+  const underlyingPriceEntries = await Promise.all(
+    uniqueSymbols.map(async (sym) => {
+      const result = await getUnderlyingPrice(sym).catch(() => null);
+      return [sym, result?.underlyingPrice ?? null] as const;
+    }),
+  );
+  const underlyingPrices = new Map<string, number | null>(underlyingPriceEntries);
+
+  const groupReturns = computeGroupReturns(completedEvaluations, evaluationsWithGroupTargets, underlyingPrices);
 
   const plannedManageEvaluations = selectManageEvaluationsByBuyingPower(
     evaluationsWithGroupTargets.filter(
