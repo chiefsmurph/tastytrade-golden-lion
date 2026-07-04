@@ -1,6 +1,6 @@
 import { getManagedAccountNumbers, getMarginAccountNumber } from "~/core/default-account";
 import executePositionEvaluations, { cancelAllLiveOrders } from "./execute-position-evaluations";
-import { appendRunHistory, RunCloseOrder, RunHistoryEntry } from "./run-history";
+import { appendRunHistory, appendRunHistoryError, RunCloseOrder, RunHistoryEntry } from "./run-history";
 import { setLastBotRunState } from "./last-run-state";
 import {
   buildRunCycleContext,
@@ -186,6 +186,7 @@ export default async function runBotCycle(
     return results;
   }
 
+  try {
   await cancelAllLiveOrders(accountNumber);
   await pruneOldEntries();
 
@@ -320,4 +321,8 @@ export default async function runBotCycle(
   }
 
   return runHistoryEntry;
+  } catch (error) {
+    await appendRunHistoryError(accountNumber, error);
+    throw error;
+  }
 }

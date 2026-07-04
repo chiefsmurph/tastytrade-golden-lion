@@ -135,6 +135,7 @@ export interface RunHistoryEntry {
     totalCapital: number;
   };
   timestamp: string;
+  error?: string;
 }
 
 export interface PublicRunGroupReturn {
@@ -377,6 +378,48 @@ export async function appendRunHistory(
   await fs.appendFile(historyPath, `${JSON.stringify(entry)}\n`, "utf8");
 
   return entry;
+}
+
+export async function appendRunHistoryError(
+  accountNumber: string,
+  error: unknown,
+): Promise<void> {
+  const entry: RunHistoryEntry = {
+    accountNumber,
+    closeOrders: [],
+    error: error instanceof Error ? error.message : String(error),
+    executionSummary: {
+      allocationEstimatedTotal: 0,
+      allocationPlacedCount: 0,
+      allocationSkippedCount: 0,
+      cancelledOrderCount: 0,
+      closeOrderCount: 0,
+    },
+    groups: [],
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    plan: { rows: [], totalContracts: 0, totalEstimatedCost: 0 },
+    snapshot: {
+      currentExposurePct: 0,
+      currentExposureValue: 0,
+      dynamicTakeProfitTarget: 0,
+      routeWeights: { ask: 0, bid: 0, mid: 0 },
+      secondsSinceLastPositionsUpdate: null,
+      targetDTE: 0,
+      targetExposurePct: 0,
+      targetExposureValue: 0,
+      totalCapital: 0,
+    },
+    strategyDecisions: [],
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    const historyPath = await getRunHistoryPrimaryPathForAccount(accountNumber);
+    await fs.mkdir(path.dirname(historyPath), { recursive: true });
+    await fs.appendFile(historyPath, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {
+    // best-effort — don't let error logging itself throw
+  }
 }
 
 export async function getRecentRunHistory(
