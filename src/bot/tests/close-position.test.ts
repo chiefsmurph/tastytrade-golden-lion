@@ -195,13 +195,15 @@ test("closePosition skips all order placement when the morning gate is active", 
 });
 
 test("closePosition chases sell-to-close from midpoint down to bid", async () => {
+  // Fill 1.6 vs bid 1.0 → -37.5%: the stop trigger holds at execution-time
+  // prices, so the re-check confirms the close and the chase proceeds.
   const evaluation = buildEvaluation("2026-06-25T09:30:00", {
     metrics: {
       currentAskPrice: 1.2,
       currentBidPrice: 1,
       currentTime: new Date("2026-06-25T09:30:00"),
       lastActionTime: new Date("2026-06-25T05:30:00"),
-      weightedAverageFill: 1,
+      weightedAverageFill: 1.6,
     },
     positionSnapshots: [
       {
@@ -215,7 +217,7 @@ test("closePosition chases sell-to-close from midpoint down to bid", async () =>
           symbol: "AAPL   260619C00100000",
         },
         quantityWeight: 1,
-        weightedAverageFill: 1,
+        weightedAverageFill: 1.6,
       },
     ],
   });
@@ -254,7 +256,7 @@ test("closePosition stops chasing when a cancel cannot be confirmed (no double-s
       currentBidPrice: 1,
       currentTime: new Date("2026-06-25T09:30:00"),
       lastActionTime: new Date("2026-06-25T05:30:00"),
-      weightedAverageFill: 1,
+      weightedAverageFill: 1.6,
     },
     positionSnapshots: [
       {
@@ -268,7 +270,7 @@ test("closePosition stops chasing when a cancel cannot be confirmed (no double-s
           symbol: "AAPL   260619C00100000",
         },
         quantityWeight: 1,
-        weightedAverageFill: 1,
+        weightedAverageFill: 1.6,
       },
     ],
   });
@@ -291,6 +293,104 @@ test("closePosition stops chasing when a cancel cannot be confirmed (no double-s
   // One order placed at mid; the failed cancel must break the chase before a
   // second sell goes live against the still-working first order.
   assert.deepEqual(submittedPrices, ["1.10"]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.placedOrder, true);
+});
+
+test("closePosition skips the close when the strategy flips to MANAGE_ALLOCATION at execution-time prices", async () => {
+  // Stop-loss fired at cycle start, but by execution the position has
+  // recovered to -5% (fill 1.0, bid 0.95) — no circuit breaker holds at these
+  // prices, so the stale trigger must not sell the position.
+  const evaluation = buildEvaluation("2026-06-25T09:30:00", {
+    metrics: {
+      currentAskPrice: 1.05,
+      currentBidPrice: 0.95,
+      currentTime: new Date("2026-06-25T09:30:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1,
+    },
+    positionSnapshots: [
+      {
+        currentAskPrice: 1.05,
+        currentBidPrice: 0.95,
+        lastActionTime: new Date("2026-06-25T05:30:00"),
+        position: {
+          "account-number": "ACC-1",
+          "instrument-type": "Option",
+          quantity: 1,
+          symbol: "AAPL   260619C00100000",
+        },
+        quantityWeight: 1,
+        weightedAverageFill: 1,
+      },
+    ],
+    strategy: {
+      action: "CLOSE_POSITION",
+      reason: "Hit absolute loss limit (-30.00% <= -30%) - stop loss triggered",
+    },
+  });
+
+  let createOrderCalls = 0;
+  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+    createOrder: async () => {
+      createOrderCalls += 1;
+      return { order: { id: "1" } } as never;
+    },
+    checkOrderFilled: async () => true,
+  });
+
+  assert.equal(createOrderCalls, 0);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.placedOrder, false);
+  assert.match(
+    results[0]?.skippedReason ?? "",
+    /strategy flipped to MANAGE_ALLOCATION at execution time/,
+  );
+});
+
+test("closePosition never re-checks EOD liquidations — recovered prices still close at 12:55+", async () => {
+  // Same recovered shape that flips the re-check above, but the close was
+  // decided in the EOD forced-liquidation window: the clock, not the price,
+  // is the trigger, so the order must go out regardless.
+  const evaluation = buildEvaluation("2026-06-25T12:56:00", {
+    metrics: {
+      currentAskPrice: 1.05,
+      currentBidPrice: 0.95,
+      currentTime: new Date("2026-06-25T12:56:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1,
+    },
+    positionSnapshots: [
+      {
+        currentAskPrice: 1.05,
+        currentBidPrice: 0.95,
+        lastActionTime: new Date("2026-06-25T05:30:00"),
+        position: {
+          "account-number": "ACC-1",
+          "instrument-type": "Option",
+          quantity: 1,
+          symbol: "AAPL   260619C00100000",
+        },
+        quantityWeight: 1,
+        weightedAverageFill: 1,
+      },
+    ],
+    strategy: {
+      action: "CLOSE_POSITION",
+      reason: "Market closed or closing - liquidate all positions immediately",
+    },
+  });
+
+  let createOrderCalls = 0;
+  const results = await closePosition("ACC-1", evaluation, closingTargets, {
+    createOrder: async () => {
+      createOrderCalls += 1;
+      return { order: { id: "1" } } as never;
+    },
+    checkOrderFilled: async () => true,
+  });
+
+  assert.equal(createOrderCalls, 1);
   assert.equal(results.length, 1);
   assert.equal(results[0]?.placedOrder, true);
 });

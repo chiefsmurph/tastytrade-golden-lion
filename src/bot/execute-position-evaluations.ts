@@ -252,6 +252,7 @@ export async function executePositionEvaluations(
               accountNumber,
               evaluation,
               evaluation.executionTargets ?? sharedExecutionTargets,
+              { accountType: accountMarginOrCash },
             ),
           ),
         )
