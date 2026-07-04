@@ -3,6 +3,7 @@ export {
 	getSecretSocketStatus,
 	startSecretSocketConnection,
 	getSecretPositionsSourceKey,
+	emitSecretLog,
 } from "./secret-socket-state";
 export {
 	getSecretBuyWeightForSymbol,

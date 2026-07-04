@@ -4,6 +4,7 @@ import {
   getEffectiveTotalCapital,
 } from "~/core/account-balance";
 import tastytradeApi from "~/core/tastytrade-client";
+import { notifyEvent } from "./notify";
 import { TastytradeAccountBalance, TastytradeOrder } from "~/core/types";
 import {
   getSpendableFundsForAccountType,
@@ -261,6 +262,19 @@ export async function executePositionEvaluations(
           ),
         )
       ).flat();
+
+  // Alert on hard-risk closes (stop-loss / EOD liquidation) that actually placed.
+  for (const evaluation of actionableCloseEvaluations) {
+    if (evaluation.strategy.isUrgentClose !== true) continue;
+    const placed = closeOrders.some(
+      (order) => order.underlyingSymbol === evaluation.underlyingSymbol && order.placedOrder,
+    );
+    if (!placed) continue;
+    notifyEvent(
+      "hard-risk-close",
+      `${accountNumber} ${evaluation.underlyingSymbol}: ${evaluation.strategy.reason}`,
+    );
+  }
 
   // Record closing orders in the position registry for P&L tracking
   for (const evaluation of actionableCloseEvaluations) {

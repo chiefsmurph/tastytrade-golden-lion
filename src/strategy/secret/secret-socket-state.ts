@@ -212,6 +212,24 @@ export function startSecretSocketConnection(): void {
   hasConnectedSecretSocket = true;
 }
 
+// Push an operational log line back to the secret server over the live socket.
+// Bare-string "log" event, prefixed with the app name. No-ops silently if the
+// socket isn't connected, and never throws — logging must not touch the
+// trading path.
+const SECRET_LOG_PREFIX = "tastytrade-golden-lion";
+
+export function emitSecretLog(message: string): void {
+  if (!secretSocket || !secretSocketIsConnected) {
+    return;
+  }
+
+  try {
+    secretSocket.emit("log", `${SECRET_LOG_PREFIX} ${message}`);
+  } catch {
+    // best-effort; swallow any transport error
+  }
+}
+
 export function getCachedSecretSourcePositions(): SecretSourcePosition[] {
   if (!isSecretModuleConfigured() || !getSecretPositionsSourceKey()) {
     return [];

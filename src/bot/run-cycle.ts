@@ -1,6 +1,7 @@
 import { getManagedAccountNumbers, getMarginAccountNumber } from "~/core/default-account";
 import executePositionEvaluations, { cancelAllLiveOrders } from "./execute-position-evaluations";
 import { appendRunHistory, appendRunHistoryError, RunAllocationOrder, RunCloseOrder, RunHistoryEntry } from "./run-history";
+import { notifyEvent } from "./notify";
 import { setLastBotRunState } from "./last-run-state";
 import {
   buildRunCycleContext,
@@ -339,6 +340,10 @@ export default async function runBotCycle(
   return runHistoryEntry;
   } catch (error) {
     await appendRunHistoryError(accountNumber, error);
+    notifyEvent(
+      "cycle-exception",
+      `${accountNumber}: cycle threw — ${error instanceof Error ? error.message : String(error)}`,
+    );
     throw error;
   }
 }

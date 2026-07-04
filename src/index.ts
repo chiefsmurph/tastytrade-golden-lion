@@ -5,6 +5,7 @@ import { installQuoteStreamerConsoleGuard } from "./core/quote-streamer-recovery
 import { logStartupConfig } from "./startup-config";
 import { cancelAllLiveOrders } from "./bot/execute-position-evaluations";
 import { getManagedAccountNumbers } from "./core/default-account";
+import { notifyEvent } from "./bot/notify";
 
 logStartupConfig();
 installQuoteStreamerConsoleGuard();
@@ -32,6 +33,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
 		await Promise.all(accounts.map((acct) => cancelAllLiveOrders(acct)));
 	} catch (err) {
 		console.error("cancelAllLiveOrders during shutdown failed:", err);
+		notifyEvent(
+			"cancel-orders-failed",
+			`shutdown (${signal}): cancelAllLiveOrders failed — ${err instanceof Error ? err.message : String(err)}`,
+		);
 	}
 
 	process.exit(0);
