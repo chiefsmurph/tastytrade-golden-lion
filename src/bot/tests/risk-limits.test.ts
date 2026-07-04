@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
-import { getPositionFillSeedMultiplier } from "~/strategy/seed-decision";
+import { getPositionFillSeedMultiplier, getScaledThresholds } from "~/strategy/seed-decision";
 import { computePositionGate } from "~/strategy/position-gate";
 import { getMaxAllocationBuyPositionMultiple } from "~/bot/actions/manage-allocation";
 
@@ -80,6 +80,23 @@ test("position-fill seed multiplier scales from conservative to aggressive", () 
   // At or beyond target: margin fully committed, cash acts sooner.
   assert.ok(Math.abs(getPositionFillSeedMultiplier(1) - 0.7) < 1e-9);
   assert.ok(Math.abs(getPositionFillSeedMultiplier(2) - 0.7) < 1e-9);
+});
+
+test("getScaledThresholds never inverts the seed window under stacked conservative multipliers", () => {
+  const config = { minDownPct: 8, maxDownPct: 20 };
+  // ~3.4× combined (early + brand-new + margin barely deployed): raw min would
+  // be 27 > capped max 20 — the old code emptied the window silently.
+  const scaled = getScaledThresholds(config, 1.5, 1.5, 1.0, 1.5);
+  assert.ok(scaled.minDownPct < scaled.maxDownPct, "window must stay valid (min < max)");
+  assert.ok(scaled.maxDownPct <= config.maxDownPct, "max never exceeds the configured cap");
+  assert.ok(scaled.maxDownPct - scaled.minDownPct >= 0.009, "leaves at least the epsilon band");
+});
+
+test("getScaledThresholds keeps a normal window when multipliers are moderate", () => {
+  const config = { minDownPct: 8, maxDownPct: 20 };
+  const scaled = getScaledThresholds(config, 1.0, 1.0, 1.0, 1.0);
+  assert.equal(scaled.minDownPct, 8);
+  assert.equal(scaled.maxDownPct, 20);
 });
 
 test("basic stock-yes thresholds scale across the gate window", () => {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   findLegacyHonoredEnvNames,
   findObsoleteEnvNames,
+  getTimezoneWarning,
   maskEnvValue,
 } from "~/startup-config";
 
@@ -51,6 +52,12 @@ test("legacy-honored gate names are reported separately", () => {
   assert.equal(findings.length, 1);
   assert.match(findings[0].guidance, /STRATEGY_GATE_STRONG_PERCENT_OF_BALANCE_THRESHOLD/);
   assert.deepEqual(findObsoleteEnvNames({ STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT: "30" }), []);
+});
+
+test("timezone warning is silent on Pacific, loud elsewhere", () => {
+  assert.equal(getTimezoneWarning("America/Los_Angeles"), null);
+  assert.match(getTimezoneWarning("America/New_York") ?? "", /expected America\/Los_Angeles/);
+  assert.match(getTimezoneWarning("UTC") ?? "", /every intraday schedule assumes Pacific/);
 });
 
 test("sensitive values are masked, others pass through", () => {

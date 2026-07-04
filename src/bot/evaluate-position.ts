@@ -115,6 +115,16 @@ async function createPositionQuoteSnapshot(
     fallbackAverageDailyClose ??
     currentBidPrice;
 
+  if (fallbackAverageOpen == null && fallbackAverageDailyClose == null) {
+    // Falling back to the live bid pins currentReturn at ~0%, which silently
+    // disables this group's take-profit and stop-loss (both keyed off return
+    // vs fill). Surface it — a position with no known cost basis is not safe
+    // to treat as break-even.
+    console.warn(
+      `[evaluate-position] ${position.symbol}: no average-open/close price — cost basis fell back to live bid ${currentBidPrice}; circuit breakers are effectively disabled for this group until a fill price is known.`,
+    );
+  }
+
   return {
     position,
     currentBidPrice,

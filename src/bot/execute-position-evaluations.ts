@@ -207,10 +207,6 @@ export async function executePositionEvaluations(
 
   const currentTime = evaluations[0]?.metrics.currentTime ?? new Date();
 
-  const closeEvaluations = evaluationsWithTargets.filter(
-    (evaluation) => evaluation.strategy.action === "CLOSE_POSITION",
-  );
-
   const manageEvaluationCandidates = actionableEvaluations.filter(
     (evaluation) => evaluation.strategy.action === "MANAGE_ALLOCATION",
   );

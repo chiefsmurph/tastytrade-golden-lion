@@ -109,10 +109,15 @@ export function getScaledThresholds(
   fillFactor = 1,
 ): MarginSeedConfig {
   const combined = timeFactor * ageFactor * booleanFactor * fillFactor;
-  return {
-    minDownPct: Math.max(config.minDownPct * combined, 1),
-    maxDownPct: Math.min(config.maxDownPct * combined, config.maxDownPct),
-  };
+  const maxDownPct = Math.min(config.maxDownPct * combined, config.maxDownPct);
+  // Stacked conservative multipliers can reach ~3.4× (early + brand-new +
+  // margin barely deployed), which would push a scaled min above the capped
+  // max and silently empty the seed window (min > max ⇒ never seed). Clamp the
+  // min just below the max so the window stays valid — the most conservative
+  // case is a narrow window at the top of the band, not a nonexistent one.
+  const rawMin = Math.max(config.minDownPct * combined, 1);
+  const minDownPct = Math.min(rawMin, maxDownPct - 0.01);
+  return { minDownPct, maxDownPct };
 }
 
 // Two zones split at the midpoint of [minDownPct, maxDownPct]:
