@@ -16,15 +16,15 @@ Attribution note for Monday's analysis: most of these are pure safety/diagnostic
 
 - [x] **Startup config log + obsolete-env-name warnings** *(done 07-03: `src/startup-config.ts`, wired into `index.ts`, tests in `startup-config.test.ts`; smoke-run caught the two dead vars in the local `.env`)* — log the resolved config once at boot; warn loudly on recognized-but-obsolete names (`BASE_URL`, `API_*`, `BOT_MAX_OPTION_SPREAD_PCT`, `TASTYTRADE_*`, pre-refactor `BOT_*` strategy names…). **Do this one first — it protects the deploy itself**: if the server `.env` has any stale names Monday morning, the bot says so at boot instead of silently reverting to defaults. (v4 config-drift item)
 
-- [ ] **Smaller items**
-  - [ ] TZ assertion at boot — refuse to trade unless `America/Los_Angeles`; every schedule assumes it and nothing checks.
-  - [ ] `getScaledThresholds` inversion clamp — stacked conservative multipliers (up to ~3.4×) can push `minDownPct` above `maxDownPct`, silently emptying the seed window; clamp or log explicitly + test.
-  - [ ] Dead-code cleanup — unused `closeEvaluations` (`execute-position-evaluations.ts:210`), the "booleans N/**5**" log for a 0–10 score (`secret-auto-seed.ts`), the 9:30-vs-6:30 window comment in `position-gate.ts`, warn when `weightedAverageFill` falls back to current bid (`evaluate-position.ts:113-116` — silently pins return at 0% and disables that group's circuit breakers).
-  - [ ] Money-math tests — `allocateContractsByWeight` remainder loop, `computePositionGate` tier selection + boolean boost, `signal-interpreter` weight math, `overnight-reduction` age-floor math, `normalizeGroupExecutionTargetExposures`.
-  - [ ] Duplicate-helper extraction — `getMidpointPrice` ×2, `readEnvPct`/`toBooleanFlag` ×2, the two exposure normalizers (which also iterate in different sort orders — plan vs execution remainder-groups differ).
+- **Smaller items**
+  - [x] TZ warning at boot *(done 07-03: `getTimezoneWarning`; loud `[config] TIMEZONE` line if not Pacific. Chose warn over hard-refuse so a false positive can't brick the bot — a hard refuse can be layered on later.)*
+  - [x] `getScaledThresholds` inversion clamp *(done 07-03: min clamped to `maxDownPct - 0.01`; regression test in `risk-limits.test.ts`)*
+  - [x] Dead-code cleanup *(done 07-03: removed unused `closeEvaluations`, fixed the "N/5"→"N/10" log, corrected the window comment in `position-gate.ts`, added the `weightedAverageFill`-fallback warn in `evaluate-position.ts`)*
+  - [x] Money-math tests *(done 07-03: `allocate-contracts.test.ts` covers the remainder loop; `position-gate-tiers.test.ts` covers all six tier selections + the boolean boost)* — still untested: `signal-interpreter` weight math, `overnight-reduction` age-floor math, `normalizeGroupExecutionTargetExposures` (lower value, left for later).
+  - [x] `getMidpointPrice` dedup *(done 07-03: moved to `order-utils.ts`, imported by both action files)* — remaining dedup (`readEnvPct`/`toBooleanFlag` ×2, the two exposure normalizers) still open; lower value, left for later.
+
+- [x] **Route-chase semantics redesign (v4 strategy #9)** *(done 07-03: `getRouteChasePlan` + tests)* — bid rests / mid concedes ≤3 ticks / ask starts at mid and fast-chases. **Included in Monday's deploy** (decision 07-03): the old bid-chases-ask behavior is a mislabeled bug, not a design under test; with only one day of data there's no clean signal to protect; and the three Monday behavior changes aren't confounded because every route/gate/DTE decision is logged per-order. Expect visibly slower morning accumulation (morning route weights are bid-heavy at 0.70, and "bid rests" now means it waits instead of chasing up) — correct behavior, but a real character change to watch alongside the morning IV gate.
 
 ## Explicitly NOT before Monday
 
-Behavior-changing strategy work waits for Monday's data/verification (Tuesday+ deploys): stop-loss-above-cooldown + grace period, re-entry cooldown, secret staleness gate, take-profit scale-out, conviction-sized seeds, liquidity steps 2–3, and the Quote-event capture in the streamer sampler.
-
-**Route-chase semantics redesign (v4 strategy #9) — implemented 07-03, deploys TUESDAY.** bid rests / mid concedes ≤3 ticks / ask starts at mid and fast-chases to the ask. This changes the price of every buy order, so it must not ride Monday's deploy: **Monday's server pull is pinned to the `monday-2026-07-06` tag** (see runbook §1), which excludes commits made after the tag.
+Behavior-changing strategy work that genuinely needs Monday's data first (Tuesday+ deploys): stop-loss-above-cooldown + grace period, re-entry cooldown, secret staleness gate, take-profit scale-out, conviction-sized seeds, liquidity steps 2–3, and the Quote-event capture in the streamer sampler. The `monday-2026-07-06` tag still marks the deploy point — everything above the tag is this strategy work.
