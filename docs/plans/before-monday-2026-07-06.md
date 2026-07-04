@@ -26,3 +26,5 @@ Attribution note for Monday's analysis: most of these are pure safety/diagnostic
 ## Explicitly NOT before Monday
 
 Behavior-changing strategy work waits for Monday's data/verification (Tuesday+ deploys): stop-loss-above-cooldown + grace period, re-entry cooldown, secret staleness gate, take-profit scale-out, conviction-sized seeds, liquidity steps 2–3, and the Quote-event capture in the streamer sampler.
+
+**Route-chase semantics redesign (v4 strategy #9) — implemented 07-03, deploys TUESDAY.** bid rests / mid concedes ≤3 ticks / ask starts at mid and fast-chases to the ask. This changes the price of every buy order, so it must not ride Monday's deploy: **Monday's server pull is pinned to the `monday-2026-07-06` tag** (see runbook §1), which excludes commits made after the tag.
