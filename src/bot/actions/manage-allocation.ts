@@ -294,17 +294,28 @@ function calculateDynamicTickSize(midPrice: number, askPrice: number): number {
 async function cancelOrderById(
   accountNumber: string,
   orderId: string,
+  cancelFn?: (accountNumber: string, orderId: number) => Promise<unknown>,
 ): Promise<boolean> {
   try {
     const numericOrderId = Number(orderId);
     if (!Number.isFinite(numericOrderId)) {
       return false;
     }
-    await tastytradeApi.orderService.cancelOrder(accountNumber, numericOrderId);
+    if (cancelFn) {
+      await cancelFn(accountNumber, numericOrderId);
+    } else {
+      await tastytradeApi.orderService.cancelOrder(accountNumber, numericOrderId);
+    }
     return true;
   } catch (err) {
     return false;
   }
+}
+
+export interface PlaceRouteOrdersDependencies {
+  createOrder?: (accountNumber: string, order: OrderPayload) => Promise<TastytradePlacedOrderResponse>;
+  cancelOrder?: (accountNumber: string, orderId: number) => Promise<unknown>;
+  waitForFill?: (accountNumber: string, orderId: string, timeoutMs: number) => Promise<boolean>;
 }
 
 export async function placeRouteOrders(
@@ -313,7 +324,12 @@ export async function placeRouteOrders(
   routeOrders: AllocationRouteResult[],
   bidPrice: number = 0,
   askPrice: number = 0,
+  deps: PlaceRouteOrdersDependencies = {},
 ): Promise<AllocationRouteResult[]> {
+  const effectiveCreateOrder = deps.createOrder ??
+    ((acct: string, order: OrderPayload) => tastytradeApi.orderService.createOrder(acct, order) as Promise<TastytradePlacedOrderResponse>);
+  const effectiveWaitForFill = deps.waitForFill ?? waitForOrderFillById;
+
   const placedOrders: AllocationRouteResult[] = [];
 
   for (const routeOrder of routeOrders) {
@@ -352,10 +368,7 @@ export async function placeRouteOrders(
         ],
       };
 
-      const orderResponse = await tastytradeApi.orderService.createOrder(
-        accountNumber,
-        order,
-      );
+      const orderResponse = await effectiveCreateOrder(accountNumber, order);
 
       lastOrderResponse = orderResponse;
       orderId = orderResponse?.order?.id;
@@ -366,7 +379,7 @@ export async function placeRouteOrders(
         break;
       }
 
-      const isFilled = orderId ? await waitForOrderFillById(
+      const isFilled = orderId ? await effectiveWaitForFill(
         accountNumber,
         orderId,
         plan.tickIntervalMs,
@@ -385,7 +398,7 @@ export async function placeRouteOrders(
       }
 
       if (orderId) {
-        const cancelled = await cancelOrderById(accountNumber, orderId);
+        const cancelled = await cancelOrderById(accountNumber, orderId, deps.cancelOrder);
         if (!cancelled) {
           // Can't confirm cancellation — stop chasing to avoid duplicate live orders
           break;

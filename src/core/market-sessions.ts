@@ -146,12 +146,21 @@ function inferIsOpen(
   );
 }
 
-function inferIsRegularSession(
+export function inferIsRegularSession(
   sessionLabel: string | undefined,
   sessionStatus: string | undefined,
   opensAt: string | undefined,
   closesAt: string | undefined,
 ): boolean {
+  // state: "Open"/"Closed" explicitly names the regular equities session —
+  // treat it as the primary signal before falling back to the duration heuristic,
+  // which misclassifies sessions longer than 7.5 h (e.g. election days, quarterly
+  // expiration Fridays, any day where the API returns an 8-hour window).
+  const normalizedStatus = sessionStatus?.trim().toLowerCase();
+  if (normalizedStatus === "open" || normalizedStatus === "closed") {
+    return true;
+  }
+
   const combined = `${sessionLabel ?? ""} ${sessionStatus ?? ""}`.toLowerCase();
   if (combined.includes("regular")) {
     return true;

@@ -48,7 +48,7 @@ New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.m
 - ~~**Error run-history entries for failed cycles**~~ ✅ — `appendRunHistoryError` added; cycle body wrapped in try/catch. (v5 code #9)
 - ~~**`blendBySchedule` pre-sort**~~ ✅ — sort removed, invariant documented. (v2)
 - ~~**Finish helper dedup**~~ ✅ — `src/core/env-utils.ts` created; `readEnvPct`/`toBooleanFlag` consolidated. (v2, v4 #91)
-- **DI + tests for `placeRouteOrders`** — the Monday route-chase loop is untestable (hard-wired API client, unlike `closePosition`); test-only refactor, most valuable *before* Monday. (v5 code #4)
+- ~~**DI + tests for `placeRouteOrders`**~~ ✅ — `PlaceRouteOrdersDependencies` added; `createOrder`/`cancelOrder`/`waitForFill` injectable; 6 tests covering zero-qty skip, bid rest, ask fill, chase, cancel-fail safety, multi-order. (v5 code #4)
 - **Realized-P&L attribution ledger** *(fable)* — persist per-round-trip P&L tagged by decision type/route/hour/DTE/gate score; landing it before Monday means Monday's session is captured. Bigger diff, zero trading behavior change. (v5 strategy #9)
 
 New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEMENTS.v6-copilot.md)):
@@ -114,7 +114,7 @@ Strategy/profitability:
 ### New in v7 (2026-07-04 brother's branch review — see [IMPROVEMENTS.v7-brother-sm.md](IMPROVEMENTS.v7-brother-sm.md))
 
 Bugs/correctness:
-- **`inferIsRegularSession` ignores explicit `state` field** — `state: "Open"` or `state: "Closed"` falls through to the 7.5h duration heuristic; an 8h session day misclassifies all day. Fix: treat state directly as primary signal. (v7 #1)
+- ~~**`inferIsRegularSession` ignores explicit `state` field**~~ ✅ — `state: "Open"/"Closed"` now short-circuits the 7.5h heuristic; 8 unit tests added. (v7 #1)
 - **`UNDERLYING::side` groups average across expirations** — a profitable long-dated leg masks a stopping short-dated leg; log per-leg return breakdown and flag spread ≥ 20pp as a diagnostic precursor to v5 strategy #5. (v7 #2)
 - ~~**`ecosystem.config.cjs` interpreter path pinned to deploy host**~~ ✅ — changed to `"node"`. (v7 #3)
 
