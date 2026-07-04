@@ -2,7 +2,9 @@ import { startIpcServer } from "./ipc-server";
 import { startMarketOpenScheduler } from "./bot/market-open-scheduler";
 import { startSecretSocketConnection } from "./strategy/secret";
 import { installQuoteStreamerConsoleGuard } from "./core/quote-streamer-recovery";
+import { logStartupConfig } from "./startup-config";
 
+logStartupConfig();
 installQuoteStreamerConsoleGuard();
 startSecretSocketConnection();
 startIpcServer();

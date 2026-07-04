@@ -1,0 +1,128 @@
+// Startup config hygiene: print the resolved trading config once at boot and
+// warn loudly on recognized-but-obsolete env names, so a stale .env fails
+// visibly instead of silently reverting to in-code defaults (the class of
+// drift behind the 07-02 prod incident: a pre-refactor server .env would
+// silently disable ~30 renamed vars on the next deploy).
+import { getMaxOptionSpreadPct, getMinIvRankPct, getMarginTargetCallDelta } from "~/strategy/entry-filters";
+import { getMarginMaxBuyExposurePct, getCashMaxBuyExposurePct } from "~/strategy/risk-limits";
+import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
+
+export interface EnvNameFinding {
+  name: string;
+  guidance: string;
+}
+
+// Old name → what happened to it. Setting any of these does nothing today.
+const OBSOLETE_ENV_VARS: Record<string, string> = {
+  BASE_URL: "renamed to CORE_BASE_URL",
+  API_CLIENT_SECRET: "renamed to CORE_API_CLIENT_SECRET",
+  API_REFRESH_TOKEN: "renamed to CORE_API_REFRESH_TOKEN",
+  BOT_MAX_OPTION_SPREAD_PCT: "renamed to STRATEGY_MAX_OPTION_SPREAD_PCT",
+  BOT_MIN_IV_RANK_PCT: "renamed to STRATEGY_MIN_IV_RANK_PCT",
+  BOT_MARGIN_TARGET_CALL_DELTA: "renamed to STRATEGY_MARGIN_TARGET_CALL_DELTA",
+  BOT_MARGIN_MAX_TARGET_DTE: "renamed to STRATEGY_MARGIN_MAX_TARGET_DTE",
+  BOT_CASH_MIN_TARGET_DTE: "renamed to STRATEGY_CASH_MIN_TARGET_DTE",
+  BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT: "renamed to STRATEGY_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT",
+  BOT_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT: "renamed to STRATEGY_MARGIN_SEED_FROM_CASH_MAX_DOWN_PCT",
+  BOT_CROSS_ACCOUNT_YES_DOWN_PCT: "renamed to STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT",
+  BOT_INTRADAY_STOP_LOSS_PCT: "renamed to STRATEGY_INTRADAY_STOP_LOSS_PCT",
+  BOT_EOD_STOP_LOSS_PCT: "renamed to STRATEGY_EOD_STOP_LOSS_PCT",
+  BOT_MAX_BUY_POWER_PCT:
+    "removed — see STRATEGY_MARGIN_MAX_BUY_EXPOSURE_PCT / STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT",
+  BOT_RUN_HISTORY_DIR: "removed — run history always lives under BOT_DATA_DIR (default ./data)",
+  BOT_SEED_ONLY_TO_MARGIN_ACCOUNTS: "removed — no replacement",
+  SECRET_AUTO_SEED_END_TIME: "removed — the seed window end is fixed at 13:00 PT",
+};
+
+// Legacy names the code still honors via explicit fallback (readEnvPctWithLegacy).
+// They work today but should be renamed before the fallback is ever dropped.
+const LEGACY_HONORED_ENV_VARS: Record<string, string> = {
+  STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT:
+    "rename to STRATEGY_GATE_STRONG_PERCENT_OF_BALANCE_THRESHOLD",
+  STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX:
+    "rename to STRATEGY_GATE_STRONG_DAYTRADE_SCORE_THRESHOLD",
+};
+
+const CONFIG_PREFIX_PATTERN = /^(CORE_|BOT_|STRATEGY_|SECRET_|TASTYTRADE_)/;
+const SENSITIVE_KEY_PATTERN = /TOKEN|CLIENT_SECRET|SOCKET_URL|POSITIONS_KEY/;
+
+function isSet(value: string | undefined): boolean {
+  return value != null && value.trim().length > 0;
+}
+
+export function findObsoleteEnvNames(env: NodeJS.ProcessEnv = process.env): EnvNameFinding[] {
+  const findings: EnvNameFinding[] = [];
+
+  for (const [name, guidance] of Object.entries(OBSOLETE_ENV_VARS)) {
+    if (isSet(env[name])) {
+      findings.push({ name, guidance });
+    }
+  }
+
+  // The whole TASTYTRADE_ prefix family predates the July-1 rename.
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("TASTYTRADE_") && isSet(env[name])) {
+      findings.push({
+        name,
+        guidance: name === "TASTYTRADE_BOT_SOCKET"
+          ? "renamed to CORE_IPC_SOCKET"
+          : "obsolete TASTYTRADE_* name — removed in the July-1 prefix refactor",
+      });
+    }
+  }
+
+  return findings.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function findLegacyHonoredEnvNames(env: NodeJS.ProcessEnv = process.env): EnvNameFinding[] {
+  return Object.entries(LEGACY_HONORED_ENV_VARS)
+    .filter(([name]) => isSet(env[name]))
+    .map(([name, guidance]) => ({ name, guidance }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function maskEnvValue(key: string, value: string): string {
+  if (!SENSITIVE_KEY_PATTERN.test(key)) {
+    return value;
+  }
+
+  return value.length <= 4 ? "•••" : `${value.slice(0, 4)}…(${value.length} chars)`;
+}
+
+export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
+  const vars: Record<string, string> = {};
+  for (const key of Object.keys(env).sort()) {
+    const value = env[key];
+    if (CONFIG_PREFIX_PATTERN.test(key) && value != null) {
+      vars[key] = maskEnvValue(key, value);
+    }
+  }
+
+  let resolved: Record<string, unknown> = {};
+  try {
+    resolved = {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      maxOptionSpreadPct: getMaxOptionSpreadPct(),
+      minIvRankPct: getMinIvRankPct(),
+      marginTargetCallDelta: getMarginTargetCallDelta(),
+      marginMaxBuyExposurePct: getMarginMaxBuyExposurePct(),
+      cashMaxBuyExposurePct: getCashMaxBuyExposurePct(),
+      marginSeedFromCash: getMarginSeedConfig(),
+      cashSeedFromMargin: getCashSeedFromMarginConfig(),
+    };
+  } catch (error) {
+    resolved = { error: error instanceof Error ? error.message : String(error) };
+  }
+
+  console.log(JSON.stringify({ scope: "startup-config", vars, resolved }));
+
+  for (const finding of findObsoleteEnvNames(env)) {
+    console.warn(
+      `[config] OBSOLETE env var ${finding.name} is set and IGNORED — ${finding.guidance}. The in-code default is in effect instead.`,
+    );
+  }
+
+  for (const finding of findLegacyHonoredEnvNames(env)) {
+    console.warn(`[config] legacy env var ${finding.name} still honored — ${finding.guidance}.`);
+  }
+}
