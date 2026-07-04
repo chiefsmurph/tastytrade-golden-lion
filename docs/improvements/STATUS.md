@@ -38,7 +38,7 @@ Pure cleanup / docs / tests / diagnostics — no behavior change, so they can ri
 
 - **Finish the config-drift docs** — CLAUDE.md/README still document pre-refactor `BOT_*` names and moved paths; update to `CORE_*`/`STRATEGY_*`. (v3, v4 #51 remainder)
 - **Finish helper dedup** — `readEnvPct`/`toBooleanFlag` still ×2 (`position-gate` + `secret-auto-seed`). Pure refactor. (v2, v4 #91). *Note: unifying the two exposure normalizers is listed here too but is NOT purely safe — they iterate in different orders, so that one is AFTER.*
-- **More money-math tests** — `signal-interpreter` weights, `overnight-reduction` age-floor, `normalizeGroupExecutionTargetExposures`. (v4 #94)
+- ~~**More money-math tests**~~ ✅ — 29 tests added: `signal-interpreter` (buy-weight normalization, aggressiveness tiers, secret route-weight math), `overnight-reduction` (age-floor interpolation, window bracketing, protective-signal pause, floor convergence), `normalizeGroupExecutionTargetExposures` (proportional rescale, last-group remainder absorbs rounding drift, zero/no-target guards). (v4 #94)
 - **`blendBySchedule` pre-sort** — sorts a constant array 5×/cycle; micro-perf. (v2)
 - **Structured logging (`pino`) + per-cycle `runId`** — infra, low risk but a big diff; do anytime, low priority. (v1, v4 #81)
 

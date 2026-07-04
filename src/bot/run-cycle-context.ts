@@ -218,7 +218,7 @@ function computeStrategyDecisions(
     });
 }
 
-function normalizeGroupExecutionTargetExposures(
+export function normalizeGroupExecutionTargetExposures(
   evaluations: PositionGroupEvaluation[],
   totalTargetExposure: number,
 ): PositionGroupEvaluation[] {

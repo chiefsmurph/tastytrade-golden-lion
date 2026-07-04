@@ -22,7 +22,7 @@ function getReductionStartFloorPct(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.20;
 }
 
-function getAgeBasedFloorPct(ageDays: number): number | null {
+export function getAgeBasedFloorPct(ageDays: number): number | null {
   const numDays = getNumDaysToSellOff();
   const startFloor = getReductionStartFloorPct();
   if (ageDays >= numDays) return null;
