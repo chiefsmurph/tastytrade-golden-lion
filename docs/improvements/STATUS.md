@@ -43,10 +43,12 @@ Pure cleanup / docs / tests / diagnostics — no behavior change, so they can ri
 - **Structured logging (`pino`) + per-cycle `runId`** — infra, low risk but a big diff; do anytime, low priority. (v1, v4 #81)
 
 New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.md)):
-- **Delete the per-quote-event debug log** — `market-data.ts:114` prints every event for every subscription window, before the symbol match; likely the noisiest line in prod. One-line deletion. (v5 code #2)
-- **Remove the dead weighted close price** — `getWeightedOrderPrice` is always overwritten by mid in `closePosition`; route weights have never affected closes. (v5 code #8)
+- ~~**Delete the per-quote-event debug log**~~ ✅ — `market-data.ts:114` deleted. (v5 code #2)
+- ~~**Remove the dead weighted close price**~~ ✅ — `getWeightedOrderPrice` removed; `buildClosingOrderPayload` no longer takes route weights. (v5 code #8)
+- ~~**Error run-history entries for failed cycles**~~ ✅ — `appendRunHistoryError` added; cycle body wrapped in try/catch. (v5 code #9)
+- ~~**`blendBySchedule` pre-sort**~~ ✅ — sort removed, invariant documented. (v2)
+- ~~**Finish helper dedup**~~ ✅ — `src/core/env-utils.ts` created; `readEnvPct`/`toBooleanFlag` consolidated. (v2, v4 #91)
 - **DI + tests for `placeRouteOrders`** — the Monday route-chase loop is untestable (hard-wired API client, unlike `closePosition`); test-only refactor, most valuable *before* Monday. (v5 code #4)
-- **Error run-history entries for failed cycles** — a mid-cycle throw currently leaves no NDJSON trace; additive diagnostics. (v5 code #9)
 - **Realized-P&L attribution ledger** *(fable)* — persist per-round-trip P&L tagged by decision type/route/hour/DTE/gate score; landing it before Monday means Monday's session is captured. Bigger diff, zero trading behavior change. (v5 strategy #9)
 
 ---
