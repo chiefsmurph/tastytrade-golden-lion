@@ -196,6 +196,69 @@ export function allocateContractsByWeight(
 const TICK_UP_CHASE_ENABLED = true;
 const TICK_UP_INTERVAL_MS = 30_000; // 30 seconds
 const MAX_TICK_UPS = 10; // Maximum number of ticks
+const ASK_ROUTE_TICK_INTERVAL_MS = 15_000; // ask route chases on a faster clock
+const MID_ROUTE_MAX_TICKS = 3; // mid route concedes at most this many ticks
+
+export interface RouteChasePlan {
+  ceilingPrice: number;
+  maxTicks: number;
+  startPrice: number;
+  tickIntervalMs: number;
+}
+
+// Route semantics (redesigned 2026-07-03 — IMPROVEMENTS.v4 strategy #9): the
+// route name describes how much of the spread the order concedes and how
+// fast, not just a starting price. Previously every route chased to the full
+// ask, and the ask route paid the whole spread instantly.
+//   bid — rest at the bid, never chase (a genuinely patient order).
+//   mid — start at mid, concede at most MID_ROUTE_MAX_TICKS ticks.
+//   ask — start at MID and chase to the full ask on the fast clock:
+//         immediacy with a real attempt at spread capture. When the spread is
+//         within two min-ticks there is nothing to capture — go straight to
+//         the ask.
+export function getRouteChasePlan(
+  route: AllocationRoute,
+  bid: number,
+  ask: number,
+): RouteChasePlan {
+  const midpoint = getMidpointPrice(bid, ask);
+  const ceilingPrice = ask > 0 ? ask : midpoint;
+  const minTick = midpoint < 3 ? 0.05 : 0.1;
+
+  if (route === "bid") {
+    const restPrice = bid > 0 ? bid : midpoint;
+    return {
+      ceilingPrice: restPrice,
+      maxTicks: 0,
+      startPrice: restPrice,
+      tickIntervalMs: TICK_UP_INTERVAL_MS,
+    };
+  }
+
+  if (route === "mid") {
+    return {
+      ceilingPrice,
+      maxTicks: MID_ROUTE_MAX_TICKS,
+      startPrice: midpoint,
+      tickIntervalMs: TICK_UP_INTERVAL_MS,
+    };
+  }
+
+  const spreadIsTight = ceilingPrice - midpoint <= 2 * minTick;
+  return spreadIsTight
+    ? {
+        ceilingPrice,
+        maxTicks: 0,
+        startPrice: ceilingPrice,
+        tickIntervalMs: ASK_ROUTE_TICK_INTERVAL_MS,
+      }
+    : {
+        ceilingPrice,
+        maxTicks: MAX_TICK_UPS,
+        startPrice: midpoint,
+        tickIntervalMs: ASK_ROUTE_TICK_INTERVAL_MS,
+      };
+}
 
 // Cap a single allocation buy relative to the group's current market value,
 // so adds scale with the position rather than the account: a $87 position
@@ -269,16 +332,17 @@ export async function placeRouteOrders(
       continue;
     }
 
-    // Determine mid and ask for spread-based tick calculation
-    const midPrice = (bidPrice + askPrice) / 2 || routeOrder.limitPrice;
-    const askCeiling = askPrice || routeOrder.limitPrice;
+    const effectiveBid = bidPrice > 0 ? bidPrice : routeOrder.limitPrice;
+    const effectiveAsk = askPrice > 0 ? askPrice : routeOrder.limitPrice;
+    const plan = getRouteChasePlan(routeOrder.route, effectiveBid, effectiveAsk);
+    const midPrice = getMidpointPrice(effectiveBid, effectiveAsk);
 
-    let currentPrice = routeOrder.limitPrice;
+    let currentPrice = plan.startPrice;
     let orderId: string | undefined;
     let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
     let tickCount = 0;
 
-    while (tickCount <= MAX_TICK_UPS) {
+    while (tickCount <= plan.maxTicks) {
       const order: OrderPayload = {
         source: "tastytrade-golden-lion",
         "time-in-force": "Day",
@@ -295,8 +359,39 @@ export async function placeRouteOrders(
         ],
       };
 
-      // If we have an existing order, cancel it first
-      if (orderId && TICK_UP_CHASE_ENABLED && tickCount > 0) {
+      const orderResponse = await tastytradeApi.orderService.createOrder(
+        accountNumber,
+        order,
+      );
+
+      lastOrderResponse = orderResponse;
+      orderId = orderResponse?.order?.id;
+
+      if (!TICK_UP_CHASE_ENABLED || tickCount >= plan.maxTicks) {
+        // Route rests here (bid, or chase exhausted) — leave the order working;
+        // the next cycle's cancelAllLiveOrders sweep owns cleanup.
+        break;
+      }
+
+      const isFilled = orderId ? await waitForOrderFillById(
+        accountNumber,
+        orderId,
+        plan.tickIntervalMs,
+      ) : false;
+
+      if (isFilled) {
+        break;
+      }
+
+      const tickSize = calculateDynamicTickSize(midPrice, plan.ceilingPrice);
+      const nextPrice = Math.min(plan.ceilingPrice, currentPrice + tickSize);
+
+      if (nextPrice - currentPrice < 1e-9) {
+        // At the ceiling — re-placing an identical price is pure request waste.
+        break;
+      }
+
+      if (orderId) {
         const cancelled = await cancelOrderById(accountNumber, orderId);
         if (!cancelled) {
           // Can't confirm cancellation — stop chasing to avoid duplicate live orders
@@ -304,41 +399,8 @@ export async function placeRouteOrders(
         }
       }
 
-      // Place new order
-      const orderResponse = await tastytradeApi.orderService.createOrder(
-        accountNumber,
-        order,
-      );
-      
-      lastOrderResponse = orderResponse;
-      orderId = orderResponse?.order?.id;
-
-      if (!TICK_UP_CHASE_ENABLED || tickCount >= MAX_TICK_UPS) {
-        // Not using tick-up chase, or reached max ticks
-        break;
-      }
-
-      // Wait for 30 seconds to see if order fills
-      const isFilled = orderId ? await waitForOrderFillById(
-        accountNumber,
-        orderId,
-        TICK_UP_INTERVAL_MS,
-      ) : false;
-
-      if (isFilled) {
-        // Order filled, no need to tick up
-        break;
-      }
-
-      // Order not filled, calculate dynamic tick based on spread
-      const tickSize = calculateDynamicTickSize(midPrice, askCeiling);
-      currentPrice = currentPrice + tickSize;
+      currentPrice = nextPrice;
       tickCount += 1;
-
-      // Don't exceed the ask ceiling
-      if (currentPrice > askCeiling) {
-        currentPrice = askCeiling;
-      }
     }
 
     placedOrders.push({
