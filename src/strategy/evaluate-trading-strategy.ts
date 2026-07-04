@@ -430,6 +430,11 @@ function roundToTwoDecimals(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+// INVARIANT: every caller must pass `schedule` already sorted ascending by
+// `minute`.  The sort that used to live here has been removed to avoid
+// allocating + sorting a new array on every call (called ~5× per cycle with
+// effectively constant data).  All call sites in this module construct their
+// arrays with entries in strict ascending minute order.
 function blendBySchedule(
   currentMinute: number,
   schedule: TimeSchedulePoint[],
@@ -438,20 +443,18 @@ function blendBySchedule(
     return 0;
   }
 
-  const sortedSchedule = [...schedule].sort((left, right) => left.minute - right.minute);
-
-  if (currentMinute <= sortedSchedule[0].minute) {
-    return roundToTwoDecimals(sortedSchedule[0].value);
+  if (currentMinute <= schedule[0].minute) {
+    return roundToTwoDecimals(schedule[0].value);
   }
 
-  const lastPoint = sortedSchedule[sortedSchedule.length - 1];
+  const lastPoint = schedule[schedule.length - 1];
   if (currentMinute >= lastPoint.minute) {
     return roundToTwoDecimals(lastPoint.value);
   }
 
-  for (let index = 0; index < sortedSchedule.length - 1; index += 1) {
-    const startPoint = sortedSchedule[index];
-    const endPoint = sortedSchedule[index + 1];
+  for (let index = 0; index < schedule.length - 1; index += 1) {
+    const startPoint = schedule[index];
+    const endPoint = schedule[index + 1];
 
     if (currentMinute >= startPoint.minute && currentMinute < endPoint.minute) {
       return calcTimeBlend(
