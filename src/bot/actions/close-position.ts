@@ -6,7 +6,7 @@ import {
   EOD_FORCED_CLOSE_MINUTE,
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
-import { buildClosingOrderPayload, waitForOrderFillById } from "./order-utils";
+import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById } from "./order-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
 const CLOSE_TICK_INTERVAL_MS = 30_000;
@@ -35,14 +35,6 @@ export interface ClosePositionDependencies {
   maxTickMoves?: number;
   // Partial close: stop after closing this many total contracts across all snapshots
   maxQuantityToClose?: number;
-}
-
-function getMidpointPrice(bid: number, ask: number): number {
-  if (bid > 0 && ask > 0) {
-    return (bid + ask) / 2;
-  }
-
-  return ask || bid;
 }
 
 function getMinTickSize(referencePrice: number): number {

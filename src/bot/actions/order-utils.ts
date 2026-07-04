@@ -140,6 +140,16 @@ export function inferOptionSide(symbol: string): "call" | "put" | null {
   return match[1].toUpperCase() === "P" ? "put" : "call";
 }
 
+// Midpoint of a two-sided quote, degrading to whichever side exists when one
+// is missing. Shared by the allocation and close paths.
+export function getMidpointPrice(bid: number, ask: number): number {
+  if (bid > 0 && ask > 0) {
+    return (bid + ask) / 2;
+  }
+
+  return ask || bid;
+}
+
 type GetOrderFn = (
   accountNumber: string,
   orderId: number,

@@ -18,6 +18,7 @@ import {
 import { getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
 import {
   getGroupMarketValue,
+  getMidpointPrice,
   inferOptionSide,
   normalizeInstrumentType,
   OrderPayload,
@@ -78,14 +79,6 @@ function getCandidateSide(evaluation: PositionGroupEvaluation): "call" | "put" {
     .filter((side): side is "call" | "put" => side != null);
 
   return inferredSides[0] ?? "call";
-}
-
-function getMidpointPrice(bid: number, ask: number): number {
-  if (bid > 0 && ask > 0) {
-    return (bid + ask) / 2;
-  }
-
-  return ask || bid;
 }
 
 export function buildRouteOrders(

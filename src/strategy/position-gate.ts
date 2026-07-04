@@ -35,7 +35,7 @@ function toBooleanFlag(raw: unknown): boolean {
 }
 
 // STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT is the late-day (lenient) threshold for the cross-account YES signal.
-// At window start (9:30am): requires 2x that dip (strict).
+// At the seed-window start (SECRET_AUTO_SEED_START_TIME, default 6:30am): requires 2× that dip (strict).
 // At window end (1pm): requires exactly the configured dip.
 function getCrossAccountYesDownPct(currentTime: Date): number {
   const base = readEnvPct("STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT", 10);
@@ -46,7 +46,7 @@ function getCrossAccountYesDownPct(currentTime: Date): number {
   const t = duration > 0
     ? Math.max(0, Math.min(1, (minuteOfDay - startMinute) / duration))
     : 1;
-  // t=0 (9:30am): 2× base (strict). t=1 (1pm): 1× base (lenient).
+  // t=0 (window start): 2× base (strict). t=1 (1pm): 1× base (lenient).
   return base * (2 - t);
 }
 

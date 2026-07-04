@@ -89,6 +89,21 @@ export function maskEnvValue(key: string, value: string): string {
   return value.length <= 4 ? "•••" : `${value.slice(0, 4)}…(${value.length} chars)`;
 }
 
+const EXPECTED_TIMEZONE = "America/Los_Angeles";
+
+// Every schedule (EOD liquidation, cutoffs, exposure ramp, spread ramp, seed
+// windows) computes minute-of-day from the local clock and assumes Pacific.
+// A mis-set box would silently shift all of them by the TZ offset. Returns the
+// warning string (or null) so it's testable; the caller logs it.
+export function getTimezoneWarning(
+  resolvedTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): string | null {
+  if (resolvedTimeZone === EXPECTED_TIMEZONE) {
+    return null;
+  }
+  return `[config] TIMEZONE is ${resolvedTimeZone}, expected ${EXPECTED_TIMEZONE} — every intraday schedule assumes Pacific and will be shifted. Set TZ=${EXPECTED_TIMEZONE} and restart.`;
+}
+
 export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
   const vars: Record<string, string> = {};
   for (const key of Object.keys(env).sort()) {
@@ -115,6 +130,11 @@ export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
   }
 
   console.log(JSON.stringify({ scope: "startup-config", vars, resolved }));
+
+  const timezoneWarning = getTimezoneWarning();
+  if (timezoneWarning) {
+    console.warn(timezoneWarning);
+  }
 
   for (const finding of findObsoleteEnvNames(env)) {
     console.warn(
