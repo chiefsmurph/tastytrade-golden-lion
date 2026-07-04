@@ -401,13 +401,15 @@ If you copy `ipc-client.js` into another project, either pass `socketPath` expli
 - `node run ...` is a thin CLI wrapper over `ipc-client.js`.
 - The server resolves a command route and returns JSON responses.
 - On startup, the runtime installs a quote-streamer fatal error guard that exits the process on unrecoverable feed conditions so PM2 (or another supervisor) can restart cleanly.
+- The process handles SIGTERM and SIGINT gracefully: the scheduler is stopped, any in-flight cycle is allowed up to 30 seconds to complete, and all live orders on managed accounts are cancelled before exit.
 
 ## Execution Strategy Highlights
 
 - Time-adaptive exposure control: target DTE and target exposure shift over the session, with account-specific behavior for cash vs margin.
 - Price-route allocation: orders are split across bid/mid/ask using weighted routes, then contract counts are allocated against real capital limits.
 - Controlled aggressiveness: routes differ in spread concession, not just starting price — bid rests without chasing, mid concedes up to 3 ticks, ask starts at the midpoint and chases to the full ask on a faster clock (straight to the ask only when the spread is already tight). A chase step is only placed after the previous order's cancellation is confirmed.
-- Risk-first circuit breakers: strategy logic can force closes on profit capture, severe loss thresholds, and end-of-day constraints.
+- Risk-first circuit breakers: strategy logic can force closes on profit capture, severe loss thresholds, and end-of-day constraints. Hard-risk closes (stop-loss triggers and EOD liquidations) arm at 12:50 PT and tick every 10 seconds instead of the normal 30, jumping straight to the edge price on the final move.
+- Execution-time re-evaluation: before each sell order is sent, the strategy is re-checked against the live bid price. If the circuit breaker no longer holds (e.g. the position recovered after the cycle snapshot), the close is skipped. EOD liquidations bypass this check — the clock, not the price, is the trigger.
 - Overnight handling: margin positions flagged as overnight can be force-closed at open, while cash accounts can execute gradual overnight reductions.
 - Cross-account seeding: cash-account conditions can trigger margin-account seed flow when configured thresholds are met.
 
