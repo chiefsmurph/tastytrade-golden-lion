@@ -110,3 +110,21 @@ Strategy/profitability:
 - **Urgency-tiered close chase** *(fable)* — 12:55 EOD trigger + 30s×10 chase can still be walking at the 1:00 bell; hard-risk closes need a 5–10s clock and an earlier arm (~12:50). **Worth a hard look before Monday** — it's a safety margin measured in seconds on a full session of new route code. (v5 strategy #8)
 - **Re-evaluate strategy before executing close** *(fable)* — `evaluateTradingStrategy` runs at T₀; `closePosition` executes minutes later without re-checking if stop/target is still valid. A recovered stop = false sell; a fresh stop = 4-min gap. Re-run evaluation at execution time using fresh bid/ask; bypass for hard EOD closes. **Worth a hard look before Monday** — bid orders now rest longer, so positions can move between T₀ and execution. (v6 code #4)
 - **Time-scaled margin delta target** — flat 0.35 delta while DTE ramps to ≤7 and the forced close approaches; ramp toward 0.50–0.55 late morning. (v5 strategy #10)
+
+### New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEMENTS.v6-copilot.md))
+
+Bugs/correctness:
+- **Registry concurrent-write race** *(fable)* — `maybeAutoSeedFromSecretPositions` fires on Socket.IO events outside the cycle; its `recordPositionOpened` can interleave with `syncPositionOpens` read-modify-write and clobber entries. Serialize mutations through a module-level promise queue + atomic rename. (v6 code #1)
+- **IPC command mutex** *(fable)* — concurrent IPC calls (`bot:purchaseSymbol`, `bot:runCycle`) bypass the scheduler's `inFlight` flag; two clients can double-place orders. Simple `executionLock` promise chain on money-touching handlers. (v6 code #2)
+- **Put side is call-calibrated throughout** — delta targeting, ITM selection, stop/target all assume calls; a put group is silently managed with wrong parameters. Short-term: guard + skip puts with warning. (v6 code #8)
+- **IPC socket has no access control** — any local process with socket access can place real orders; minimum fix is `chmod 600` after bind. (v6 ops #9)
+- **Run history NDJSON grows without bound** — `getRecentRunHistory` reads the entire file every call; tail-read is the lowest-effort fix. (v6 code #5)
+- **`getClosedPositionsToday` rescans 200 entries per IPC call** — add in-process cache keyed on date+account; subsumed if v5 P&L ledger lands. (v6 ops #11)
+
+Strategy/profitability:
+- **Overnight hold P&L attribution** — no `dayEndSnapshot`/`openSnapshot` data; impossible to verify the overnight-hold thesis. Additive NDJSON only. (v6 strategy #12)
+- **Run-history feedback loop** — per-symbol win rate today, seed success rate, exposure utilization are all computable from existing `getRecentRunHistory`; none are read back by the engine today. (v6 strategy #13)
+- **Minimum hold time for profitable winners** — take-profit fires immediately; a trending move gets sold 8 min in. Guard: don't close a winner opened <30 min ago unless return ≥ 2× target or EOD forces it. (v6 strategy #14)
+- **Aggressiveness boost largest for lowest-conviction signals** — flat +100/+200 `buyWeight` addition has 100–200% effect on low-weight signals, ≤14% on high-weight; scale boost by remaining headroom instead. (v6 strategy #15)
+- **Cross-account aggregate exposure untracked** *(fable)* — each account independently allocates up to `maxTargetPct` on the same symbol; add optional `STRATEGY_MAX_COMBINED_SYMBOL_EXPOSURE_PCT`. (v6 strategy #16)
+- **Small-order execution weight mismatch** — floor+greedy can silently collapse a 3-contract order to bid/mid only; log actual executed weight split alongside configured weights. (v6 strategy #18)
