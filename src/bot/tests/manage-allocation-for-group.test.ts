@@ -120,3 +120,88 @@ test("manageAllocationForGroup skips when the option health gate fails", async (
   assert.equal(result.placedOrder, false);
   assert.match(result.skippedReason ?? "", /option health gate failed/);
 });
+
+const bigBudget: AllocationBudget = {
+  buyingPowerRemaining: 10_000_000,
+  portfolioExposure: 0,
+  totalCapital: 10_000_000,
+};
+
+// Health summary whose healthy DTEs cover every checkpoint, so the gate passes.
+const healthyTargets = Array.from({ length: 400 }, (_, i) => i);
+
+function candidateDeps(
+  overrides: Partial<ManageAllocationDependencies> = {},
+): ManageAllocationDependencies {
+  return {
+    getOptionHealth: (async () => ({ summary: { healthyTargets } })) as never,
+    getAccountType: (async () => "cash") as never,
+    getTopCandidate: (async () => ({
+      symbol: "LCID  270115C00010000",
+      quoteSymbol: ".LCID270115C10",
+      dte: 21,
+      minDTE: 14,
+      maxDTE: 30,
+      preferredDTE: 21,
+      usedDteFallback: false,
+    })) as never,
+    getBidAsk: (async () => ({ bid: 1.0, ask: 1.2 })) as never,
+    placeOrders: (async (_acct: string, _sym: string, routeOrders: unknown[]) =>
+      routeOrders.map((r) => ({
+        ...(r as object),
+        placedOrder: true,
+        orderResponse: { order: { id: "1" } },
+      }))) as never,
+    ...overrides,
+  };
+}
+
+test("manageAllocationForGroup returns a dry-run plan without placing orders", async () => {
+  let placed = false;
+  const deps = candidateDeps({
+    placeOrders: (async () => {
+      placed = true;
+      return [];
+    }) as never,
+  });
+  const result = await manageAllocationForGroup(
+    "ACC-1",
+    buildEvaluation(baseTargets),
+    bigBudget,
+    1,
+    { dryRun: true },
+    deps,
+  );
+  assert.equal(result.skippedReason, "dry-run plan");
+  assert.equal(result.placedOrder, false);
+  assert.ok((result.quantity ?? 0) >= 1, "dry-run should size at least one contract");
+  assert.equal(placed, false, "dry-run must not place orders");
+});
+
+test("manageAllocationForGroup places orders on the happy path", async () => {
+  const result = await manageAllocationForGroup(
+    "ACC-1",
+    buildEvaluation(baseTargets),
+    bigBudget,
+    1,
+    {},
+    candidateDeps(),
+  );
+  assert.equal(result.placedOrder, true);
+  assert.equal(result.candidateSymbol, "LCID  270115C00010000");
+  assert.ok((result.quantity ?? 0) >= 1);
+});
+
+test("manageAllocationForGroup skips when there is no candidate and no held fallback", async () => {
+  const result = await manageAllocationForGroup(
+    "ACC-1",
+    buildEvaluation(baseTargets),
+    bigBudget,
+    1,
+    {},
+    candidateDeps({
+      getTopCandidate: (async () => ({ symbol: undefined, skippedByIvGate: false })) as never,
+    }),
+  );
+  assert.equal(result.skippedReason, "no option candidate found");
+});
