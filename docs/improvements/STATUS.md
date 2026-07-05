@@ -38,7 +38,7 @@ Shipped in the 2026-07-02 session (already `[x]` in v3):
 
 Pure cleanup / docs / tests / diagnostics — no behavior change, so they can ride Monday's tag if we want. None are load-bearing.
 
-- **Finish the config-drift docs** — CLAUDE.md/README still document pre-refactor `BOT_*` names and moved paths; update to `CORE_*`/`STRATEGY_*`. (v3, v4 #51 remainder)
+- ~~**Finish the config-drift docs**~~ ✅ — shipped 2026-07-05; see 🟢 PULL-FORWARD below. (v3, v4 #51 remainder)
 - ~~**More money-math tests**~~ ✅ — 29 tests added: `signal-interpreter` (buy-weight normalization, aggressiveness tiers, secret route-weight math), `overnight-reduction` (age-floor interpolation, window bracketing, protective-signal pause, floor convergence), `normalizeGroupExecutionTargetExposures` (proportional rescale, last-group remainder absorbs rounding drift, zero/no-target guards). (v4 #94)
 - **Structured logging (`pino`) + per-cycle `runId`** — infra, low risk but a big diff; do anytime, low priority. (v1, v4 #81)
 
@@ -72,11 +72,11 @@ On review these were sitting in AFTER-MONDAY but are actually safe to land befor
 - ~~**`config:show` IPC**~~ ✅ — returns resolved config + masked env via `getStartupConfigSnapshot`. (v7 #5)
 - ~~**`chmod 600` the IPC socket**~~ ✅ — perms restricted after bind. (v6 ops #9)
 
-**Additive diagnostics (log-only — enrich Monday's data, no behavior change):**
-- **Per-leg return breakdown + spread ≥ 20pp flag** on `UNDERLYING::side` groups. (v7 #2)
-- **Log actual executed weight split** vs configured. (v6 strategy #18)
-- **Overnight-hold P&L snapshot** (additive NDJSON). (v6 strategy #12)
-- **Underlying-stabilization gate, log-only first.** (v5 strategy #6)
+**Additive diagnostics (log-only — enrich Monday's data, no behavior change):** ⏳ **NOT done — outstanding follow-up batch.** These touch live execution/strategy code (low *behavior* risk, but real code, not docs) so they were deferred from the 2026-07-05 pure-safe pass to a focused batch. Each carries a where-it-goes pointer so it resumes cleanly:
+- **Per-leg return breakdown + spread ≥ 20pp flag** on `UNDERLYING::side` groups. (v7 #2) → in `computeGroupReturns` / `run-cycle-context.ts` where group returns are blended; a group spanning >1 expiration masks a stopping short-dated leg behind a profitable long-dated one. Emit a per-leg (per-expiration) return array + flag when max−min return spread ≥ 20pp. Log-only precursor to the per-expiration circuit breakers (v5 strategy #5).
+- **Log actual executed weight split** vs configured. (v6 strategy #18) → in `manageAllocationForGroup` after `placeRouteOrders`, or inside `placeRouteOrders` before return. `allocateContractsByWeight`'s floor+greedy can collapse a 3-contract order to bid/mid only; log each route's configured `weight` next to its actual quantity/value share so the drift is visible.
+- **Overnight-hold P&L snapshot** (additive NDJSON). (v6 strategy #12) → needs a day-start `openSnapshot` and a day-end `dayEndSnapshot` write (model on `pnl-ledger.ts`'s best-effort NDJSON writer). Hook day-start at the first cycle of the session and day-end at the EOD arm. No `dayEndSnapshot`/`openSnapshot` exists today, so the overnight-hold thesis is currently unverifiable.
+- **Underlying-stabilization gate, log-only first.** (v5 strategy #6) → **precursor data already exists**: run history logs `underlyingPriceAtCycleTime` per group (added over the weekend). Read the last N cycles' underlying prices for a symbol before an add/seed and log a stabilization signal (e.g. recent range / direction); gate nothing yet.
 
 Rationale: landing the log-only diagnostics before Monday means Monday's run captures the data needed to tune the AFTER-MONDAY strategy items. Completed items get struck through here and folded into ✅ DONE.
 
