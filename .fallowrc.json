@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "src/index.{ts,tsx,js,jsx}",
+    "src/tools/*.ts",
+    "src/bot/johns-test-run.ts",
+    "src/**/*.test.ts",
+    "ipc-client.js",
+    "ecosystem.config.cjs"
+  ],
+  "duplicates": {
+    "minOccurrences": 3
+  },
+  "rules": {}
+}

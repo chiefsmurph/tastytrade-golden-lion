@@ -42,9 +42,13 @@ coverage/
 # macOS
 .DS_Store
 
+# Claude Code (personal/local only)
+.claude/settings.local.json
+
 # Other
 .cache/
 /.parcel-cache
 .pnp.cjs
 .pnp.js
 .idea/
+.fallow/

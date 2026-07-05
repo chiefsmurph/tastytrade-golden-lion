@@ -9,7 +9,11 @@
     "start:tsx": "tsx src/index.ts",
     "start:build": "node build/index.js",
     "start": "npm run start:tsx",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "fallow": "fallow audit",
+    "fallow:health": "fallow health",
+    "fallow:dead": "fallow dead-code",
+    "fallow:fix": "fallow fix --dry-run"
   },
   "dependencies": {
     "@tastytrade/api": "^7.0.2",
@@ -20,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^26.0.0",
     "esbuild": "^0.25.6",
+    "fallow": "^3.1.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }
