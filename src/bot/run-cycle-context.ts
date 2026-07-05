@@ -23,6 +23,7 @@ import {
   getTimeOfDayExecutionTargets,
 } from "~/strategy/evaluate-trading-strategy";
 import {
+  getRecentRunHistory,
   RunGroupReturn,
   RunPlanSelectedGroup,
   RunPlanRow,
@@ -35,6 +36,7 @@ import {
 } from "./actions/manage-allocation";
 import { getDoNotTouchGroupKeys, isEvaluationDoNotTouch } from "./do-not-touch-groups";
 import { computePerLegReturnBreakdown } from "./per-leg-returns";
+import { computeUnderlyingStabilization } from "./underlying-stabilization";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { selectManageEvaluationsByBuyingPower } from "./group-allocation-priority";
 import {
@@ -552,6 +554,45 @@ export async function buildRunCycleContext(
   const underlyingPrices = new Map<string, number | null>(underlyingPriceEntries);
 
   const groupReturns = computeGroupReturns(completedEvaluations, evaluationsWithGroupTargets, underlyingPrices);
+
+  // Diagnostic (v5 #6): before averaging down, look at the underlying's recent
+  // tape. Run history already records underlyingPriceAtCycleTime per group, so
+  // read the last N cycles, build each underwater group's price series
+  // (oldest → newest + this cycle), and log a stabilization signal. Log-only —
+  // gates nothing yet; the point is to see whether adds land into free-falls.
+  const stabilizationHistory = await getRecentRunHistory(12, resolvedAccountNumber);
+  for (const evaluation of completedEvaluations) {
+    if (evaluation.currentReturn >= 0) {
+      continue;
+    }
+    const symbolKey = evaluation.underlyingSymbol.toUpperCase();
+    const historicalPrices = [...stabilizationHistory]
+      .reverse()
+      .map(
+        (run) =>
+          run.groups.find((group) => group.underlyingSymbol.toUpperCase() === symbolKey)
+            ?.underlyingPriceAtCycleTime,
+      )
+      .filter((price): price is number => typeof price === "number");
+    const currentPrice = underlyingPrices.get(symbolKey);
+    const series =
+      typeof currentPrice === "number"
+        ? [...historicalPrices, currentPrice]
+        : historicalPrices;
+    const stabilization = computeUnderlyingStabilization(series);
+    console.log(
+      JSON.stringify({
+        scope: "underlying-stabilization",
+        underlyingSymbol: evaluation.underlyingSymbol,
+        currentReturnPct: Number(evaluation.currentReturn.toFixed(4)),
+        sampleCount: stabilization.sampleCount,
+        isStabilizing: stabilization.isStabilizing,
+        rangePct: Number(stabilization.rangePct.toFixed(4)),
+        netChangePct: Number(stabilization.netChangePct.toFixed(4)),
+        latestVsRecentLowPct: Number(stabilization.latestVsRecentLowPct.toFixed(4)),
+      }),
+    );
+  }
 
   const plannedManageEvaluations = selectManageEvaluationsByBuyingPower(
     evaluationsWithGroupTargets.filter(
