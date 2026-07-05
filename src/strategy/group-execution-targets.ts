@@ -5,12 +5,16 @@ import {
   getPositionGroupExecutionTargets,
   StrategyAccountType,
 } from "./evaluate-trading-strategy";
+// Import directly from the defining module rather than the ~/strategy/secret
+// barrel: the barrel also re-exports debug-secret-execution-target, which imports
+// back from this file, forming a circular dependency. These symbols all live in
+// secret-execution-target, so the direct path avoids the cycle.
 import {
   getSecretBuyWeightForSymbol,
   getSecretExecutionTargetForSymbol,
   getSecretPositionSignalsForSymbol,
   type SecretPositionSignals,
-} from "~/strategy/secret";
+} from "~/strategy/secret/secret-execution-target";
 
 function getMaxAskReturnPercForBuy(): number | null {
   const raw = process.env.STRATEGY_MAX_ASK_RETURN_PERC_FOR_BUY?.trim();
