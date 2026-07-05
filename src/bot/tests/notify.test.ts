@@ -10,9 +10,11 @@ test("emitSecretLog is a safe no-op when the secret socket is disconnected", () 
   assert.doesNotThrow(() => emitSecretLog("[cycle-exception] ACC-1: boom"));
 });
 
-test("notifyEvent does not throw regardless of connection state", async () => {
+test("notifyEvent does not throw for any event type regardless of connection state", async () => {
   const { notifyEvent } = await import("../notify");
   assert.doesNotThrow(() => notifyEvent("hard-risk-close", "ACC-1 RUM: stop loss"));
+  assert.doesNotThrow(() => notifyEvent("position-closed", "ACC-1 RUM: profit target reached"));
+  assert.doesNotThrow(() => notifyEvent("position-built", "ACC-1 RUM: built to 82% of target"));
   assert.doesNotThrow(() => notifyEvent("cycle-exception", "ACC-1: threw"));
   assert.doesNotThrow(() => notifyEvent("cancel-orders-failed", "shutdown failed"));
 });

@@ -7,15 +7,21 @@ import { emitSecretLog } from "~/strategy/secret";
 export type NotifyEventType =
   | "cycle-exception"
   | "hard-risk-close"
+  | "position-closed"
+  | "position-built"
   | "cancel-orders-failed";
 
-// Severity so the receiver can route/color without parsing the message. ERROR =
-// something broke; INFO = a circuit breaker fired as designed (e.g. the daily
-// EOD liquidation, which is expected and would be noise if flagged as an error).
-const EVENT_SEVERITY: Record<NotifyEventType, "ERROR" | "INFO"> = {
+// Severity so the receiver can route/color without parsing the message.
+//   ERROR — something broke.
+//   WARN  — anomaly worth a look, not a failure.
+//   INFO  — expected activity fired as designed (a close, a position building
+//           out); would be noise if flagged as an error.
+const EVENT_SEVERITY: Record<NotifyEventType, "ERROR" | "WARN" | "INFO"> = {
   "cycle-exception": "ERROR",
   "cancel-orders-failed": "ERROR",
   "hard-risk-close": "INFO",
+  "position-closed": "INFO",
+  "position-built": "INFO",
 };
 
 export function notifyEvent(type: NotifyEventType, message: string): void {

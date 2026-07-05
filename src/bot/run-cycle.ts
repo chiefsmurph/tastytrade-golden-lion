@@ -29,6 +29,18 @@ import { getEffectiveTotalCapital } from "~/core/account-balance";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
 
+// When an allocation buy brings a group to at least this fraction of its gate
+// target exposure, emit a position-built INFO notification — the bot has
+// accumulated most of the size it intended for that name. Fires on the crossing
+// only; re-arms when the fraction falls back below the lower band, so hovering
+// near the line or repeated top-offs don't spam. A genuine target jump that
+// reopens headroom and rebuilds past the line does re-fire (once), which is the
+// intended awareness. State is in-memory, so a restart re-arms every position
+// (at most one extra fire per built-out name after a restart).
+const POSITION_BUILT_TARGET_FRACTION = 0.75;
+const POSITION_BUILT_REARM_FRACTION = 0.70;
+const positionBuiltNotified = new Set<string>();
+
 function toPositionOpenSnapshots(
   evaluations: PositionGroupEvaluation[],
 ): PositionOpenSnapshot[] {
@@ -302,6 +314,54 @@ export default async function runBotCycle(
         underlyingSymbol: result.underlyingSymbol,
       })),
   );
+
+  // Awareness: an allocation buy has built a group out to most of the size the
+  // strategy intended for it (its gate target exposure). Fires on the crossing
+  // up (not every cycle it sits above the line), re-arms only when it falls
+  // back below the lower band. Placement-based (confirmed-fill tracking isn't
+  // plumbed).
+  const totalCapital = context.preview.snapshot.totalCapital;
+  if (totalCapital > 0) {
+    // symbol -> estimated $ bought this cycle (placed orders only)
+    const boughtThisCycle = new Map<string, number>();
+    for (const result of executionResults.allocationOrders) {
+      if (!result.placedOrder) continue;
+      boughtThisCycle.set(
+        result.underlyingSymbol,
+        (boughtThisCycle.get(result.underlyingSymbol) ?? 0) + (result.estimatedOrderValue ?? 0),
+      );
+    }
+
+    for (const group of context.preview.groups) {
+      const maxTargetPct = group.positionGate?.maxTargetPct ?? null;
+      if (maxTargetPct == null || !(maxTargetPct > 0)) continue;
+
+      const key = `${context.preview.accountNumber}:${group.underlyingSymbol}`;
+      const targetValue = maxTargetPct * totalCapital;
+      const boughtValue = boughtThisCycle.get(group.underlyingSymbol) ?? 0;
+      const postBuyValue = group.totalCostBasis + boughtValue;
+      const fractionOfTarget = postBuyValue / targetValue;
+
+      // Re-arm once it drops below the lower band (target rose, or decay).
+      if (fractionOfTarget < POSITION_BUILT_REARM_FRACTION) {
+        positionBuiltNotified.delete(key);
+        continue;
+      }
+
+      // Fire only when a buy this cycle carried it across the line the first time.
+      if (
+        boughtValue > 0 &&
+        fractionOfTarget >= POSITION_BUILT_TARGET_FRACTION &&
+        !positionBuiltNotified.has(key)
+      ) {
+        positionBuiltNotified.add(key);
+        notifyEvent(
+          "position-built",
+          `${context.preview.accountNumber} ${group.underlyingSymbol}: built to ${(fractionOfTarget * 100).toFixed(0)}% of target (~$${postBuyValue.toFixed(0)} of $${targetValue.toFixed(0)})`,
+        );
+      }
+    }
+  }
 
   const runHistoryEntry = await appendRunHistory({
     accountNumber: context.preview.accountNumber,

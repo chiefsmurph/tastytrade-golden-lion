@@ -263,15 +263,16 @@ export async function executePositionEvaluations(
         )
       ).flat();
 
-  // Alert on hard-risk closes (stop-loss / EOD liquidation) that actually placed.
+  // Alert on any close that actually placed. Urgent closes (stop-loss / EOD
+  // liquidation) route to hard-risk-close; normal closes (take-profit, etc.)
+  // route to position-closed — both INFO, mutually exclusive so no double-fire.
   for (const evaluation of actionableCloseEvaluations) {
-    if (evaluation.strategy.isUrgentClose !== true) continue;
     const placed = closeOrders.some(
       (order) => order.underlyingSymbol === evaluation.underlyingSymbol && order.placedOrder,
     );
     if (!placed) continue;
     notifyEvent(
-      "hard-risk-close",
+      evaluation.strategy.isUrgentClose === true ? "hard-risk-close" : "position-closed",
       `${accountNumber} ${evaluation.underlyingSymbol}: ${evaluation.strategy.reason}`,
     );
   }
