@@ -446,6 +446,27 @@ export async function placeRouteOrders(
     });
   }
 
+  // Diagnostic (v6 #18): allocateContractsByWeight's floor+greedy sizing can
+  // silently collapse a multi-route order onto one or two routes (e.g. a
+  // 3-contract order becoming bid-only), so the configured weights and what
+  // actually executed can diverge. Log both so the drift is visible in the data.
+  const executedQuantity = placedOrders.reduce((sum, order) => sum + order.quantity, 0);
+  console.log(
+    JSON.stringify({
+      scope: "manage-allocation-executed-weights",
+      accountNumber,
+      candidateSymbol,
+      executedQuantity,
+      routes: placedOrders.map((order) => ({
+        route: order.route,
+        configuredWeight: order.weight,
+        executedQuantity: order.quantity,
+        executedShare:
+          executedQuantity > 0 ? Number((order.quantity / executedQuantity).toFixed(3)) : 0,
+      })),
+    }),
+  );
+
   return placedOrders;
 }
 
