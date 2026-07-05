@@ -1,12 +1,12 @@
 # Improvements — consolidated status
 
-**This is the live tracker.** `IMPROVEMENTS.v1`–`v6` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-04 against committed code (v5 items folded in same day; v6 folded in 2026-07-04).
+**This is the live tracker.** `IMPROVEMENTS.v1`–`v7` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-04 against committed code (v5 items folded in same day; v6 and v7 folded 2026-07-04).
 
 Three buckets, as requested: **DONE** (shipped this session, under the `monday-2026-07-06` tag) · **BEFORE MONDAY–ELIGIBLE** (safe to land in Monday's deploy — pure cleanup, docs, tests, diagnostics) · **AFTER MONDAY** (needs Monday's data, or behavior-changing enough that it should follow verification).
 
 *(fable)* = use Fable 5 for implementation — safety-critical logic, multi-site correctness bugs where a subtle mistake silently gives wrong answers, or new architectural mechanisms with non-obvious invariants. Everything else is fine on Sonnet/Opus.
 
-Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (2026-07-03 second pass) added **20 new items** — 10 code, 10 profitability. v6 (copilot pass, same day) added **20 more** — 8 code/ops, 9 strategy, 3 infra — none overlapping v1–v5; all folded into the buckets below.
+Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (2026-07-03 second pass) added **20 new items** — 10 code, 10 profitability. v6 (copilot pass, same day) added **20 more** — 8 code/ops, 9 strategy, 3 infra — none overlapping v1–v5. v7 (2026-07-04 brother's-branch review) added **8 residuals**. All folded into the buckets below.
 
 ---
 
@@ -37,9 +37,7 @@ Shipped in the 2026-07-02 session (already `[x]` in v3):
 Pure cleanup / docs / tests / diagnostics — no behavior change, so they can ride Monday's tag if we want. None are load-bearing.
 
 - **Finish the config-drift docs** — CLAUDE.md/README still document pre-refactor `BOT_*` names and moved paths; update to `CORE_*`/`STRATEGY_*`. (v3, v4 #51 remainder)
-- **Finish helper dedup** — `readEnvPct`/`toBooleanFlag` still ×2 (`position-gate` + `secret-auto-seed`). Pure refactor. (v2, v4 #91). *Note: unifying the two exposure normalizers is listed here too but is NOT purely safe — they iterate in different orders, so that one is AFTER.*
 - ~~**More money-math tests**~~ ✅ — 29 tests added: `signal-interpreter` (buy-weight normalization, aggressiveness tiers, secret route-weight math), `overnight-reduction` (age-floor interpolation, window bracketing, protective-signal pause, floor convergence), `normalizeGroupExecutionTargetExposures` (proportional rescale, last-group remainder absorbs rounding drift, zero/no-target guards). (v4 #94)
-- **`blendBySchedule` pre-sort** — sorts a constant array 5×/cycle; micro-perf. (v2)
 - **Structured logging (`pino`) + per-cycle `runId`** — infra, low risk but a big diff; do anytime, low priority. (v1, v4 #81)
 
 New in v5 (2026-07-03 second pass — see [IMPROVEMENTS.v5.md](IMPROVEMENTS.v5.md)):
