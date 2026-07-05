@@ -532,13 +532,35 @@ export function candidateDteResultFields(
   };
 }
 
+// Injectable broker dependencies so manageAllocationForGroup can be characterized
+// in tests without hitting the network (mirrors PlaceRouteOrdersDependencies).
+export interface ManageAllocationDependencies {
+  getOptionHealth?: typeof getOptionHealthForSymbol;
+  getAccountType?: typeof getAccountMarginOrCash;
+  getTopCandidate?: typeof getTopOptionCandidateForSymbol;
+  getBidAsk?: (
+    symbol: string,
+    timeoutMs: number,
+  ) => Promise<{ bid?: number | null; ask?: number | null } | null | undefined>;
+  placeOrders?: typeof placeRouteOrders;
+}
+
 export async function manageAllocationForGroup(
   accountNumber: string,
   evaluation: PositionGroupEvaluation,
   budget: AllocationBudget,
   groupsRemainingForAllocation = 1,
   options: ManageAllocationOptions = {},
+  deps: ManageAllocationDependencies = {},
 ): Promise<AllocationExecutionResult> {
+  const getOptionHealth = deps.getOptionHealth ?? getOptionHealthForSymbol;
+  const getAccountType = deps.getAccountType ?? getAccountMarginOrCash;
+  const getTopCandidate = deps.getTopCandidate ?? getTopOptionCandidateForSymbol;
+  const getBidAsk =
+    deps.getBidAsk ??
+    ((symbol: string, timeoutMs: number) =>
+      tastytradeApi.johnsService.getBidAskForSymbol(symbol, timeoutMs));
+  const placeOrders = deps.placeOrders ?? placeRouteOrders;
   // Every result shares these fields; skip returns spread this and add specifics.
   // routeOrders defaults to [] and is overridden by returns that carry real orders.
   const skip = (
@@ -584,7 +606,7 @@ export async function manageAllocationForGroup(
   }
 
   const optionSide = getCandidateSide(evaluation);
-  const healthResult = await getOptionHealthForSymbol(
+  const healthResult = await getOptionHealth(
     evaluation.underlyingSymbol,
     optionSide,
   );
@@ -612,8 +634,8 @@ export async function manageAllocationForGroup(
     });
   }
 
-  const accountMarginOrCash = await getAccountMarginOrCash(accountNumber);
-  let candidate = await getTopOptionCandidateForSymbol(
+  const accountMarginOrCash = await getAccountType(accountNumber);
+  let candidate = await getTopCandidate(
     evaluation.underlyingSymbol,
     optionSide,
     targets.targetDTE,
@@ -677,7 +699,7 @@ export async function manageAllocationForGroup(
     });
   }
 
-  const bidAsk = await tastytradeApi.johnsService.getBidAskForSymbol(
+  const bidAsk = await getBidAsk(
     candidate.quoteSymbol ?? candidate.streamerSymbol ?? candidate.symbol,
     3000,
   );
@@ -720,7 +742,7 @@ export async function manageAllocationForGroup(
     );
 
     if (heldFallback.symbol && heldFallback.symbol !== candidate.symbol) {
-      const heldBidAsk = await tastytradeApi.johnsService.getBidAskForSymbol(
+      const heldBidAsk = await getBidAsk(
         heldFallback.quoteSymbol ?? heldFallback.streamerSymbol ?? heldFallback.symbol,
         3000,
       );
@@ -791,7 +813,7 @@ export async function manageAllocationForGroup(
     return skip({ skippedReason: "no option candidate found" });
   }
 
-  const placedRouteOrders = await placeRouteOrders(
+  const placedRouteOrders = await placeOrders(
     accountNumber,
     candidateSymbol,
     routeOrders,
