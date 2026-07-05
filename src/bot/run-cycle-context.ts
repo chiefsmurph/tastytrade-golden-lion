@@ -34,6 +34,7 @@ import {
   manageAllocationForGroup,
 } from "./actions/manage-allocation";
 import { getDoNotTouchGroupKeys, isEvaluationDoNotTouch } from "./do-not-touch-groups";
+import { computePerLegReturnBreakdown } from "./per-leg-returns";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { selectManageEvaluationsByBuyingPower } from "./group-allocation-priority";
 import {
@@ -178,6 +179,30 @@ function computeGroupReturns(
     const totalUnrealizedReturnAsk =
       (evaluation.metrics.currentAskPrice - weightedAverageFill) *
       totalQuantityWeight;
+
+    // Diagnostic (v7 #2): a UNDERLYING::side group can span multiple
+    // expirations, and the blended group return hides a collapsing short-dated
+    // leg behind a profitable long-dated one. Log the per-expiration breakdown
+    // and flag a return spread >= 20pp — precursor to per-expiration circuit
+    // breakers (v5 strategy #5). Log-only.
+    const legBreakdown = computePerLegReturnBreakdown(evaluation.positionSnapshots);
+    if (legBreakdown.spansMultipleExpirations) {
+      console.log(
+        JSON.stringify({
+          scope: "group-per-leg-returns",
+          underlyingSymbol: evaluation.underlyingSymbol,
+          side,
+          blendedBidReturnPct: Number(bidReturnPct.toFixed(4)),
+          returnSpreadPct: Number(legBreakdown.returnSpreadPct.toFixed(4)),
+          spreadFlag: legBreakdown.returnSpreadPct >= 0.2,
+          legs: legBreakdown.legs.map((leg) => ({
+            expiration: leg.expiration,
+            returnPct: Number(leg.returnPct.toFixed(4)),
+            quantityWeight: leg.quantityWeight,
+          })),
+        }),
+      );
+    }
 
     return {
       askReturnPct,
