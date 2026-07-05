@@ -115,6 +115,20 @@ export function inferOptionSide(symbol: string): "call" | "put" | null {
   return match[1].toUpperCase() === "P" ? "put" : "call";
 }
 
+// OCC option symbol: 6-char padded root, YYMMDD expiration, C/P, strike ×1000
+const OCC_OPTION_SYMBOL_PATTERN = /^.{6}(\d{6})[CP]\d{8}$/;
+
+export function getOccExpirationDate(symbol: string): Date | null {
+  const match = OCC_OPTION_SYMBOL_PATTERN.exec(symbol);
+  if (!match) return null;
+  const yymmdd = match[1];
+  return new Date(
+    2000 + Number(yymmdd.slice(0, 2)),
+    Number(yymmdd.slice(2, 4)) - 1,
+    Number(yymmdd.slice(4, 6)),
+  );
+}
+
 // Midpoint of a two-sided quote, degrading to whichever side exists when one
 // is missing. Shared by the allocation and close paths.
 export function getMidpointPrice(bid: number, ask: number): number {

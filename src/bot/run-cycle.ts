@@ -21,8 +21,10 @@ import {
   pruneOldEntries,
   isOvernightPosition,
   syncPositionOpens,
+  getRegistryEntry,
   PositionOpenSnapshot,
 } from "./position-registry";
+import { buildPnlLedgerEntries, appendPnlLedgerEntries } from "./pnl-ledger";
 import { executeOvernightReductions } from "./overnight-position-reduction";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { getEffectiveTotalCapital } from "~/core/account-balance";
@@ -363,13 +365,15 @@ export default async function runBotCycle(
     }
   }
 
+  // Mapped separately so the P&L ledger can attribute overnight-reduction
+  // closes without relying on reason strings; run history gets the merge.
+  const cycleCloseOrdersForHistory = mapCloseOrdersForRunHistory(executionResults.closeOrders);
+  const overnightCloseOrdersForHistory = mapCloseOrdersForRunHistory(overnightReductionOrders);
+
   const runHistoryEntry = await appendRunHistory({
     accountNumber: context.preview.accountNumber,
     allocationOrders,
-    closeOrders: mapCloseOrdersForRunHistory([
-      ...executionResults.closeOrders,
-      ...overnightReductionOrders,
-    ]),
+    closeOrders: [...cycleCloseOrdersForHistory, ...overnightCloseOrdersForHistory],
     executionSummary,
     groups: context.preview.groups,
     plan: context.preview.plan,
@@ -377,6 +381,39 @@ export default async function runBotCycle(
     strategyDecisions: context.strategyDecisions,
     snapshot: context.preview.snapshot,
   });
+
+  // Realized-P&L attribution ledger — best-effort; never touches the cycle.
+  try {
+    const filledCloseUnderlyings = new Set(
+      [...cycleCloseOrdersForHistory, ...overnightCloseOrdersForHistory]
+        .filter((order) => order.placedOrder && order.fills.length > 0)
+        .map((order) => order.underlyingSymbol.toUpperCase()),
+    );
+    const openedAtByUnderlying = new Map<string, string>();
+    for (const symbol of filledCloseUnderlyings) {
+      const registryEntry = await getRegistryEntry(context.preview.accountNumber, symbol);
+      if (registryEntry?.openedAt) {
+        openedAtByUnderlying.set(symbol, registryEntry.openedAt);
+      }
+    }
+
+    const ledgerEntries = buildPnlLedgerEntries({
+      accountNumber: context.preview.accountNumber,
+      accountType: context.accountMarginOrCash,
+      cycleCloseOrders: cycleCloseOrdersForHistory,
+      overnightCloseOrders: overnightCloseOrdersForHistory,
+      groups: context.preview.groups,
+      strategyDecisions: context.strategyDecisions,
+      openedAtByUnderlying,
+    });
+    await appendPnlLedgerEntries(
+      context.preview.accountNumber,
+      context.accountMarginOrCash,
+      ledgerEntries,
+    );
+  } catch (error) {
+    console.error("[pnl-ledger] append failed:", error);
+  }
 
   setLastBotRunState(
     context.preview.accountNumber,

@@ -253,6 +253,8 @@ node run bot:getDayReport <MARGIN_ACCOUNT> 2026-06-30      # specific date
 node run bot:getDayTrend                                   # live snapshot vs last stored baseline
 node run bot:getDayTrend <MARGIN_ACCOUNT>                  # single account
 node run bot:getClosedPositionsToday                       # all positions closed today with realized P&L
+node run bot:getPnlLedger                                  # full realized-P&L attribution ledger
+node run bot:getPnlLedger <MARGIN_ACCOUNT> 2026-07-06      # one account, one day
 node run bot:recordDayReport                               # force-record a snapshot now (bypasses 1pm gate)
 node run bot:recordDayReport <MARGIN_ACCOUNT>              # single account
 ```
@@ -291,6 +293,7 @@ bot:getMarketOpenSchedulerStatus
 bot:getDayReport [accountNumber] [date YYYY-MM-DD]
 bot:getDayTrend [accountNumber]
 bot:getClosedPositionsToday [accountNumber]
+bot:getPnlLedger [accountNumber] [date YYYY-MM-DD]
 bot:recordDayReport [accountNumber]
 strategy:getTopOptionCandidateForSymbol <symbol> [call|put] [accountNumber]
 strategy:getOptionHealthForSymbol <symbol> [call|put] [targetDTE]
@@ -310,6 +313,7 @@ All persistent data lands under `data/` (or `BOT_DATA_DIR` if set).
 | `data/runs/{account}-{type}.ndjson` | NDJSON | One entry per bot cycle: position evaluations, strategy decisions, orders placed, snapshot metrics |
 | `data/runs/position-registry.json` | JSON | Per-position open/close timestamps and closing order IDs; used for overnight detection and position age |
 | `data/day-reports/{account}-{type}.ndjson` | NDJSON | One entry per account per day (recorded after 1pm PST on first post-cutoff cycle): net liq, capital, per-position bid/mid/ask unrealized returns |
+| `data/ledger/{account}-{type}.ndjson` | NDJSON | Realized-P&L attribution ledger: one entry per close order with observed fills — P&L vs cost basis, decision type (take-profit / stop-loss / EOD / overnight-reduction), close hour, DTE at entry/close, position age, spread and gate score at cycle time |
 
 **Run history** is the primary audit trail — every cycle is recorded regardless of whether orders were placed. Useful for debugging strategy decisions and reconstructing what the bot saw at any point in time.
 

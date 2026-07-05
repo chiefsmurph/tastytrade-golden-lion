@@ -19,6 +19,7 @@ import { getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
 import {
   getGroupMarketValue,
   getMidpointPrice,
+  getOccExpirationDate,
   inferOptionSide,
   normalizeInstrumentType,
   OrderPayload,
@@ -417,20 +418,6 @@ export async function placeRouteOrders(
   }
 
   return placedOrders;
-}
-
-// OCC option symbol: 6-char padded root, YYMMDD expiration, C/P, strike ×1000
-const OCC_OPTION_SYMBOL_PATTERN = /^.{6}(\d{6})[CP]\d{8}$/;
-
-function getOccExpirationDate(symbol: string): Date | null {
-  const match = OCC_OPTION_SYMBOL_PATTERN.exec(symbol);
-  if (!match) return null;
-  const yymmdd = match[1];
-  return new Date(
-    2000 + Number(yymmdd.slice(0, 2)),
-    Number(yymmdd.slice(2, 4)) - 1,
-    Number(yymmdd.slice(4, 6)),
-  );
 }
 
 // When the chain search finds nothing buyable for a group we already hold,

@@ -32,6 +32,7 @@ import { getLastRunGroupsByTickers, getRecentRunHistory } from "./bot/run-histor
 import getDayReport from "./bot/get-day-report";
 import getDayTrend from "./bot/get-day-trend";
 import getClosedPositionsToday from "./bot/get-closed-positions-today";
+import { getPnlLedger } from "./bot/pnl-ledger";
 import { recordDayReportNow } from "./bot/record-day-report";
 import {
   getCurrentEquitiesSession,
@@ -165,6 +166,7 @@ const commandHandlers: Record<string, CommandHandler> = {
   "bot:getDayReport": async (args) => getDayReport(args),
   "bot:getDayTrend": async (args) => getDayTrend(args),
   "bot:getClosedPositionsToday": async (args) => getClosedPositionsToday(args),
+  "bot:getPnlLedger": async (args) => getPnlLedger(args),
   "bot:recordDayReport": async ([accountNumber]) => recordDayReportNow(accountNumber),
   "strategy:getTopOptionCandidateForSymbol": async ([symbol, side, accountNumber]) => {
     assertArg(symbol, "symbol");
