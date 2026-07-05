@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
     "test:coverage": "c8 --reporter=json --reports-dir=coverage --src=src node --import tsx --test src/**/*.test.ts",

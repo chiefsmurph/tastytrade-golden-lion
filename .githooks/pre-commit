@@ -1,0 +1,39 @@
+#!/bin/sh
+# Tracked fallow pre-commit gate + coverage regeneration for terminal git commits.
+# Activated via `git config core.hooksPath .githooks` — set automatically by the
+# package.json "prepare" script on `npm install`. Mirrors the Claude Code hooks
+# (.claude/hooks/fallow-coverage.sh + fallow-gate.sh).
+#
+# Notes:
+#  1. fallow is a local dev dependency and is NOT on the terminal PATH, so resolve it
+#     via `npx --no-install fallow`; fall open if unavailable.
+#  2. Regenerate Istanbul coverage before auditing so per-function CRAP reflects tests.
+#
+# Audit gate is new-only: inherited findings on touched files do not block; only findings
+# introduced by the changeset fail. Bypass once with: git commit --no-verify
+
+# 1. Resolve a fallow runner (fail open if none available).
+if command -v fallow >/dev/null 2>&1; then
+  FALLOW="fallow"
+elif command -v npx >/dev/null 2>&1 && npx --no-install fallow --version >/dev/null 2>&1; then
+  FALLOW="npx --no-install fallow"
+else
+  exit 0
+fi
+
+# 2. Regenerate coverage (best-effort; never block the commit on test/tooling errors).
+if command -v npm >/dev/null 2>&1 && npm run 2>/dev/null | grep -q '^  test:coverage$'; then
+  npm run --silent test:coverage >/tmp/fallow-precommit-coverage.log 2>&1 \
+    || echo "fallow pre-commit: test:coverage failed; auditing with existing coverage. See /tmp/fallow-precommit-coverage.log" >&2
+fi
+
+# 3. Determine base ref: merge-base with upstream, else main.
+UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [ -n "$UPSTREAM" ]; then
+  BASE="$(git merge-base "$UPSTREAM" HEAD 2>/dev/null || echo "$UPSTREAM")"
+else
+  BASE="main"
+fi
+
+# 4. Gate. A verdict=fail exits non-zero and blocks the commit.
+$FALLOW audit --base "$BASE" --quiet --gate-marker pre-commit
