@@ -57,7 +57,7 @@ Each `runCycle` call (every N minutes during market hours):
 ### Account Model
 
 Two account types with distinct behavior:
-- **Margin**: OTM calls targeted to `BOT_MARGIN_TARGET_CALL_DELTA` (default 0.35), closes all positions EOD at 12:55 PM, accumulation cutoff at 12:30 PM
+- **Margin**: OTM calls targeted to `STRATEGY_MARGIN_TARGET_CALL_DELTA` (default 0.35), closes all positions EOD at 12:55 PM, accumulation cutoff at 12:30 PM
 - **Cash**: ITM calls for overnight delta hold, accumulation cutoff at 1:00 PM, can seed margin when underwater
 
 Cross-account logic: the cash account evaluation drives margin seeding via `run-cycle-seed.ts` and position gate signals in `cash-position-gate.ts`.
@@ -70,12 +70,12 @@ Cross-account logic: the cash account evaluation drives margin seeding via `run-
 
 ### Config
 
-All runtime config via `.env`. Defaults are in-code via `readEnvPct()` / `toBooleanFlag()` helpers. Key categories:
-- Tastytrade OAuth2: `BASE_URL`, `API_CLIENT_SECRET`, `API_REFRESH_TOKEN`
+All runtime config via `.env`. Defaults are in-code via `readEnvPct()` / `toBooleanFlag()` helpers. Prefixes: `CORE_` (infra/creds), `BOT_` (orchestration/data), `STRATEGY_` (trading logic), `SECRET_` (signal feed). The July-1 refactor renamed ~30 vars; the boot log warns on obsolete names (see `src/startup-config.ts`). Key categories:
+- Tastytrade OAuth2: `CORE_BASE_URL`, `CORE_API_CLIENT_SECRET`, `CORE_API_REFRESH_TOKEN`
 - Scheduler: `BOT_RUN_ON_SCHEDULE`, `BOT_RUN_INTERVAL_MS`
-- Risk limits: `BOT_MIN_IV_RANK_PCT`, `BOT_MAX_OPTION_SPREAD_PCT`, `BOT_MAX_BUY_POWER_PCT`
-- DTE controls: `BOT_MARGIN_MAX_TARGET_DTE`, `BOT_CASH_MIN_TARGET_DTE`
-- Cross-account seeding: `BOT_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT`, `BOT_CROSS_ACCOUNT_YES_DOWN_PCT`
+- Risk limits: `STRATEGY_MIN_IV_RANK_PCT`, `STRATEGY_MAX_OPTION_SPREAD_PCT`, `STRATEGY_MARGIN_MAX_BUY_EXPOSURE_PCT` / `STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT`
+- DTE controls: `STRATEGY_MARGIN_MAX_TARGET_DTE`, `STRATEGY_CASH_MIN_TARGET_DTE`
+- Cross-account seeding: `STRATEGY_MARGIN_SEED_FROM_CASH_MIN_DOWN_PCT`, `STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT`
 - Secret feed: `SECRET_SOCKET_URL`, `SECRET_SOCKET_TIMEOUT_MS`, `SECRET_DATA_UPDATE_POSITIONS_KEY`
 
 See `.env.example` and README for the full variable list.

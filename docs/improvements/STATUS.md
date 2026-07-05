@@ -62,7 +62,29 @@ New in v6 (2026-07-03 copilot pass — see [IMPROVEMENTS.v6-copilot.md](IMPROVEM
 
 ---
 
+## 🟢 PULL-FORWARD — reclassified before-Monday (2026-07-05)
+
+On review these were sitting in AFTER-MONDAY but are actually safe to land before Monday. Two tiers:
+
+**Pure-safe (docs / read-only — zero behavior change):** ✅ all four shipped 2026-07-05
+- ~~**Monday verification hierarchy**~~ ✅ — ordered "if this fails, stop" tiers added atop the check-list in `docs/plans/2026-07-06-monday.md`. (v7 #8)
+- ~~**Config-drift docs**~~ ✅ — CLAUDE.md aligned to `CORE_*`/`STRATEGY_*` (README was already current). (v4 #51 remainder)
+- ~~**`config:show` IPC**~~ ✅ — returns resolved config + masked env via `getStartupConfigSnapshot`. (v7 #5)
+- ~~**`chmod 600` the IPC socket**~~ ✅ — perms restricted after bind. (v6 ops #9)
+
+**Additive diagnostics (log-only — enrich Monday's data, no behavior change):**
+- **Per-leg return breakdown + spread ≥ 20pp flag** on `UNDERLYING::side` groups. (v7 #2)
+- **Log actual executed weight split** vs configured. (v6 strategy #18)
+- **Overnight-hold P&L snapshot** (additive NDJSON). (v6 strategy #12)
+- **Underlying-stabilization gate, log-only first.** (v5 strategy #6)
+
+Rationale: landing the log-only diagnostics before Monday means Monday's run captures the data needed to tune the AFTER-MONDAY strategy items. Completed items get struck through here and folded into ✅ DONE.
+
+---
+
 ## 🔴 AFTER MONDAY (needs data, or behavior-changing → follow verification)
+
+> **Reclassified 2026-07-05:** 8 items moved up to 🟢 PULL-FORWARD above (safe before Monday): v5 #6, v6 ops #9, v6 strategy #12, v6 strategy #18, v7 #2, v7 #5, v7 #8, plus config-drift docs (v4 #51 remainder). Their entries in the lists below are the discovery detail.
 
 ### Blocked on Monday's data (don't guess — tune from distributions)
 - **Unsignalled base tier vs no-trade** — the "target exposure is zero" #1-skip decision; verify it collapses now that the crash loop is fixed before building anything. (v3, v4 #1)
