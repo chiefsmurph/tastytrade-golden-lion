@@ -5,6 +5,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
+    "test:coverage": "c8 --reporter=json --reports-dir=coverage --src=src node --import tsx --test src/**/*.test.ts",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=build/index.js",
     "start:tsx": "tsx src/index.ts",
     "start:build": "node build/index.js",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
+    "c8": "^11.0.0",
     "esbuild": "^0.25.6",
     "fallow": "^3.1.0",
     "tsx": "^4.22.4",

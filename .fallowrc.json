@@ -11,5 +11,8 @@
   "duplicates": {
     "minOccurrences": 3
   },
+  "health": {
+    "coverage": "coverage/coverage-final.json"
+  },
   "rules": {}
 }

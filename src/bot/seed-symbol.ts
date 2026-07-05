@@ -87,7 +87,7 @@ export function isWithinCashAccountSeedDteRange(dte: number | null | undefined):
   );
 }
 
-function extractDryRunSkipReason(error: unknown): string {
+export function extractDryRunSkipReason(error: unknown): string {
   if (!(error instanceof Error)) {
     return "seed order dry run failed";
   }
@@ -150,6 +150,86 @@ async function resolveSeedAccountNumber(options: {
     accountNumber: marginAccountNumber,
     fallbackToMargin: true,
   };
+}
+
+// Pure: pick the option + quote symbols for the requested side.
+export function deriveSeedContractSymbols(
+  candidate: TopOptionCandidateForSymbolResult | null | undefined,
+  side: "call" | "put",
+) {
+  const candidateSymbol =
+    candidate?.symbol ?? (side === "put" ? candidate?.put : candidate?.call);
+  const quoteSymbol =
+    candidate?.streamerSymbol ??
+    (side === "put"
+      ? candidate?.["put-streamer-symbol"]
+      : candidate?.["call-streamer-symbol"]) ??
+    candidateSymbol;
+  return { candidateSymbol, quoteSymbol };
+}
+
+// Pure: derive bid/ask/mid and the price the caller's priceMode selects.
+export function computeSeedQuotePrices(
+  bidAsk: { bid?: number | null; ask?: number | null } | null | undefined,
+  priceMode: "ask" | "mid",
+): { bidPrice: number; askPrice: number; midPrice: number; selectedPrice: number } {
+  const bidPrice = bidAsk?.bid ?? 0;
+  const askPrice = bidAsk?.ask ?? bidPrice;
+  const midPrice =
+    bidPrice > 0 && askPrice > 0 ? (bidPrice + askPrice) / 2 : askPrice || bidPrice;
+  const selectedPrice = priceMode === "mid" ? midPrice : askPrice;
+  return { bidPrice, askPrice, midPrice, selectedPrice };
+}
+
+// Cash seeds must land inside the seed DTE window. Returns a skip result to
+// return, or null to continue. skippedReason strings are load-bearing.
+export function checkCashSeedDte(
+  resolvedAccountType: string,
+  explicitContract: SeedSymbolOptions["explicitContract"],
+  candidate: TopOptionCandidateForSymbolResult | null | undefined,
+  candidateDte: number | undefined,
+  baseResult: SeedSymbolResult,
+): SeedSymbolResult | null {
+  if (!(resolvedAccountType === "cash" && !explicitContract)) {
+    return null;
+  }
+  if (candidate?.usedDteFallback) {
+    return {
+      ...baseResult,
+      skippedReason: `no candidate found in cash seed DTE window ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
+    };
+  }
+  if (!isWithinCashAccountSeedDteRange(candidateDte)) {
+    return {
+      ...baseResult,
+      skippedReason: `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
+    };
+  }
+  return null;
+}
+
+// Guards the order against the max-seed-cost cap and available buying power.
+// Returns a skip result to return, or null to continue.
+export function checkSeedAffordability(
+  estimatedOrderCost: number,
+  maxSeedOrderCost: number,
+  buyingPowerAvailable: number,
+  buyingPowerSummary: Awaited<ReturnType<typeof getEffectiveBuyingPowerSummary>>,
+  costResult: SeedSymbolResult,
+): SeedSymbolResult | null {
+  if (estimatedOrderCost > maxSeedOrderCost) {
+    return {
+      ...costResult,
+      skippedReason: `seed order cost ${estimatedOrderCost.toFixed(2)} exceeds BOT_MAX_SEED_ORDER_COST ${maxSeedOrderCost.toFixed(2)}`,
+    };
+  }
+  if (estimatedOrderCost > buyingPowerAvailable) {
+    return {
+      ...costResult,
+      skippedReason: `insufficient effective buying power for seed order — ${describeEffectiveBuyingPowerLimit(buyingPowerSummary)}, order cost ${estimatedOrderCost.toFixed(2)}`,
+    };
+  }
+  return null;
 }
 
 export async function seedSymbol(
@@ -217,20 +297,15 @@ export async function seedSymbol(
     usedDteFallback,
   };
 
-  if (resolvedAccountType === "cash" && !explicitContract) {
-    if (candidate?.usedDteFallback) {
-      return {
-        ...baseResult,
-        skippedReason: `no candidate found in cash seed DTE window ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
-      };
-    }
-
-    if (!isWithinCashAccountSeedDteRange(candidateDte)) {
-      return {
-        ...baseResult,
-        skippedReason: `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
-      };
-    }
+  const cashDteSkip = checkCashSeedDte(
+    resolvedAccountType,
+    explicitContract,
+    candidate,
+    candidateDte,
+    baseResult,
+  );
+  if (cashDteSkip) {
+    return cashDteSkip;
   }
 
   console.log(
@@ -246,10 +321,10 @@ export async function seedSymbol(
         explicitContract: explicitContract?.symbol ?? null,
         strategy,
         candidateDTE: candidateDte,
-        minDTE: candidate?.minDTE,
-        maxDTE: candidate?.maxDTE,
-        preferredDTE: candidate?.preferredDTE,
-        usedDteFallback: candidate?.usedDteFallback ?? false,
+        minDTE,
+        maxDTE,
+        preferredDTE,
+        usedDteFallback: usedDteFallback ?? false,
         candidateSymbol: candidate?.symbol ?? candidate?.call ?? candidate?.put ?? null,
       },
       null,
@@ -266,14 +341,7 @@ export async function seedSymbol(
     };
   }
 
-  const candidateSymbol =
-    candidate?.symbol ?? (side === "put" ? candidate?.put : candidate?.call);
-  const quoteSymbol =
-    candidate?.streamerSymbol ??
-    (side === "put"
-      ? candidate?.["put-streamer-symbol"]
-      : candidate?.["call-streamer-symbol"]) ??
-    candidateSymbol;
+  const { candidateSymbol, quoteSymbol } = deriveSeedContractSymbols(candidate, side);
 
   if (!candidateSymbol) {
     return {
@@ -294,11 +362,10 @@ export async function seedSymbol(
     quoteSymbol,
     3000,
   );
-  const bidPrice = bidAsk?.bid ?? 0;
-  const askPrice = bidAsk?.ask ?? bidPrice;
-  const midPrice =
-    bidPrice > 0 && askPrice > 0 ? (bidPrice + askPrice) / 2 : askPrice || bidPrice;
-  const selectedPrice = priceMode === "mid" ? midPrice : askPrice;
+  const { bidPrice, askPrice, midPrice, selectedPrice } = computeSeedQuotePrices(
+    bidAsk,
+    priceMode,
+  );
 
   // Base extended with quote data; used by every result from here on.
   const pricedResult: SeedSymbolResult = {
@@ -366,18 +433,15 @@ export async function seedSymbol(
     limitPrice: numericLimitPrice,
   };
 
-  if (estimatedOrderCost > maxSeedOrderCost) {
-    return {
-      ...costResult,
-      skippedReason: `seed order cost ${estimatedOrderCost.toFixed(2)} exceeds BOT_MAX_SEED_ORDER_COST ${maxSeedOrderCost.toFixed(2)}`,
-    };
-  }
-
-  if (estimatedOrderCost > buyingPowerAvailable) {
-    return {
-      ...costResult,
-      skippedReason: `insufficient effective buying power for seed order — ${describeEffectiveBuyingPowerLimit(buyingPowerSummary)}, order cost ${estimatedOrderCost.toFixed(2)}`,
-    };
+  const affordabilitySkip = checkSeedAffordability(
+    estimatedOrderCost,
+    maxSeedOrderCost,
+    buyingPowerAvailable,
+    buyingPowerSummary,
+    costResult,
+  );
+  if (affordabilitySkip) {
+    return affordabilitySkip;
   }
 
   let dryRunResponse: TastytradePlacedOrderResponse;
