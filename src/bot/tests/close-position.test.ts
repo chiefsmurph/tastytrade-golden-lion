@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import { closePosition, shouldSkipClosePositionForMorningSpread } from "../actions/close-position";
 import type { PositionGroupEvaluation } from "../evaluate-position";
-import type { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 
 function buildEvaluation(
   currentTime: string,
@@ -51,14 +50,6 @@ function buildEvaluation(
     ...overrides,
   };
 }
-
-const closingTargets: ExecutionTargets = {
-  askWeight: 0.1,
-  bidWeight: 0.7,
-  midWeight: 0.2,
-  targetAccountExposure: 0.4,
-  targetDTE: 30,
-};
 
 test("shouldSkipClosePositionForMorningSpread skips wide spreads early in the morning", () => {
   const evaluation = buildEvaluation("2026-06-25T06:30:00", {

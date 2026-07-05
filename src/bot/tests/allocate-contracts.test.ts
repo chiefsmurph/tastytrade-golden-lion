@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   allocateContractsByWeight,
   buildRouteOrders,
+  candidateDteResultFields,
 } from "../actions/manage-allocation";
 
 const EVEN_WEIGHTS = { bidWeight: 0.33, midWeight: 0.33, askWeight: 0.34 };
@@ -42,4 +43,33 @@ test("zero/negative capital or weight is a no-op", () => {
 test("buildRouteOrders drops routes with zero weight or price", () => {
   const routes = buildRouteOrders(1.0, 1.2, { bidWeight: 0.5, midWeight: 0, askWeight: 0.5 });
   assert.deepEqual(routes.map((r) => r.route), ["bid", "ask"]);
+});
+
+test("candidateDteResultFields maps DTE fields from a candidate", () => {
+  assert.deepEqual(
+    candidateDteResultFields({
+      dte: 21,
+      minDTE: 14,
+      maxDTE: 30,
+      preferredDTE: 21,
+      usedDteFallback: false,
+    } as never),
+    {
+      candidateDTE: 21,
+      minDTE: 14,
+      maxDTE: 30,
+      preferredDTE: 21,
+      usedDteFallback: false,
+    },
+  );
+});
+
+test("candidateDteResultFields returns undefineds for a null candidate", () => {
+  assert.deepEqual(candidateDteResultFields(null), {
+    candidateDTE: undefined,
+    minDTE: undefined,
+    maxDTE: undefined,
+    preferredDTE: undefined,
+    usedDteFallback: undefined,
+  });
 });

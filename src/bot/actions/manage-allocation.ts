@@ -1,6 +1,5 @@
 import {
   getConservativeSpendableFunds,
-  getAccountBalanceNumber,
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
 } from "~/core/account-balance";
@@ -319,6 +318,88 @@ export interface PlaceRouteOrdersDependencies {
   waitForFill?: (accountNumber: string, orderId: string, timeoutMs: number) => Promise<boolean>;
 }
 
+// Buy-to-open limit order for a single option contract at a given price.
+function buildBuyToOpenOrder(
+  candidateSymbol: string,
+  quantity: number,
+  price: number,
+): OrderPayload {
+  return {
+    source: "tastytrade-golden-lion",
+    "time-in-force": "Day",
+    "order-type": "Limit",
+    price: roundOrderPrice(price),
+    "price-effect": "Debit",
+    legs: [
+      {
+        action: "Buy to Open",
+        symbol: candidateSymbol,
+        quantity,
+        "instrument-type": normalizeInstrumentType("Equity Option"),
+      },
+    ],
+  };
+}
+
+// Places one route order and tick-chases it up toward the plan ceiling until it
+// fills, the chase is exhausted, or cancellation can't be confirmed. Returns the
+// last order response placed — the working order the next cycle's sweep owns.
+async function chaseRouteOrderFill(
+  accountNumber: string,
+  candidateSymbol: string,
+  quantity: number,
+  plan: RouteChasePlan,
+  midPrice: number,
+  createOrder: (accountNumber: string, order: OrderPayload) => Promise<TastytradePlacedOrderResponse>,
+  waitForFill: (accountNumber: string, orderId: string, timeoutMs: number) => Promise<boolean>,
+  cancelOrder?: (accountNumber: string, orderId: number) => Promise<unknown>,
+): Promise<TastytradePlacedOrderResponse | undefined> {
+  let currentPrice = plan.startPrice;
+  let orderId: string | undefined;
+  let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
+  let tickCount = 0;
+
+  while (tickCount <= plan.maxTicks) {
+    const order = buildBuyToOpenOrder(candidateSymbol, quantity, currentPrice);
+    const orderResponse = await createOrder(accountNumber, order);
+    lastOrderResponse = orderResponse;
+    orderId = orderResponse?.order?.id;
+
+    if (!TICK_UP_CHASE_ENABLED || tickCount >= plan.maxTicks) {
+      // Route rests here (bid, or chase exhausted) — leave the order working;
+      // the next cycle's cancelAllLiveOrders sweep owns cleanup.
+      break;
+    }
+
+    const isFilled = orderId
+      ? await waitForFill(accountNumber, orderId, plan.tickIntervalMs)
+      : false;
+    if (isFilled) {
+      break;
+    }
+
+    const tickSize = calculateDynamicTickSize(midPrice, plan.ceilingPrice);
+    const nextPrice = Math.min(plan.ceilingPrice, currentPrice + tickSize);
+    if (nextPrice - currentPrice < 1e-9) {
+      // At the ceiling — re-placing an identical price is pure request waste.
+      break;
+    }
+
+    if (orderId) {
+      const cancelled = await cancelOrderById(accountNumber, orderId, cancelOrder);
+      if (!cancelled) {
+        // Can't confirm cancellation — stop chasing to avoid duplicate live orders
+        break;
+      }
+    }
+
+    currentPrice = nextPrice;
+    tickCount += 1;
+  }
+
+  return lastOrderResponse;
+}
+
 export async function placeRouteOrders(
   accountNumber: string,
   candidateSymbol: string,
@@ -347,68 +428,16 @@ export async function placeRouteOrders(
     const plan = getRouteChasePlan(routeOrder.route, effectiveBid, effectiveAsk);
     const midPrice = getMidpointPrice(effectiveBid, effectiveAsk);
 
-    let currentPrice = plan.startPrice;
-    let orderId: string | undefined;
-    let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
-    let tickCount = 0;
-
-    while (tickCount <= plan.maxTicks) {
-      const order: OrderPayload = {
-        source: "tastytrade-golden-lion",
-        "time-in-force": "Day",
-        "order-type": "Limit",
-        price: roundOrderPrice(currentPrice),
-        "price-effect": "Debit",
-        legs: [
-          {
-            action: "Buy to Open",
-            symbol: candidateSymbol,
-            quantity: routeOrder.quantity,
-            "instrument-type": normalizeInstrumentType("Equity Option"),
-          },
-        ],
-      };
-
-      const orderResponse = await effectiveCreateOrder(accountNumber, order);
-
-      lastOrderResponse = orderResponse;
-      orderId = orderResponse?.order?.id;
-
-      if (!TICK_UP_CHASE_ENABLED || tickCount >= plan.maxTicks) {
-        // Route rests here (bid, or chase exhausted) — leave the order working;
-        // the next cycle's cancelAllLiveOrders sweep owns cleanup.
-        break;
-      }
-
-      const isFilled = orderId ? await effectiveWaitForFill(
-        accountNumber,
-        orderId,
-        plan.tickIntervalMs,
-      ) : false;
-
-      if (isFilled) {
-        break;
-      }
-
-      const tickSize = calculateDynamicTickSize(midPrice, plan.ceilingPrice);
-      const nextPrice = Math.min(plan.ceilingPrice, currentPrice + tickSize);
-
-      if (nextPrice - currentPrice < 1e-9) {
-        // At the ceiling — re-placing an identical price is pure request waste.
-        break;
-      }
-
-      if (orderId) {
-        const cancelled = await cancelOrderById(accountNumber, orderId, deps.cancelOrder);
-        if (!cancelled) {
-          // Can't confirm cancellation — stop chasing to avoid duplicate live orders
-          break;
-        }
-      }
-
-      currentPrice = nextPrice;
-      tickCount += 1;
-    }
+    const lastOrderResponse = await chaseRouteOrderFill(
+      accountNumber,
+      candidateSymbol,
+      routeOrder.quantity,
+      plan,
+      midPrice,
+      effectiveCreateOrder,
+      effectiveWaitForFill,
+      deps.cancelOrder,
+    );
 
     placedOrders.push({
       ...routeOrder,
@@ -487,6 +516,22 @@ export function getHeldContractFallbackCandidate(
   };
 }
 
+// Candidate-derived DTE fields carried on every post-candidate result.
+export function candidateDteResultFields(
+  candidate: TopOptionCandidateForSymbolResult | null | undefined,
+): Pick<
+  AllocationExecutionResult,
+  "candidateDTE" | "maxDTE" | "minDTE" | "preferredDTE" | "usedDteFallback"
+> {
+  return {
+    candidateDTE: candidate?.dte,
+    maxDTE: candidate?.maxDTE,
+    minDTE: candidate?.minDTE,
+    preferredDTE: candidate?.preferredDTE,
+    usedDteFallback: candidate?.usedDteFallback,
+  };
+}
+
 export async function manageAllocationForGroup(
   accountNumber: string,
   evaluation: PositionGroupEvaluation,
@@ -494,17 +539,23 @@ export async function manageAllocationForGroup(
   groupsRemainingForAllocation = 1,
   options: ManageAllocationOptions = {},
 ): Promise<AllocationExecutionResult> {
+  // Every result shares these fields; skip returns spread this and add specifics.
+  // routeOrders defaults to [] and is overridden by returns that carry real orders.
+  const skip = (
+    extra: Partial<AllocationExecutionResult> & { skippedReason: string },
+  ): AllocationExecutionResult => ({
+    accountNumber,
+    action: "MANAGE_ALLOCATION",
+    placedOrder: false,
+    routeOrders: [],
+    underlyingSymbol: evaluation.underlyingSymbol,
+    ...extra,
+  });
+
   const targets = evaluation.executionTargets;
 
   if (!targets) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      placedOrder: false,
-      routeOrders: [],
-      skippedReason: "execution targets missing",
-      underlyingSymbol: evaluation.underlyingSymbol,
-    };
+    return skip({ skippedReason: "execution targets missing" });
   }
 
   // The dip boost multiplies after the normalization/gate clamp so it survives
@@ -525,25 +576,11 @@ export async function manageAllocationForGroup(
   const perGroupMaxBuyAmount = maxBuyAmountPerAction / normalizedGroupsRemaining;
 
   if (effectiveTargetAccountExposure <= 0) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      placedOrder: false,
-      routeOrders: [],
-      skippedReason: "target exposure is zero",
-      underlyingSymbol: evaluation.underlyingSymbol,
-    };
+    return skip({ skippedReason: "target exposure is zero" });
   }
 
   if (exposureHeadroom <= 0 || budget.buyingPowerRemaining <= 0) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      placedOrder: false,
-      routeOrders: [],
-      skippedReason: "no remaining exposure or buying power",
-      underlyingSymbol: evaluation.underlyingSymbol,
-    };
+    return skip({ skippedReason: "no remaining exposure or buying power" });
   }
 
   const optionSide = getCandidateSide(evaluation);
@@ -570,14 +607,9 @@ export async function manageAllocationForGroup(
   );
 
   if (!healthGate.passed) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      placedOrder: false,
-      routeOrders: [],
+    return skip({
       skippedReason: `option health gate failed for target DTE ${targets.targetDTE}; missing healthy checkpoints: ${healthGate.missingRequiredTargets.join(", ")}`,
-      underlyingSymbol: evaluation.underlyingSymbol,
-    };
+    });
   }
 
   const accountMarginOrCash = await getAccountMarginOrCash(accountNumber);
@@ -639,19 +671,10 @@ export async function manageAllocationForGroup(
   );
 
   if (!candidate?.symbol) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      candidateDTE: candidate?.dte,
-      maxDTE: candidate?.maxDTE,
-      minDTE: candidate?.minDTE,
-      placedOrder: false,
-      preferredDTE: candidate?.preferredDTE,
-      routeOrders: [],
+    return skip({
+      ...candidateDteResultFields(candidate),
       skippedReason: "no option candidate found",
-      underlyingSymbol: evaluation.underlyingSymbol,
-      usedDteFallback: candidate?.usedDteFallback,
-    };
+    });
   }
 
   const bidAsk = await tastytradeApi.johnsService.getBidAskForSymbol(
@@ -676,19 +699,10 @@ export async function manageAllocationForGroup(
   );
 
   if (routeOrders.length === 0) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      candidateDTE: candidate.dte,
-      maxDTE: candidate.maxDTE,
-      minDTE: candidate.minDTE,
-      placedOrder: false,
-      preferredDTE: candidate.preferredDTE,
-      routeOrders: [],
+    return skip({
+      ...candidateDteResultFields(candidate),
       skippedReason: "candidate quote unavailable",
-      underlyingSymbol: evaluation.underlyingSymbol,
-      usedDteFallback: candidate.usedDteFallback,
-    };
+    });
   }
 
   let totalQuantity = routeOrders.reduce(
@@ -745,20 +759,12 @@ export async function manageAllocationForGroup(
   }
 
   if (totalQuantity < 1) {
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
+    return skip({
+      ...candidateDteResultFields(candidate),
       candidateSymbol: candidate.symbol,
-      candidateDTE: candidate.dte,
-      maxDTE: candidate.maxDTE,
-      minDTE: candidate.minDTE,
-      placedOrder: false,
-      preferredDTE: candidate.preferredDTE,
       routeOrders,
       skippedReason: "insufficient budget for one contract",
-      underlyingSymbol: evaluation.underlyingSymbol,
-      usedDteFallback: candidate.usedDteFallback,
-    };
+    });
   }
 
   if (options.dryRun) {
@@ -767,37 +773,22 @@ export async function manageAllocationForGroup(
       0,
     );
 
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
+    return skip({
+      ...candidateDteResultFields(candidate),
       candidateSymbol: candidate.symbol,
-      candidateDTE: candidate.dte,
       estimatedOrderValue,
-      maxDTE: candidate.maxDTE,
-      minDTE: candidate.minDTE,
-      placedOrder: false,
-      preferredDTE: candidate.preferredDTE,
       quantity: totalQuantity,
       routeOrders,
       skippedReason: "dry-run plan",
-      underlyingSymbol: evaluation.underlyingSymbol,
-      usedDteFallback: candidate.usedDteFallback,
       usedHeldContractFallback: usedHeldContractFallback || undefined,
-    };
+    });
   }
 
   const candidateSymbol = candidate.symbol;
   if (!candidateSymbol) {
     // Unreachable: both the chain guard above and the held fallback branch
     // require a symbol — this exists to keep the narrowing after reassignment.
-    return {
-      accountNumber,
-      action: "MANAGE_ALLOCATION",
-      placedOrder: false,
-      routeOrders: [],
-      skippedReason: "no option candidate found",
-      underlyingSymbol: evaluation.underlyingSymbol,
-    };
+    return skip({ skippedReason: "no option candidate found" });
   }
 
   const placedRouteOrders = await placeRouteOrders(
@@ -819,11 +810,9 @@ export async function manageAllocationForGroup(
   return {
     accountNumber,
     action: "MANAGE_ALLOCATION",
+    ...candidateDteResultFields(candidate),
     candidateSymbol: candidate.symbol,
-    candidateDTE: candidate.dte,
     estimatedOrderValue,
-    maxDTE: candidate.maxDTE,
-    minDTE: candidate.minDTE,
     orderResponses: placedRouteOrders
       .map((routeOrder) => routeOrder.orderResponse)
       .filter(
@@ -831,11 +820,9 @@ export async function manageAllocationForGroup(
           orderResponse != null,
       ),
     placedOrder: placedRouteOrders.some((routeOrder) => routeOrder.placedOrder),
-    preferredDTE: candidate.preferredDTE,
     quantity,
     routeOrders: placedRouteOrders,
     underlyingSymbol: evaluation.underlyingSymbol,
-    usedDteFallback: candidate.usedDteFallback,
     usedHeldContractFallback: usedHeldContractFallback || undefined,
   };
 }

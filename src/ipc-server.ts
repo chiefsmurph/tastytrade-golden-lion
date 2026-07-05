@@ -392,10 +392,6 @@ function assertArg(value: string | undefined, name: string): asserts value is st
   }
 }
 
-function roundToTwoDecimals(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
 function parseOptionalNumberArg(
   value: string | undefined,
   fallback: number,

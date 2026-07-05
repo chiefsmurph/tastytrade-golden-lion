@@ -1,6 +1,4 @@
 import {
-  getConservativeSpendableFunds,
-  getAccountBalanceNumber,
   getEffectiveTotalCapital,
 } from "~/core/account-balance";
 import tastytradeApi from "~/core/tastytrade-client";

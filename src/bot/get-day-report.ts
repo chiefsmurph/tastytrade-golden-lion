@@ -1,7 +1,6 @@
-import { getManagedAccountNumbers, getDefaultAccountNumber } from "~/core/default-account";
+import { getManagedAccountNumbers } from "~/core/default-account";
 import {
   getAllDayReports,
-  getAllDayReportsAcrossAccounts,
   getDayReportForDate,
   getLatestDayReport,
 } from "./day-report-store";
