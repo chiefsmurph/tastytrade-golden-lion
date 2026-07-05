@@ -2,6 +2,8 @@
 
 **This is the live tracker.** `IMPROVEMENTS.v1`–`v7` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-04 against committed code (v5 items folded in same day; v6 and v7 folded 2026-07-04).
 
+> **Static-analysis (fallow) findings live in their own tracker: [FALLOW.md](FALLOW.md)** — complexity/dead-code/duplication/circular-dep work, plus the gate's gotchas. Start there for "let's address fallow findings."
+
 Three buckets, as requested: **DONE** (shipped this session, under the `monday-2026-07-06` tag) · **BEFORE MONDAY–ELIGIBLE** (safe to land in Monday's deploy — pure cleanup, docs, tests, diagnostics) · **AFTER MONDAY** (needs Monday's data, or behavior-changing enough that it should follow verification).
 
 *(fable)* = use Fable 5 for implementation — safety-critical logic, multi-site correctness bugs where a subtle mistake silently gives wrong answers, or new architectural mechanisms with non-obvious invariants. Everything else is fine on Sonnet/Opus.
