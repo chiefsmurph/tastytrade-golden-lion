@@ -4,7 +4,7 @@ import type {
   TastytradeInstrumentType,
   TastytradeOrderAction,
 } from "~/core/types";
-import { PositionQuoteSnapshot } from "../evaluate-position";
+import type { PositionQuoteSnapshot } from "../evaluate-position";
 
 export interface OrderLeg {
   action: TastytradeOrderAction;

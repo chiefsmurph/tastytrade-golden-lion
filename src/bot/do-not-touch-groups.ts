@@ -1,6 +1,6 @@
 import { TastytradeOrder } from "~/core/types";
 import { inferOptionSide } from "./actions/order-utils";
-import { PositionGroupEvaluation } from "./evaluate-position";
+import type { PositionGroupEvaluation } from "./evaluate-position";
 
 export type PositionGroupSide = "call" | "put" | "none";
 
