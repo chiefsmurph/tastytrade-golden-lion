@@ -4,7 +4,11 @@ module.exports = {
       name: "tastytrade-golden-lion",
       cwd: __dirname,
       script: "./build/index.js",
-      interpreter: "node",
+      // Pin to the Node that evaluates this config (the pm2 CLI's own runtime,
+      // e.g. nvm's v24 when starting from a login shell). A bare "node" resolves
+      // against the pm2 daemon's PATH, which under the systemd boot hook can be
+      // an old system Node without the global WebSocket the quote streamer needs.
+      interpreter: process.execPath,
       instances: 1,
       exec_mode: "fork",
       autorestart: true,

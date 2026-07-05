@@ -138,7 +138,7 @@ Strategy/profitability:
 Bugs/correctness:
 - ~~**`inferIsRegularSession` ignores explicit `state` field**~~ ✅ — `state: "Open"/"Closed"` now short-circuits the 7.5h heuristic; 8 unit tests added. (v7 #1)
 - **`UNDERLYING::side` groups average across expirations** — a profitable long-dated leg masks a stopping short-dated leg; log per-leg return breakdown and flag spread ≥ 20pp as a diagnostic precursor to v5 strategy #5. (v7 #2)
-- ~~**`ecosystem.config.cjs` interpreter path pinned to deploy host**~~ ✅ — changed to `"node"`. (v7 #3)
+- ~~**`ecosystem.config.cjs` interpreter path pinned to deploy host**~~ ✅ — first changed to `"node"`, which broke on the server 07-05 ("WebSocket is not defined": the pm2 daemon's PATH resolved an old system Node without the global WebSocket — the original hardcoded nvm path was a load-bearing workaround, not a bug). Final fix: `interpreter: process.execPath` (the Node evaluating the config = the pm2 CLI's runtime), portable without hardcoding a host path. Requires `pm2 kill` + start + `pm2 save` + regenerated `pm2 startup` hook so the daemon/boot PATH is rebuilt. (v7 #3)
 
 Ops/observability:
 - ~~**`core:cancelAllLiveOrders` not documented**~~ ✅ — added to README Core / Market Data Examples with emergency-cancel note. (v7 #4)
