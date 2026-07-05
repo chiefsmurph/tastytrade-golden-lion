@@ -28,6 +28,7 @@ import {
   stopMarketOpenScheduler,
 } from "./bot/market-open-scheduler";
 import getLastRunCycle from "./bot/get-last-run-cycle";
+import { getStartupConfigSnapshot } from "./startup-config";
 import { getLastRunGroupsByTickers, getRecentRunHistory } from "./bot/run-history";
 import getDayReport from "./bot/get-day-report";
 import getDayTrend from "./bot/get-day-trend";
@@ -105,6 +106,7 @@ const commandHandlers: Record<string, CommandHandler> = {
     const session = await getCurrentEquitiesSession();
     return isEquityOptionsMarketOpen(session);
   },
+  "config:show": async () => getStartupConfigSnapshot(),
   "bot:getOptionCandidates": async ([symbol, side]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";
@@ -269,6 +271,14 @@ export function startIpcServer() {
   });
 
   server.listen(socketPath, () => {
+    // Restrict the socket to the owner: any local process with access can place
+    // real orders through the IPC handlers, so deny group/other after bind.
+    try {
+      fs.chmodSync(socketPath, 0o600);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ipc] could not chmod 600 the socket ${socketPath}: ${message}`);
+    }
     console.log(`IPC server listening on ${socketPath}`);
     console.log("Available commands:");
     for (const command of Object.keys(commandHandlers)) {

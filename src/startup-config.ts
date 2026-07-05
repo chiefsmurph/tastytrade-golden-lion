@@ -105,7 +105,16 @@ export function getTimezoneWarning(
   return `[config] TIMEZONE is ${resolvedTimeZone}, expected ${EXPECTED_TIMEZONE} — every intraday schedule assumes Pacific and will be shifted. Set TZ=${EXPECTED_TIMEZONE} and restart.`;
 }
 
-export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
+export interface StartupConfigSnapshot {
+  vars: Record<string, string>;
+  resolved: Record<string, unknown>;
+}
+
+// The masked env vars + resolved trading config. Shared by the boot log and the
+// read-only `config:show` IPC command so both report exactly the same view.
+export function getStartupConfigSnapshot(
+  env: NodeJS.ProcessEnv = process.env,
+): StartupConfigSnapshot {
   const vars: Record<string, string> = {};
   for (const key of Object.keys(env).sort()) {
     const value = env[key];
@@ -115,15 +124,11 @@ export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
   }
 
   let resolved: Record<string, unknown> = {};
-  let maxSpreadPct = 0;
-  let intradayStopFloor = 0;
   try {
-    maxSpreadPct = getMaxOptionSpreadPct();
-    intradayStopFloor = getIntradayStopLossFloor();
     resolved = {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      maxOptionSpreadPct: maxSpreadPct,
-      intradayStopLossFloor: intradayStopFloor,
+      maxOptionSpreadPct: getMaxOptionSpreadPct(),
+      intradayStopLossFloor: getIntradayStopLossFloor(),
       minIvRankPct: getMinIvRankPct(),
       marginTargetCallDelta: getMarginTargetCallDelta(),
       marginMaxBuyExposurePct: getMarginMaxBuyExposurePct(),
@@ -134,6 +139,16 @@ export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
   } catch (error) {
     resolved = { error: error instanceof Error ? error.message : String(error) };
   }
+
+  return { vars, resolved };
+}
+
+export function logStartupConfig(env: NodeJS.ProcessEnv = process.env): void {
+  const { vars, resolved } = getStartupConfigSnapshot(env);
+  const maxSpreadPct =
+    typeof resolved.maxOptionSpreadPct === "number" ? resolved.maxOptionSpreadPct : 0;
+  const intradayStopFloor =
+    typeof resolved.intradayStopLossFloor === "number" ? resolved.intradayStopLossFloor : 0;
 
   console.log(JSON.stringify({ scope: "startup-config", vars, resolved }));
 

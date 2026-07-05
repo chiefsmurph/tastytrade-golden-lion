@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   findLegacyHonoredEnvNames,
   findObsoleteEnvNames,
+  getStartupConfigSnapshot,
   getTimezoneWarning,
   maskEnvValue,
 } from "~/startup-config";
@@ -66,4 +67,31 @@ test("sensitive values are masked, others pass through", () => {
   assert.equal(maskEnvValue("SECRET_SOCKET_URL", "wss://internal.example:9000"), "wss:…(27 chars)");
   assert.equal(maskEnvValue("STRATEGY_MIN_IV_RANK_PCT", "20"), "20");
   assert.equal(maskEnvValue("BOT_RUN_ON_SCHEDULE", "true"), "true");
+});
+
+test("getStartupConfigSnapshot collects+masks config vars and resolves trading config", () => {
+  const snapshot = getStartupConfigSnapshot({
+    CORE_API_REFRESH_TOKEN: "supersecretvalue",
+    STRATEGY_MIN_IV_RANK_PCT: "20",
+    PATH: "/usr/bin",
+    HOME: "/home/x",
+  });
+
+  // Only config-prefixed vars are surfaced; sensitive ones are masked.
+  assert.deepEqual(Object.keys(snapshot.vars).sort(), [
+    "CORE_API_REFRESH_TOKEN",
+    "STRATEGY_MIN_IV_RANK_PCT",
+  ]);
+  assert.equal(snapshot.vars.STRATEGY_MIN_IV_RANK_PCT, "20");
+  assert.equal(snapshot.vars.CORE_API_REFRESH_TOKEN, "supe…(16 chars)");
+
+  // resolved carries the computed trading-config keys.
+  for (const key of [
+    "timezone",
+    "maxOptionSpreadPct",
+    "minIvRankPct",
+    "marginTargetCallDelta",
+  ]) {
+    assert.ok(key in snapshot.resolved, `resolved missing ${key}`);
+  }
 });
