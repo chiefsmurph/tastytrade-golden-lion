@@ -194,37 +194,41 @@ export async function seedSymbol(
       );
   const strategy = candidate?.strategy;
   const candidateDte = candidate?.dte != null ? Number(candidate.dte) : undefined;
+  const minDTE = candidate?.minDTE;
+  const maxDTE = candidate?.maxDTE;
+  const preferredDTE = candidate?.preferredDTE;
+  const usedDteFallback = candidate?.usedDteFallback;
+
+  // Fields shared by every post-candidate result. Later stages extend this with
+  // prices, then cost/limit, as they are computed. Consumers read fields
+  // defensively (?? null / ?? false), so carrying extra fields is harmless; the
+  // skippedReason strings are load-bearing (the held-contract fallback in
+  // run-cycle-seed matches on them) and are preserved verbatim below.
+  const baseResult: SeedSymbolResult = {
+    accountNumber: resolvedAccountNumber,
+    dte: candidateDte,
+    maxDTE,
+    minDTE,
+    placedOrder: false,
+    preferredDTE,
+    side,
+    strategy,
+    symbol: normalizedSymbol,
+    usedDteFallback,
+  };
 
   if (resolvedAccountType === "cash" && !explicitContract) {
     if (candidate?.usedDteFallback) {
       return {
-        accountNumber: resolvedAccountNumber,
-        dte: candidateDte,
-        maxDTE: candidate?.maxDTE,
-        minDTE: candidate?.minDTE,
-        placedOrder: false,
-        preferredDTE: candidate?.preferredDTE,
-        side,
+        ...baseResult,
         skippedReason: `no candidate found in cash seed DTE window ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
-        strategy,
-        symbol: normalizedSymbol,
-        usedDteFallback: candidate?.usedDteFallback,
       };
     }
 
     if (!isWithinCashAccountSeedDteRange(candidateDte)) {
       return {
-        accountNumber: resolvedAccountNumber,
-        dte: candidateDte,
-        maxDTE: candidate?.maxDTE,
-        minDTE: candidate?.minDTE,
-        placedOrder: false,
-        preferredDTE: candidate?.preferredDTE,
-        side,
+        ...baseResult,
         skippedReason: `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
-        strategy,
-        symbol: normalizedSymbol,
-        usedDteFallback: candidate?.usedDteFallback,
       };
     }
   }
@@ -257,23 +261,10 @@ export async function seedSymbol(
     strategy !== "MANAGE_ALLOCATION"
   ) {
     return {
-      accountNumber: resolvedAccountNumber,
-      maxDTE: candidate?.maxDTE,
-      minDTE: candidate?.minDTE,
-      placedOrder: false,
-      preferredDTE: candidate?.preferredDTE,
-      side,
+      ...baseResult,
       skippedReason: "time-of-day strategy is not allowing new accumulation",
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback: candidate?.usedDteFallback,
     };
   }
-
-  const minDTE = candidate?.minDTE;
-  const maxDTE = candidate?.maxDTE;
-  const preferredDTE = candidate?.preferredDTE;
-  const usedDteFallback = candidate?.usedDteFallback;
 
   const candidateSymbol =
     candidate?.symbol ?? (side === "put" ? candidate?.put : candidate?.call);
@@ -286,34 +277,16 @@ export async function seedSymbol(
 
   if (!candidateSymbol) {
     return {
-      accountNumber: resolvedAccountNumber,
-      dte: candidateDte,
-      maxDTE,
-      minDTE,
-      placedOrder: false,
-      preferredDTE,
-      side,
+      ...baseResult,
       skippedReason: "no option candidate found",
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
   if (!quoteSymbol) {
     return {
-      accountNumber: resolvedAccountNumber,
+      ...baseResult,
       candidateSymbol,
-      dte: candidateDte,
-      maxDTE,
-      minDTE,
-      placedOrder: false,
-      preferredDTE,
-      side,
       skippedReason: "candidate quote symbol unavailable",
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
@@ -327,29 +300,25 @@ export async function seedSymbol(
     bidPrice > 0 && askPrice > 0 ? (bidPrice + askPrice) / 2 : askPrice || bidPrice;
   const selectedPrice = priceMode === "mid" ? midPrice : askPrice;
 
+  // Base extended with quote data; used by every result from here on.
+  const pricedResult: SeedSymbolResult = {
+    ...baseResult,
+    askPrice,
+    bidPrice,
+    candidateSymbol,
+    midPrice,
+    priceMode,
+    quoteSymbol,
+  };
+
   if (!(selectedPrice && selectedPrice > 0)) {
     console.warn(
       `No valid ${priceMode} or fallback quote for ${quoteSymbol}, skipping seed order. BidAsk:`,
       bidAsk,
     );
     return {
-      accountNumber: resolvedAccountNumber,
-      askPrice,
-      bidPrice,
-      candidateSymbol,
-      dte: candidateDte,
-      midPrice,
-      maxDTE,
-      minDTE,
-      preferredDTE,
-      priceMode,
-      quoteSymbol,
-      placedOrder: false,
-      side,
+      ...pricedResult,
       skippedReason: `candidate ${priceMode} quote unavailable`,
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
@@ -358,24 +327,9 @@ export async function seedSymbol(
 
   if (options.maxLimitPrice !== undefined && numericLimitPrice > options.maxLimitPrice) {
     return {
-      accountNumber: resolvedAccountNumber,
-      askPrice,
-      bidPrice,
-      candidateSymbol,
-      dte: candidateDte,
+      ...pricedResult,
       limitPrice: numericLimitPrice,
-      maxDTE,
-      midPrice,
-      minDTE,
-      placedOrder: false,
-      priceMode,
-      preferredDTE,
-      quoteSymbol,
-      side,
       skippedReason: `unfavorable entry: limit price ${numericLimitPrice.toFixed(2)} > cash fill ${options.maxLimitPrice.toFixed(2)}`,
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
@@ -404,53 +358,25 @@ export async function seedSymbol(
   const estimatedOrderCost = numericLimitPrice * 100;
   const maxSeedOrderCost = getMaxSeedOrderCost();
 
+  // Base extended with cost/limit data; used by the remaining returns.
+  const costResult: SeedSymbolResult = {
+    ...pricedResult,
+    buyingPowerAvailable,
+    estimatedOrderCost,
+    limitPrice: numericLimitPrice,
+  };
+
   if (estimatedOrderCost > maxSeedOrderCost) {
     return {
-      accountNumber: resolvedAccountNumber,
-      askPrice,
-      bidPrice,
-      buyingPowerAvailable,
-      candidateSymbol,
-      dte: candidateDte,
-      estimatedOrderCost,
-      limitPrice: numericLimitPrice,
-      maxDTE,
-      midPrice,
-      minDTE,
-      placedOrder: false,
-      priceMode,
-      preferredDTE,
-      quoteSymbol,
-      side,
+      ...costResult,
       skippedReason: `seed order cost ${estimatedOrderCost.toFixed(2)} exceeds BOT_MAX_SEED_ORDER_COST ${maxSeedOrderCost.toFixed(2)}`,
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
   if (estimatedOrderCost > buyingPowerAvailable) {
     return {
-      accountNumber: resolvedAccountNumber,
-      askPrice,
-      bidPrice,
-      buyingPowerAvailable,
-      candidateSymbol,
-      dte: candidateDte,
-      estimatedOrderCost,
-      limitPrice: numericLimitPrice,
-      maxDTE,
-      midPrice,
-      minDTE,
-      placedOrder: false,
-      priceMode,
-      preferredDTE,
-      quoteSymbol,
-      side,
+      ...costResult,
       skippedReason: `insufficient effective buying power for seed order — ${describeEffectiveBuyingPowerLimit(buyingPowerSummary)}, order cost ${estimatedOrderCost.toFixed(2)}`,
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
@@ -462,30 +388,12 @@ export async function seedSymbol(
     );
   } catch (error) {
     return {
-      accountNumber: resolvedAccountNumber,
-      askPrice,
-      bidPrice,
-      buyingPowerAvailable,
-      candidateSymbol,
-      dte: candidate?.dte != null ? Number(candidate.dte) : undefined,
+      ...costResult,
       dryRunResponse:
         error instanceof Error
           ? ((error as Error & { response?: { data?: unknown } }).response?.data ?? error.message)
           : error,
-      estimatedOrderCost,
-      limitPrice: numericLimitPrice,
-      maxDTE,
-      midPrice,
-      minDTE,
-      placedOrder: false,
-      priceMode,
-      preferredDTE,
-      quoteSymbol,
-      side,
       skippedReason: extractDryRunSkipReason(error),
-      strategy,
-      symbol: normalizedSymbol,
-      usedDteFallback,
     };
   }
 
@@ -495,27 +403,10 @@ export async function seedSymbol(
   );
 
   return {
-    accountNumber: resolvedAccountNumber,
-    askPrice,
-    bidPrice,
-    buyingPowerAvailable,
-    candidateSymbol,
-    dte: candidateDte,
+    ...costResult,
     dryRunResponse,
-    estimatedOrderCost,
-    limitPrice: numericLimitPrice,
-    maxDTE,
-    midPrice,
-    minDTE,
-    priceMode,
-    preferredDTE,
-    quoteSymbol,
     orderResponse,
     placedOrder: true,
-    side,
-    strategy,
-    symbol: normalizedSymbol,
-    usedDteFallback,
     usedHeldContractFallback: explicitContract ? true : undefined,
   };
 }
