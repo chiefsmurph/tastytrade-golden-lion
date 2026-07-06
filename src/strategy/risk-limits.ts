@@ -1,3 +1,5 @@
+import { readEnvInt, readEnvPct } from "~/core/env-utils";
+
 function parseEnvFraction(key: string, fallback: number): number {
   const raw = process.env[key];
   if (!raw) return fallback;
@@ -17,6 +19,30 @@ export function getMaxBuyExposurePctForAccountType(
   accountType: "margin" | "cash",
 ): number {
   return accountType === "margin" ? getMarginMaxBuyExposurePct() : getCashMaxBuyExposurePct();
+}
+
+// Absolute per-underlying accumulation ceilings (IMPROVEMENTS.v8 #4). The
+// buy-position multiple caps each add relative to the group's *current* value,
+// so a fast series of adds compounds (3x of an ever-growing base reached a
+// 15-lot WEN position in ~70 minutes on 2026-07-06). These cap the TOTAL a
+// group may reach. Both are stateless — headroom is recomputed every cycle
+// from live broker positions — so an intraday restart cannot reset them.
+// Off (Infinity) when unset, blank, zero, or invalid.
+
+/** Max option contracts held per position group (`UNDERLYING::side`). */
+export function getMaxUnderlyingContracts(): number {
+  const parsed = readEnvInt("STRATEGY_MAX_UNDERLYING_CONTRACTS", 0);
+  return parsed > 0 ? parsed : Infinity;
+}
+
+/**
+ * Max market value in dollars per position group, measured the way the
+ * exposure caps measure it: current bid × quantity × multiplier
+ * (see `getGroupMarketValue`).
+ */
+export function getMaxUnderlyingNotional(): number {
+  const parsed = readEnvPct("STRATEGY_MAX_UNDERLYING_NOTIONAL", 0);
+  return parsed > 0 ? parsed : Infinity;
 }
 
 // Dip-responsive target boost for margin: press a dip harder by raising the
