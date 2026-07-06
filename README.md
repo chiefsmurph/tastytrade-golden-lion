@@ -141,6 +141,9 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 ### Strategy: Position Sizing and Exposure
 
 - `STRATEGY_MAX_OPTION_SPREAD_PCT` — Maximum bid/ask spread as a fraction of the midpoint. Defaults to `0.3`.
+- `STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT` — Margin-only entry (buy-side) spread ceiling as a fraction of the midpoint. Defaults to the `STRATEGY_MAX_OPTION_SPREAD_PCT` value, so behavior is unchanged until set. Set it tighter than the shared gate (e.g. `0.10`) because margin must flatten by EOD and pays the spread on both entry and the forced exit; cash keeps using the shared gate.
+- `STRATEGY_MIN_OPEN_INTEREST` — Minimum open interest on the requested side for a new-entry candidate. Defaults to `0` (disabled). Unknown/missing open interest always passes with a `liquidity-gate` log note — missing data is never treated as zero liquidity.
+- `STRATEGY_PHANTOM_QUOTE_GUARD_ENABLED` — Set to `true` to distrust a candidate's spread-gate pass for the cycle when its quote shows an explicit zero bid or ask size during market hours (the quoted price has no depth behind it). Defaults to `false`; phantom detection is still logged on every `liquidity-gate` line, and missing/unknown sizes never trigger the guard.
 - `STRATEGY_MARGIN_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one margin allocation action. Defaults to `0.12`.
 - `STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT` — Maximum fraction of total capital used for one cash allocation action. Defaults to `0.05`.
 - `STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT` — Maximum boost to a margin group's target exposure as its ask loss deepens from `2%` to `12%`, applied only while boolean signals stay good (`>= 4`). Unset disables the boost.

@@ -14,7 +14,11 @@ import {
   getMarginTargetCallDelta,
   TopOptionCandidateForSymbolResult,
 } from "~/strategy/option-candidate";
-import { getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
+import {
+  evaluateLiquidityGate,
+  getMaxEntrySpreadPctForAccountType,
+  logLiquidityGateDecision,
+} from "~/strategy/liquidity-gate";
 import {
   getGroupMarketValue,
   getMidpointPrice,
@@ -512,13 +516,39 @@ export function getHeldContractFallbackCandidate(
   }
 
   const spreadPct = (ask - bid) / ((ask + bid) / 2);
-  const maxAllowedSpreadPct = getMaxOptionSpreadPctForTime(currentTime);
+  const maxAllowedSpreadPct = getMaxEntrySpreadPctForAccountType(
+    accountMarginOrCash,
+    currentTime,
+  );
 
-  if (spreadPct > maxAllowedSpreadPct) {
+  // Held-contract adds are entries too, so they face the same account-aware
+  // gate. Open interest and quote sizes aren't available from position
+  // snapshots, so those checks degrade gracefully (pass + missing-field note).
+  const liquidityGate = evaluateLiquidityGate({
+    accountType: accountMarginOrCash,
+    askSize: undefined,
+    bidSize: undefined,
+    currentTime,
+    maxAllowedSpreadPct,
+    openInterest: undefined,
+    spreadPct,
+  });
+  logLiquidityGateDecision(
+    {
+      candidateSymbol: symbol,
+      source: "held-contract-fallback",
+      underlyingSymbol: evaluation.underlyingSymbol,
+    },
+    liquidityGate,
+  );
+
+  if (!liquidityGate.passed) {
     return {
       dte,
       spreadPct,
-      skippedReason: `held contract spread ${(spreadPct * 100).toFixed(2)}% exceeds ${(maxAllowedSpreadPct * 100).toFixed(2)}% max`,
+      skippedReason: liquidityGate.failedChecks.includes("spread")
+        ? `held contract spread ${(spreadPct * 100).toFixed(2)}% exceeds ${(maxAllowedSpreadPct * 100).toFixed(2)}% max`
+        : `held contract blocked by the entry liquidity gate (${liquidityGate.failedChecks.join(", ")})`,
     };
   }
 
@@ -656,13 +686,19 @@ export async function manageAllocationForGroup(
   }
 
   const accountMarginOrCash = await getAccountType(accountNumber);
+  // accountType drives the entry liquidity gate during selection: margin gets
+  // its (potentially tighter) entry-spread ceiling, cash keeps the shared gate.
   let candidate = await getTopCandidate(
     evaluation.underlyingSymbol,
     optionSide,
     targets.targetDTE,
     accountMarginOrCash === "margin"
-      ? { strikeTarget: "otm", targetDelta: getMarginTargetCallDelta() }
-      : undefined,
+      ? {
+          accountType: accountMarginOrCash,
+          strikeTarget: "otm",
+          targetDelta: getMarginTargetCallDelta(),
+        }
+      : { accountType: accountMarginOrCash },
   );
   let usedHeldContractFallback = false;
 
