@@ -87,8 +87,8 @@ export async function purchaseSymbol(
     side,
     undefined,
     accountType === "margin"
-      ? { strikeTarget: "otm", targetDelta: getMarginTargetCallDelta() }
-      : undefined,
+      ? { accountType, strikeTarget: "otm", targetDelta: getMarginTargetCallDelta() }
+      : { accountType },
   );
   const candidateSymbol =
     candidate?.symbol ?? (side === "put" ? candidate?.put : candidate?.call);

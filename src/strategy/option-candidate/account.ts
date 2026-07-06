@@ -11,9 +11,11 @@ export const CASH_ACCOUNT_SEED_MAX_DTE = 30;
 export function getSeedSelectionOptionsForAccountType(
   accountType: "margin" | "cash" | "unknown",
 ): OptionCandidateSelectionOptions {
+  // accountType rides along so candidate selection applies the account-aware
+  // entry liquidity gate (see ~/strategy/liquidity-gate).
   return accountType === "cash"
-    ? { minDTE: CASH_ACCOUNT_SEED_MIN_DTE, maxDTE: CASH_ACCOUNT_SEED_MAX_DTE }
-    : { strikeTarget: "otm" as const, targetDelta: getMarginTargetCallDelta() };
+    ? { accountType, minDTE: CASH_ACCOUNT_SEED_MIN_DTE, maxDTE: CASH_ACCOUNT_SEED_MAX_DTE }
+    : { accountType, strikeTarget: "otm" as const, targetDelta: getMarginTargetCallDelta() };
 }
 
 export async function getTopOptionCandidateForAccount(

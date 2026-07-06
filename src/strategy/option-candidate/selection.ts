@@ -14,7 +14,14 @@ import {
 import { getOptionMarketSnapshot, OptionChainWithVolume } from "~/core/market-snapshot";
 import { TopOptionCandidateForSymbolResult } from "./types";
 
-import { getMarginTargetCallDelta, getMinIvRankPct, getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
+import { getMarginTargetCallDelta, getMinIvRankPct } from "~/strategy/entry-filters";
+import {
+  EntryAccountType,
+  evaluateLiquidityGate,
+  getMaxEntrySpreadPctForAccountType,
+  LiquidityGateCheck,
+  logLiquidityGateDecision,
+} from "~/strategy/liquidity-gate";
 
 export { getMarginTargetCallDelta };
 
@@ -150,9 +157,12 @@ export async function buildTopOptionCandidateResult(
   underlyingPrice: number,
   targetDTE?: number,
   selectionOptions?: OptionCandidateSelectionOptions,
+  currentTime?: Date,
 ): Promise<TopOptionCandidateForSymbolResult | undefined> {
   const { defaultSelection, preferredDTE, resolvedSelectionOptions } =
     getResolvedSelectionOptions(targetDTE, selectionOptions);
+  const accountType: EntryAccountType = selectionOptions?.accountType ?? "unknown";
+  const now = currentTime ?? new Date();
   const { usedDteFallback } = resolveCandidateExpirations(
     optionChain,
     resolvedSelectionOptions,
@@ -188,7 +198,10 @@ export async function buildTopOptionCandidateResult(
     return bVolume - aVolume;
   });
 
-  const maxAllowedSpreadPct = getMaxOptionSpreadPctForTime(new Date());
+  // Account-aware entry ceiling: margin may run tighter than the shared gate
+  // because it must exit by EOD (see ~/strategy/liquidity-gate). Defaults keep
+  // margin == shared, so this is behavior-neutral until opted in.
+  const maxAllowedSpreadPct = getMaxEntrySpreadPctForAccountType(accountType, now);
 
   // The loop below early-returns on the first spread-passing candidate, so the
   // alternatives never surface anywhere. Their volume/OI/greeks are already in
@@ -215,7 +228,8 @@ export async function buildTopOptionCandidateResult(
     }),
   );
 
-  let fallbackWideSpreadCandidate: TopOptionCandidateForSymbolResult | undefined;
+  let fallbackBlockedCandidate: TopOptionCandidateForSymbolResult | undefined;
+  const blockedCheckKinds = new Set<LiquidityGateCheck>();
 
   for (const candidate of sortedCandidates) {
     const normalizedCandidate = normalizeCandidateForRequestedSide(candidate, side);
@@ -230,7 +244,6 @@ export async function buildTopOptionCandidateResult(
       2000,
     );
     const spreadStats = getSpreadStats(bidAsk?.bid ?? 0, bidAsk?.ask ?? 0);
-    const meetsSpreadRequirement = spreadStats.spreadPct <= maxAllowedSpreadPct;
 
     const candidateIvx =
       side === "call" ? (candidate.callIv ?? undefined) : (candidate.putIv ?? undefined);
@@ -238,6 +251,30 @@ export async function buildTopOptionCandidateResult(
       side === "call"
         ? (candidate.callOpenInterest ?? undefined)
         : (candidate.putOpenInterest ?? undefined);
+    const candidateDayVolume = getOptionCandidateVolume(candidate, side);
+
+    // Entry liquidity gate (step 2): spread vs the account-aware ceiling, the
+    // open-interest floor, and the phantom-quote guard. Unknown fields pass
+    // with a note — never treated as zero-liquidity.
+    const liquidityGate = evaluateLiquidityGate({
+      accountType,
+      askSize: bidAsk?.askSize,
+      bidSize: bidAsk?.bidSize,
+      currentTime: now,
+      dayVolume: candidateDayVolume,
+      maxAllowedSpreadPct,
+      openInterest: candidateOpenInterest,
+      spreadPct: spreadStats.spreadPct,
+    });
+    logLiquidityGateDecision(
+      {
+        candidateSymbol: normalizedCandidate.symbol ?? quoteLookupSymbol,
+        side,
+        source: "chain-candidate",
+        underlyingSymbol: symbol,
+      },
+      liquidityGate,
+    );
 
     const candidateResult: TopOptionCandidateForSymbolResult = {
       ...normalizedCandidate,
@@ -245,10 +282,10 @@ export async function buildTopOptionCandidateResult(
       askSize: bidAsk?.askSize,
       bidSize: bidAsk?.bidSize,
       openInterest: candidateOpenInterest,
-      dayVolume: getOptionCandidateVolume(candidate, side),
+      dayVolume: candidateDayVolume,
       ivx: candidateIvx,
       maxAllowedSpreadPct,
-      meetsSpreadRequirement,
+      meetsSpreadRequirement: liquidityGate.meetsSpreadRequirement,
       quoteSymbol:
         normalizedCandidate.streamerSymbol === quoteLookupSymbol
           ? undefined
@@ -257,22 +294,29 @@ export async function buildTopOptionCandidateResult(
       usedDteFallback,
     };
 
-    if (meetsSpreadRequirement) {
+    if (liquidityGate.passed) {
       const sanitizedResult = sanitizeTopCandidateResponse(candidateResult);
       console.log(`Top option candidate for ${symbol}:`, sanitizedResult);
       return sanitizedResult;
     }
 
-    if (!fallbackWideSpreadCandidate) {
-      fallbackWideSpreadCandidate = candidateResult;
+    for (const failedCheck of liquidityGate.failedChecks) {
+      blockedCheckKinds.add(failedCheck);
+    }
+    if (!fallbackBlockedCandidate) {
+      fallbackBlockedCandidate = candidateResult;
     }
   }
 
-  if (fallbackWideSpreadCandidate) {
+  if (fallbackBlockedCandidate) {
+    const blockedKinds = [...blockedCheckKinds];
+    const spreadOnly = blockedKinds.length === 1 && blockedKinds[0] === "spread";
     return sanitizeTopCandidateResponse({
-      ...fallbackWideSpreadCandidate,
+      ...fallbackBlockedCandidate,
       symbol: undefined,
-      skippedReason: `all candidate spreads exceeded max allowed spread (${(maxAllowedSpreadPct * 100).toFixed(2)}%)`,
+      skippedReason: spreadOnly
+        ? `all candidate spreads exceeded max allowed spread (${(maxAllowedSpreadPct * 100).toFixed(2)}%)`
+        : `all candidates blocked by the entry liquidity gate (${blockedKinds.join(", ")})`,
     });
   }
 
