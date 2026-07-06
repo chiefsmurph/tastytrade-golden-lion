@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { io } from "socket.io-client";
+import { readEnvInt } from "~/core/env-utils";
 import {
   isAnySecretAutoSeedEnabled,
   maybeAutoSeedFromSecretPositions,
@@ -97,25 +98,17 @@ export function getSecretPositionsSourceKey(): string | null {
   return configured && configured.length > 0 ? configured : null;
 }
 
-export function getSecretSocketTimeoutMs(): number | null {
-  const raw = process.env.SECRET_SOCKET_TIMEOUT_MS?.trim();
-  if (!raw) {
-    return null;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return null;
-  }
-
-  return parsed;
+// A present-but-blank (or invalid) SECRET_SOCKET_TIMEOUT_MS falls back to the
+// in-code default rather than returning null. Returning null used to make
+// isSecretSocketConfigured() false, silently disabling the entire secret module
+// even when the URL and source key were set (see .env.example default = 5000).
+export function getSecretSocketTimeoutMs(): number {
+  return readEnvInt("SECRET_SOCKET_TIMEOUT_MS", 5000, (n) => n > 0);
 }
 
 function isSecretSocketConfigured(): boolean {
   const socketUrl = process.env.SECRET_SOCKET_URL?.trim();
-  const timeoutMs = getSecretSocketTimeoutMs();
-
-  return Boolean(socketUrl) && timeoutMs != null;
+  return Boolean(socketUrl);
 }
 
 function isSecretModuleConfigured(): boolean {
@@ -173,7 +166,7 @@ export function startSecretSocketConnection(): void {
 
   const socketUrl = process.env.SECRET_SOCKET_URL?.trim();
   const timeoutMs = getSecretSocketTimeoutMs();
-  if (!socketUrl || timeoutMs == null) {
+  if (!socketUrl) {
     return;
   }
 
