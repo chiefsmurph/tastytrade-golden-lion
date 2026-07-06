@@ -18,6 +18,11 @@ import { ProgrammaticAction } from "~/strategy/evaluate-trading-strategy";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 import { describeEffectiveBuyingPowerLimit, getEffectiveBuyingPowerSummary } from "./effective-buying-power";
 import { BOT_ORDER_SOURCE } from "./order-sources";
+import {
+  getClosingOnlyRetryAt,
+  isClosingOnlyDryRunError,
+  recordClosingOnly,
+} from "./closing-only-cache";
 
 
 export interface SeedSymbolOptions {
@@ -266,6 +271,20 @@ export async function seedSymbol(
   const resolvedAccountNumber = resolvedSeedAccount.accountNumber;
   const resolvedAccountType = await getAccountMarginOrCash(resolvedAccountNumber);
 
+  // If the broker recently rejected this underlying as closing-only, skip the
+  // whole selection + pricing + dry-run round trip until the retry window
+  // elapses. The window is short enough that an intraday un-block is retried.
+  const closingOnlyRetryAt = getClosingOnlyRetryAt(normalizedSymbol);
+  if (closingOnlyRetryAt != null) {
+    return {
+      accountNumber: resolvedAccountNumber,
+      placedOrder: false,
+      side,
+      skippedReason: `underlying set to closing-only by broker; retrying after ${new Date(closingOnlyRetryAt).toISOString()}`,
+      symbol: normalizedSymbol,
+    };
+  }
+
   if (await hasOpenUnderlyingPosition(resolvedAccountNumber, normalizedSymbol)) {
     return {
       accountNumber: resolvedAccountNumber,
@@ -469,6 +488,11 @@ export async function seedSymbol(
       order,
     );
   } catch (error) {
+    // Cache closing-only rejections so subsequent seeds short-circuit before
+    // re-doing selection + pricing + a doomed dry-run until the retry window.
+    if (isClosingOnlyDryRunError(error)) {
+      recordClosingOnly(normalizedSymbol);
+    }
     return {
       ...costResult,
       dryRunResponse:
