@@ -70,6 +70,34 @@ test("getTimeOfDayExecutionTargets boundary at 12:30 is fully risk-off", () => {
   assert.equal(targets.askWeight, 0);
 });
 
+test("blank DTE env vars fall back to default 7 instead of producing NaN", () => {
+  // Regression: a present-but-blank `STRATEGY_*_TARGET_DTE=` in .env used to
+  // parseInt("") -> NaN, which Math.min/max propagated into `Target DTE: NaN`.
+  const marginKey = "STRATEGY_MARGIN_MAX_TARGET_DTE";
+  const cashKey = "STRATEGY_CASH_MIN_TARGET_DTE";
+  const prevMargin = process.env[marginKey];
+  const prevCash = process.env[cashKey];
+  try {
+    for (const blank of ["", "   ", "seven"]) {
+      process.env[marginKey] = blank;
+      process.env[cashKey] = blank;
+
+      const margin = getTimeOfDayExecutionTargetsForPstTime("11:00", "margin");
+      const cash = getTimeOfDayExecutionTargetsForPstTime("11:00", "cash");
+
+      assert.ok(Number.isFinite(margin.targetDTE), `margin NaN for ${JSON.stringify(blank)}`);
+      assert.ok(Number.isFinite(cash.targetDTE), `cash NaN for ${JSON.stringify(blank)}`);
+      assert.equal(margin.targetDTE, 7);
+      assert.equal(cash.targetDTE, 14);
+    }
+  } finally {
+    if (prevMargin === undefined) delete process.env[marginKey];
+    else process.env[marginKey] = prevMargin;
+    if (prevCash === undefined) delete process.env[cashKey];
+    else process.env[cashKey] = prevCash;
+  }
+});
+
 test("getTimeOfDayExecutionTargets keeps cash accounts active at 12:30", () => {
   const targets = getTimeOfDayExecutionTargetsForPstTime("12:30", "cash");
 

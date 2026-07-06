@@ -1,6 +1,7 @@
 export type ProgrammaticAction = "MANAGE_ALLOCATION" | "CLOSE_POSITION";
 import type { PositionGateResult } from "./position-gate";
 import { EOD_ARMED_MINUTE } from "./spread-thresholds";
+import { readEnvInt } from "~/core/env-utils";
 
 // Unified return structure containing target state goals for the execution loop
 export interface ExecutionStrategy {
@@ -237,8 +238,8 @@ function getTimeOfDayExecutionTargetsForMinute(
   const ELEVEN_THIRTY_AM   = 11 * 60 + 30;
   const noBuyCutoffMinute = getNoBuyCutoffMinute(accountType);
 
-  const marginMaxDTE = parseInt(process.env.STRATEGY_MARGIN_MAX_TARGET_DTE ?? "7", 10);
-  const cashMinDTE   = parseInt(process.env.STRATEGY_CASH_MIN_TARGET_DTE ?? "7", 10);
+  const marginMaxDTE = readEnvInt("STRATEGY_MARGIN_MAX_TARGET_DTE", 7, (n) => n > 0);
+  const cashMinDTE   = readEnvInt("STRATEGY_CASH_MIN_TARGET_DTE", 7, (n) => n > 0);
 
   const rawTargetDTE = Math.round(
     blendBySchedule(timeInMinutes, [
