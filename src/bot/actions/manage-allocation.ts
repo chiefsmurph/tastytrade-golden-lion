@@ -16,6 +16,7 @@ import {
 } from "~/strategy/option-candidate";
 import { getMaxOptionSpreadPctForTime } from "~/strategy/entry-filters";
 import {
+  getGroupContractCount,
   getGroupMarketValue,
   getMidpointPrice,
   getOccExpirationDate,
@@ -26,7 +27,11 @@ import {
   waitForOrderFillById,
 } from "./order-utils";
 import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
-import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
+import {
+  getMaxBuyExposurePctForAccountType,
+  getMaxUnderlyingContracts,
+  getMaxUnderlyingNotional,
+} from "~/strategy/risk-limits";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
 
 
@@ -181,6 +186,63 @@ export function allocateContractsByWeight(
     nextTarget.routeOrder.quantity += 1;
     nextTarget.routeOrder.estimatedOrderValue += nextTarget.contractCost;
     remainingCapital -= nextTarget.contractCost;
+  }
+
+  return routeOrders;
+}
+
+// The route to give up the next contract: the one holding the most (ties:
+// lowest weight), so trimming keeps the executed mix close to the configured
+// weights. Ignores routes already at zero.
+function pickTrimTarget(
+  routeOrders: AllocationRouteResult[],
+): AllocationRouteResult | undefined {
+  let trimTarget: AllocationRouteResult | undefined;
+  for (const routeOrder of routeOrders) {
+    if (routeOrder.quantity <= 0) {
+      continue;
+    }
+    if (
+      !trimTarget ||
+      routeOrder.quantity > trimTarget.quantity ||
+      (routeOrder.quantity === trimTarget.quantity &&
+        routeOrder.weight < trimTarget.weight)
+    ) {
+      trimTarget = routeOrder;
+    }
+  }
+  return trimTarget;
+}
+
+// Trim sized route orders so their combined quantity never exceeds
+// maxTotalQuantity, removing one contract at a time via pickTrimTarget.
+// estimatedOrderValue is recomputed for trimmed routes. No-op when
+// maxTotalQuantity is Infinity (cap unset) or already satisfied.
+export function clampRouteOrdersToMaxTotalQuantity(
+  routeOrders: AllocationRouteResult[],
+  maxTotalQuantity: number,
+): AllocationRouteResult[] {
+  if (!Number.isFinite(maxTotalQuantity)) {
+    return routeOrders;
+  }
+
+  const maxQuantity = Math.max(0, Math.floor(maxTotalQuantity));
+  let totalQuantity = routeOrders.reduce(
+    (sum, routeOrder) => sum + routeOrder.quantity,
+    0,
+  );
+
+  while (totalQuantity > maxQuantity) {
+    const trimTarget = pickTrimTarget(routeOrders);
+    if (!trimTarget) {
+      // Defensive: total > max implies a positive-quantity route exists.
+      break;
+    }
+
+    trimTarget.quantity -= 1;
+    trimTarget.estimatedOrderValue =
+      trimTarget.quantity * trimTarget.limitPrice * 100;
+    totalQuantity -= 1;
   }
 
   return routeOrders;
@@ -626,6 +688,48 @@ export async function manageAllocationForGroup(
     return skip({ skippedReason: "no remaining exposure or buying power" });
   }
 
+  // Absolute per-underlying accumulation ceilings (IMPROVEMENTS.v8 #4): bound
+  // the TOTAL a group may reach, on top of the per-action caps below. The
+  // buy-position multiple alone compounds — it re-reads current value every
+  // cycle, so a fast series of "small" adds grew a 15-lot WEN position in ~70
+  // minutes on 2026-07-06. Headroom derives only from live broker positions
+  // (stateless), so an intraday restart cannot re-open accumulation.
+  const maxUnderlyingContracts = getMaxUnderlyingContracts();
+  const maxUnderlyingNotional = getMaxUnderlyingNotional();
+  const heldContracts = getGroupContractCount(evaluation.positionSnapshots);
+  const groupMarketValue = getGroupMarketValue(evaluation.positionSnapshots);
+  const underlyingContractsHeadroom = Number.isFinite(maxUnderlyingContracts)
+    ? Math.max(0, maxUnderlyingContracts - heldContracts)
+    : Infinity;
+  const underlyingNotionalHeadroom = Number.isFinite(maxUnderlyingNotional)
+    ? Math.max(0, maxUnderlyingNotional - groupMarketValue)
+    : Infinity;
+
+  if (underlyingContractsHeadroom < 1 || underlyingNotionalHeadroom <= 0) {
+    console.log(
+      JSON.stringify({
+        scope: "allocation-underlying-cap",
+        action: "skip",
+        accountNumber,
+        underlyingSymbol: evaluation.underlyingSymbol,
+        heldContracts,
+        maxUnderlyingContracts: Number.isFinite(maxUnderlyingContracts)
+          ? maxUnderlyingContracts
+          : null,
+        groupMarketValue: Number(groupMarketValue.toFixed(2)),
+        maxUnderlyingNotional: Number.isFinite(maxUnderlyingNotional)
+          ? maxUnderlyingNotional
+          : null,
+      }),
+    );
+    return skip({
+      skippedReason:
+        underlyingContractsHeadroom < 1
+          ? `underlying contract cap reached (holding ${heldContracts} >= max ${maxUnderlyingContracts})`
+          : `underlying notional cap reached (position value $${groupMarketValue.toFixed(2)} >= max $${maxUnderlyingNotional.toFixed(2)})`,
+    });
+  }
+
   const optionSide = getCandidateSide(evaluation);
   const healthResult = await getOptionHealth(
     evaluation.underlyingSymbol,
@@ -728,17 +832,74 @@ export async function manageAllocationForGroup(
   let ask = bidAsk?.ask ?? bid;
   const buyPositionMultiple = getMaxAllocationBuyPositionMultiple();
   const positionValueBuyCap = Number.isFinite(buyPositionMultiple)
-    ? getGroupMarketValue(evaluation.positionSnapshots) * buyPositionMultiple
+    ? groupMarketValue * buyPositionMultiple
     : Infinity;
-  const availableCapital = Math.min(
+  const availableCapitalBeforeUnderlyingCap = Math.min(
     Math.max(0, perGroupExposureHeadroom),
     Math.max(0, perGroupMaxBuyAmount),
     budget.buyingPowerRemaining,
     positionValueBuyCap,
   );
-  let routeOrders = allocateContractsByWeight(
-    buildRouteOrders(bid, ask, targets),
-    availableCapital,
+  // The notional ceiling bounds the group's TOTAL value (held + this add), so
+  // the spend allowance is the remaining headroom under it.
+  const availableCapital = Math.min(
+    availableCapitalBeforeUnderlyingCap,
+    underlyingNotionalHeadroom,
+  );
+  if (availableCapital < availableCapitalBeforeUnderlyingCap) {
+    console.log(
+      JSON.stringify({
+        scope: "allocation-underlying-cap",
+        action: "clamp-capital",
+        accountNumber,
+        underlyingSymbol: evaluation.underlyingSymbol,
+        availableCapitalBeforeCap: Number(
+          availableCapitalBeforeUnderlyingCap.toFixed(2),
+        ),
+        availableCapital: Number(availableCapital.toFixed(2)),
+        groupMarketValue: Number(groupMarketValue.toFixed(2)),
+        maxUnderlyingNotional,
+      }),
+    );
+  }
+
+  // Trims sized route orders to the contract-cap headroom, logging when the
+  // cap (not the budget) was the binding constraint. Applied to both the chain
+  // pick and the held-contract fallback sizing.
+  const applyUnderlyingContractCap = (
+    sizedRouteOrders: AllocationRouteResult[],
+  ): AllocationRouteResult[] => {
+    const requestedQuantity = sizedRouteOrders.reduce(
+      (sum, routeOrder) => sum + routeOrder.quantity,
+      0,
+    );
+    const clampedRouteOrders = clampRouteOrdersToMaxTotalQuantity(
+      sizedRouteOrders,
+      underlyingContractsHeadroom,
+    );
+    const clampedQuantity = clampedRouteOrders.reduce(
+      (sum, routeOrder) => sum + routeOrder.quantity,
+      0,
+    );
+    if (clampedQuantity < requestedQuantity) {
+      console.log(
+        JSON.stringify({
+          scope: "allocation-underlying-cap",
+          action: "clamp-quantity",
+          accountNumber,
+          underlyingSymbol: evaluation.underlyingSymbol,
+          requestedQuantity,
+          clampedQuantity,
+          heldContracts,
+          maxUnderlyingContracts,
+        }),
+      );
+    }
+    return clampedRouteOrders;
+  };
+
+  let routeOrders = applyUnderlyingContractCap(
+    allocateContractsByWeight(buildRouteOrders(bid, ask, targets), availableCapital),
   );
 
   if (routeOrders.length === 0) {
@@ -769,9 +930,11 @@ export async function manageAllocationForGroup(
       );
       const heldBid = heldBidAsk?.bid ?? heldFallback.bidPrice ?? 0;
       const heldAsk = heldBidAsk?.ask ?? heldFallback.askPrice ?? heldBid;
-      const heldRouteOrders = allocateContractsByWeight(
-        buildRouteOrders(heldBid, heldAsk, targets),
-        availableCapital,
+      const heldRouteOrders = applyUnderlyingContractCap(
+        allocateContractsByWeight(
+          buildRouteOrders(heldBid, heldAsk, targets),
+          availableCapital,
+        ),
       );
       const heldQuantity = heldRouteOrders.reduce(
         (sum, routeOrder) => sum + routeOrder.quantity,
