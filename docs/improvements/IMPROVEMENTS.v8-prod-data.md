@@ -1,8 +1,8 @@
 # Improvements v8 — First production-data pass
 
-> **Discovery log (2026-07-06).** Source material: the first full trading day run against the verified Monday build (`27037be`), analyzed in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md). Unlike v1–v7 (code-reading passes), **every item here is backed by production evidence** — a dollar cost, a log count, or an observed ledger row — not a hypothesized failure. Cross-checked against STATUS.md and v1–v7; adjacencies are stated. Several items *promote* an already-catalogued item from "hypothesis" to "confirmed with a cost."
+> **Discovery log (2026-07-06).** Source material: the first full trading day run against the verified Monday build (`27037be`), analyzed in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md). Unlike v1–v7 (code-reading passes), **every item here is backed by production evidence** — a P&L cost, a log count, or an observed ledger row — not a hypothesized failure. Cross-checked against STATUS.md and v1–v7; adjacencies are stated. Several items *promote* an already-catalogued item from "hypothesis" to "confirmed with a cost."
 >
-> The day in one line: net **−$131.59** (margin −$169.59 / cash +$38.00), the whole tradeable day was **WEN** in both accounts, and the margin loss was a single 15-lot WEN position stopped out at EOD into an 18%-wide bid.
+> The day in one line: **net negative** (margin red / cash green), the whole tradeable day was **WEN** in both accounts, and the margin loss was a single 15-lot WEN position stopped out at EOD into an 18%-wide bid.
 
 ---
 
@@ -12,7 +12,7 @@
 
 **File:** [src/strategy/entry-filters.ts](src/strategy/entry-filters.ts), [src/strategy/option-candidate/selection.ts](src/strategy/option-candidate/selection.ts)
 
-WEN cleared the 20% `STRATEGY_MAX_OPTION_SPREAD_PCT` gate at ~18% spread. All day its **ask sat +1% to +7% while its bid ran −9% to −18%** — pure spread, not a move. The −10% post-cutoff *bid* stop then force-sold 15 lots into that bid at EOD for **−$160.86**. An 18%-spread name is stopped the moment the spread alone exceeds the stop threshold; the entry gate and the stop floor are coupled (30% entry vs −30% bid stop is the general form). Today put a dollar figure on it.
+WEN cleared the 20% `STRATEGY_MAX_OPTION_SPREAD_PCT` gate at ~18% spread. All day its **ask sat +1% to +7% while its bid ran −9% to −18%** — pure spread, not a move. The −10% post-cutoff *bid* stop then force-sold 15 lots into that bid at EOD at **≈ −22% realized**. An 18%-spread name is stopped the moment the spread alone exceeds the stop threshold; the entry gate and the stop floor are coupled (30% entry vs −30% bid stop is the general form). Today put a number on it.
 
 **Fix direction:** a tighter buy-side spread threshold (distinct from the close-side), and/or gate entries on the now-live liquidity data — WEN's chosen contracts showed `dayVolume` as low as **4–20** and `askSize` as low as **1**. This is exactly the step-2 floor gate below.
 
@@ -48,7 +48,7 @@ The step-1 liquidity logging (shipped for Monday) worked cleanly — 44 `manage-
 
 **File:** [src/bot/actions/manage-allocation.ts](src/bot/actions/manage-allocation.ts)
 
-`STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE=3` caps each add at 3× *current* position value. Because it re-reads current value each cycle, adds compound (2→6→18…): margin went from a first small WEN add (~11:22) to **15 contracts by 12:30**. The multiple made the *first* add small, as intended, but did not bound the *total* — and the total is what got stopped out for −$160. (WEN dipped rather than ripped, so the multiple's intended cost case — Q6 — didn't apply; this is the opposite failure.)
+`STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE=3` caps each add at 3× *current* position value. Because it re-reads current value each cycle, adds compound (2→6→18…): margin went from a first small WEN add (~11:22) to **15 contracts by 12:30**. The multiple made the *first* add small, as intended, but did not bound the *total* — and the total is what got stopped out at ≈ −22%. (WEN dipped rather than ripped, so the multiple's intended cost case — Q6 — didn't apply; this is the opposite failure.)
 
 **Fix direction:** consider anchoring the multiple to a session-start baseline, or adding an absolute per-underlying contract/notional cap, so a fast series of "small" adds can't compound into an oversized lot in one name.
 
@@ -179,5 +179,5 @@ Every ledger row has `entrySpreadPct: null` and `gateScoreAtEntry: null`. The cl
 13 items, all evidence-backed. Suggested priority for the STATUS.md AFTER-MONDAY bucket:
 
 - **Now (don't wait for the review):** #6 dxLink session hygiene, #11 registry leak (correctness).
-- **Next (this week):** #2 liquidity floors + #1 tighter entry spread (the −$160 lesson), #10 pull-script, #8 notify breadcrumb, #9 close taxonomy.
+- **Next (this week):** #2 liquidity floors + #1 tighter entry spread (the WEN lesson), #10 pull-script, #8 notify breadcrumb, #9 close taxonomy.
 - **Tune with more data:** #3 dip-boost metric, #4 alloc-multiple bound, #5 concentration backstop, #13 entry enrichment (enables the attribution), #12 day-report decision, #7 streamer reconnect.

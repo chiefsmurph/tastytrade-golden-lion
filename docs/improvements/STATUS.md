@@ -90,7 +90,7 @@ Rationale: landing the log-only diagnostics before Monday means Monday's run cap
 > **Monday (v8) delivered the data — see the annotations below and [IMPROVEMENTS.v8-prod-data.md](IMPROVEMENTS.v8-prod-data.md).**
 - **Unsignalled base tier vs no-trade** — the "target exposure is zero" #1-skip decision; verify it collapses now that the crash loop is fixed before building anything. (v3, v4 #1) **→ Monday: collapsed to ~3% margin / ~10% cash (was 35% / 78%); residual is cold-cache morning noise, not a base-tier gap. Don't build yet; re-check once the dxLink loop (v8 #6) is fixed.**
 - **Seed IV-fallback bars (50/70)** — MARA read 35; may be unreachable. (v4 #3 followup) **→ Monday: no new evidence — ranks in play were 42–83, booleans weren't dark.**
-- **Liquidity gating steps 2–3** — OI floor + phantom-quote guard, then liquidity score + size-aware chasing; thresholds from step-1 logs. (v4 #4) **→ Monday: step-1 data confirmed flowing (real sizes/vol/OI); WEN's 18% spread + vol 4–20 cost −$160 — this is the go-signal. See v8 #2.**
+- **Liquidity gating steps 2–3** — OI floor + phantom-quote guard, then liquidity score + size-aware chasing; thresholds from step-1 logs. (v4 #4) **→ Monday: step-1 data confirmed flowing (real sizes/vol/OI); WEN's 18% spread + vol 4–20 cost the day's loss — this is the go-signal. See v8 #2.**
 - **Dip-boost ≥4 vs ≥7 boolean bar.** (open tuning Q) **→ Monday: moot until the trigger metric is fixed — the boost reads *ask*-return and is blind to bid-side spread pain; never fired despite booleans=6. See v8 #3.**
 
 ### Behavior-changing strategy work (build any time, deploy after Monday clears)
@@ -174,14 +174,14 @@ Strategy/profitability:
 
 ### New in v8 (2026-07-06 first production-data pass — see [IMPROVEMENTS.v8-prod-data.md](IMPROVEMENTS.v8-prod-data.md))
 
-Every item is evidence-backed by the verified Monday session (net −$131.59; all-WEN day; full writeup in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md)). Priority: **#6 (dxLink) and #11 (registry leak) should NOT wait for the 1–2-week review.**
+Every item is evidence-backed by the verified Monday session (net negative; all-WEN day; full writeup in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md)). Priority: **#6 (dxLink) and #11 (registry leak) should NOT wait for the 1–2-week review.**
 
 Infra/reliability:
 - **dxLink session-limit restart loop** *(fable)* — 23 restarts from `UNAUTHORIZED: number of user sessions exceeded limit` (login U0001058779); self-reinforcing (a restart orphans a session before it expires). Tear down the streamer session on SIGTERM + find any 2nd consumer of the login. The 07-06 analog of the 07-02 restart storm — same symptom, new root cause; backoff kept the 06:30→10:24 prime window clean. **Top priority.** `src/core/quote-streamer-recovery.ts`. (v8 #6)
 - **Streamer fault → process-restart amplifies the fault** — for connectivity faults, attempt in-process reconnect-with-backoff before process-exit; reserve exit for unrecoverable state. Adjacent to v8 #6. (v8 #7)
 
 Strategy/profitability:
-- **Entry spread gate (20%) too loose** — WEN entered at ~18%, born pre-stopped, force-sold 15 lots into an 18% bid at EOD for −$160.86. Tighter buy-side threshold and/or the liquidity floor below. **Promotes v4 #5 (stop/spread coupling) from hypothesis to confirmed-with-cost.** (v8 #1)
+- **Entry spread gate (20%) too loose** — WEN entered at ~18%, born pre-stopped, force-sold 15 lots into an 18% bid at EOD at ≈ −22% realized. Tighter buy-side threshold and/or the liquidity floor below. **Promotes v4 #5 (stop/spread coupling) from hypothesis to confirmed-with-cost.** (v8 #1)
 - **Promote liquidity gating to step-2 floors** — this is the **go-signal for v4 #4** (above): step-1 logging worked, and WEN (vol 4–20, sizeless asks) is the worked example of what to gate. OI floor + phantom-quote guard, unknown-degrades-gracefully. (v8 #2)
 - **Dip boost reads the wrong side of the market** — triggers on ask-return, blind to bid-side spread pain; never fired despite booleans=6. Re-derive "dip" on mid/bid. **Supersedes the "≥4 vs ≥7 boolean bar" tuning-Q framing.** `src/strategy/risk-limits.ts`. (v8 #3)
 - **Alloc-buy multiple compounds** — 3×-per-add reached a 15-lot in ~70 min; bound it to a session-start baseline or an absolute per-underlying cap. `src/bot/actions/manage-allocation.ts`. (v8 #4)
