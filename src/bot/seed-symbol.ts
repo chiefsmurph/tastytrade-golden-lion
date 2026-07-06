@@ -87,6 +87,12 @@ export function isWithinCashAccountSeedDteRange(dte: number | null | undefined):
   );
 }
 
+function formatPreflightIssue(issue: { code?: string; message?: string }): string {
+  const message = (issue.message ?? "").trim();
+  const code = (issue.code ?? "").trim();
+  return [message, code && `[${code}]`].filter(Boolean).join(" ");
+}
+
 export function extractDryRunSkipReason(error: unknown): string {
   if (!(error instanceof Error)) {
     return "seed order dry run failed";
@@ -95,17 +101,29 @@ export function extractDryRunSkipReason(error: unknown): string {
   const maybeResponse = error as Error & {
     response?: {
       data?: {
-        error?: { message?: string };
+        error?: {
+          message?: string;
+          errors?: Array<{ code?: string; message?: string }>;
+        };
         message?: string;
       };
     };
   };
 
-  const brokerMessage =
-    maybeResponse.response?.data?.error?.message ??
-    maybeResponse.response?.data?.message;
+  const brokerError = maybeResponse.response?.data?.error;
+  const brokerMessage = brokerError?.message ?? maybeResponse.response?.data?.message;
 
-  return brokerMessage || error.message || "seed order dry run failed";
+  // The broker wraps specific preflight failures (e.g. "closing_only") in a
+  // nested errors[] array while the top-level message stays generic ("One or
+  // more preflight checks failed"). Append the specifics so the seed log names
+  // the actual cause instead of the useless wrapper.
+  const detail = (brokerError?.errors ?? [])
+    .map(formatPreflightIssue)
+    .filter((entry) => entry.length > 0)
+    .join("; ");
+
+  const base = brokerMessage || error.message || "seed order dry run failed";
+  return detail ? `${base}: ${detail}` : base;
 }
 
 async function hasOpenUnderlyingPosition(

@@ -209,4 +209,46 @@ test("extractDryRunSkipReason unwraps broker error shapes", () => {
 
   assert.equal(extractDryRunSkipReason(new Error("plain message")), "plain message");
   assert.equal(extractDryRunSkipReason(new Error("")), "seed order dry run failed");
+
+  // Nested preflight errors[] are appended so the specific cause (e.g.
+  // closing_only) surfaces instead of the generic wrapper message.
+  const withPreflightErrors = Object.assign(new Error("outer"), {
+    response: {
+      data: {
+        error: {
+          code: "preflight_check_failure",
+          message: "One or more preflight checks failed",
+          errors: [
+            {
+              code: "closing_only",
+              message: "SOC is currently set to closing only.",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert.equal(
+    extractDryRunSkipReason(withPreflightErrors),
+    "One or more preflight checks failed: SOC is currently set to closing only. [closing_only]",
+  );
+
+  // Multiple issues are joined; code-only and message-only entries degrade cleanly.
+  const withMixedErrors = Object.assign(new Error("outer"), {
+    response: {
+      data: {
+        error: {
+          message: "One or more preflight checks failed",
+          errors: [
+            { message: "first problem" },
+            { code: "second_code" },
+          ],
+        },
+      },
+    },
+  });
+  assert.equal(
+    extractDryRunSkipReason(withMixedErrors),
+    "One or more preflight checks failed: first problem; [second_code]",
+  );
 });
