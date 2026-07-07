@@ -1,3 +1,10 @@
+// Pin the timezone before any Date is constructed in this module. The
+// intraday gate reads wall-clock time (getHours/getDay) under the production
+// invariant of America/Los_Angeles; the unqualified `new Date("...")` literals
+// and session-bound assertions below depend on it, so without this a UTC host
+// (e.g. CI) would parse and evaluate them in the wrong timezone.
+process.env.TZ = "America/Los_Angeles";
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
