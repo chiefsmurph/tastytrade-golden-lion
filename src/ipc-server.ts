@@ -21,6 +21,7 @@ import runBotCycle, {
 } from "./bot/run-cycle";
 import seedSymbol from "./bot/seed-symbol";
 import purchaseSymbol from "./bot/purchase-symbol";
+import closeSymbolPosition from "./bot/close-symbol-position";
 import { getEffectiveBuyingPowerSummary } from "./bot/effective-buying-power";
 import {
   getMarketOpenSchedulerStatus,
@@ -132,6 +133,12 @@ const commandHandlers: Record<string, CommandHandler> = {
 
     const normalizedSide = side === "put" ? "put" : "call";
     return purchaseSymbol(symbol, requestedBudget, normalizedSide, accountNumber);
+  },
+  "bot:closePosition": async ([symbol, side, accountNumber]) => {
+    assertArg(symbol, "symbol");
+    const normalizedSide =
+      side === "call" || side === "put" ? side : undefined;
+    return closeSymbolPosition(symbol, normalizedSide, accountNumber?.trim() || undefined);
   },
   "bot:johnsTestRun": johnsTestRun,
   "bot:runCycle": async ([accountNumber]) => runBotCycle(accountNumber),
