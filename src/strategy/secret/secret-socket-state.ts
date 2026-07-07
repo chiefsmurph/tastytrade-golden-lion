@@ -217,7 +217,7 @@ export function emitSecretLog(message: string): void {
   }
 
   try {
-    secretSocket.emit("log", `${SECRET_LOG_PREFIX} ${message}`);
+    secretSocket.emit("client:act", "log", `${SECRET_LOG_PREFIX} ${message}`);
   } catch {
     // best-effort; swallow any transport error
   }
