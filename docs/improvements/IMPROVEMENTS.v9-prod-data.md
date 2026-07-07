@@ -10,7 +10,7 @@
 
 ### 1. Overnight-reduction places a 1-lot sell order every single cycle — 85 orders in one day
 
-**File:** [src/bot/run-cycle-overnight-reduction.ts](src/bot/run-cycle-overnight-reduction.ts)
+**File:** [src/bot/overnight-position-reduction.ts](src/bot/overnight-position-reduction.ts)
 
 Cash placed **85 overnight-reduction orders** today (confirmed via `executionSummary.overnightReductionPlacedCount`); only **2 filled** (WEN 7:42 AM and WEN 7:46 AM PT, both ledgered). The rest are idle resting limit orders being placed then cancelled-or-expired every ~4-minute cycle.
 
