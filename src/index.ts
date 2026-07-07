@@ -2,6 +2,7 @@ import { startIpcServer } from "./ipc-server";
 import { startMarketOpenScheduler, stopMarketOpenScheduler, getMarketOpenSchedulerStatus } from "./bot/market-open-scheduler";
 import { startSecretSocketConnection } from "./strategy/secret";
 import { installQuoteStreamerConsoleGuard } from "./core/quote-streamer-recovery";
+import { closeQuoteStreamerSession } from "./core/quote-streamer-session";
 import { logStartupConfig } from "./startup-config";
 import { cancelAllLiveOrders } from "./bot/execute-position-evaluations";
 import { getManagedAccountNumbers } from "./core/default-account";
@@ -38,6 +39,13 @@ async function gracefulShutdown(signal: string): Promise<void> {
 			`shutdown (${signal}): cancelAllLiveOrders failed — ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
+
+	// Tear down the dxLink streamer session so the next process start doesn't
+	// stack a new session on top of an orphaned one (the "user sessions
+	// exceeded" pileup). Never throws; the brief pause lets the WebSocket
+	// close frame flush before the process dies.
+	closeQuoteStreamerSession(`graceful shutdown (${signal})`);
+	await new Promise((resolve) => setTimeout(resolve, 250));
 
 	process.exit(0);
 }

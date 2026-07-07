@@ -18,6 +18,7 @@
     "fallow:fix": "fallow fix --dry-run"
   },
   "dependencies": {
+    "@dxfeed/dxlink-api": "^0.3.0",
     "@tastytrade/api": "^7.0.2",
     "axios": "^1.6.0",
     "dotenv": "^16.0.0",

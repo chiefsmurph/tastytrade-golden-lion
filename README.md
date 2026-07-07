@@ -99,6 +99,7 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `CORE_IPC_SOCKET` — Override the Unix socket path for the IPC server.
 - `CORE_OPTION_MARKET_SNAPSHOT_TTL_MS` — Cache TTL for option chain snapshot lookups. Defaults to `30000`; set to `0` to disable.
 - `CORE_CASH_ACCOUNT_MAX_BUYING_POWER_PCT` — Maximum fraction of cash buying power the bot can deploy in a day. Defaults to `0.6`, capped at `0.9`.
+- `CORE_QUOTE_STREAMER_MAX_RECONNECT_ATTEMPTS` — Number of in-process dxLink reconnect attempts (close old session, re-auth, resubscribe, with backoff) the quote-streamer watchdog tries before falling back to exiting for a PM2 restart. Defaults to `3`, clamped to at most `10`; set to `0` to skip in-process reconnects and exit immediately (previous behavior).
 
 ### Bot
 

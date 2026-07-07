@@ -3,6 +3,7 @@ import {
   restartOnFatalQuoteStreamerError,
   triggerQuoteStreamerRestart,
 } from "./quote-streamer-recovery";
+import { ensureQuoteStreamerSessionConnected } from "./quote-streamer-session";
 import tastytradeApi from "./tastytrade-client";
 import {
   TastytradeOptionChain,
@@ -205,7 +206,12 @@ async function fetchOptionVolumesInner(
       return { volumes: {}, openInterestBySymbol: {}, ivBySymbol: {}, deltaBySymbol: {} };
     }
 
-    await tastytradeApi.quoteStreamer.connect();
+    // Reuse the process-wide managed dxLink session. This used to call
+    // quoteStreamer.connect() unconditionally — a brand-new dxLink session per
+    // chain fetch, with the previous one orphaned but still keepalive-ing
+    // server-side. That per-fetch churn is what saturated the account's
+    // session limit (60 UNAUTHORIZED kicks on 2026-07-06).
+    await ensureQuoteStreamerSessionConnected();
 
     const volumes: Record<string, number> = {};
     const openInterestBySymbol: Record<string, number> = {};
@@ -335,7 +341,9 @@ async function fetchOptionVolumesInner(
 
     tastytradeApi.quoteStreamer.unsubscribe(resolvedStreamerSymbols);
     removeListener();
-    tastytradeApi.quoteStreamer.disconnect();
+    // No disconnect here: the SDK's disconnect() only dropped listeners and
+    // leaked the WebSocket anyway. The managed session stays connected for
+    // reuse; quote-streamer-session owns teardown (shutdown/recovery).
 
     if (rawEventCount === 0) {
       console.warn(
@@ -398,6 +406,7 @@ export function mergeVolumesIntoChain(
   const hasVolumeForKey = (key: string) =>
     Object.prototype.hasOwnProperty.call(volumes, key);
 
+  // fallow-ignore-next-line complexity
   function merge(obj: any) {
     if (!obj || typeof obj !== "object") return;
     const keysToCheck = [
