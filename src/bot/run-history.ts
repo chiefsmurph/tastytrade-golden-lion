@@ -104,6 +104,11 @@ export interface RunHistoryEntry {
   accountNumber: string;
   allocationOrders?: RunAllocationOrder[];
   closeOrders: RunCloseOrder[];
+  // Discriminant field: "cycle" for normal runs, "error" for failed cycles.
+  // Analytics consumers should filter entryType !== "error" before aggregating
+  // totalCapital or other snapshot fields — error entries carry zeroed snapshots
+  // and are not representative of account state.
+  entryType?: "cycle" | "error";
   executionSummary: {
     allocationEstimatedTotal: number;
     allocationPlacedCount: number;
@@ -367,6 +372,7 @@ export async function appendRunHistory(
 ): Promise<RunHistoryEntry> {
   const entry: RunHistoryEntry = {
     ...input,
+    entryType: "cycle",
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     timestamp: new Date().toISOString(),
   };
@@ -402,6 +408,7 @@ export async function appendRunHistoryError(
   const entry: RunHistoryEntry = {
     accountNumber,
     closeOrders: [],
+    entryType: "error",
     error: error instanceof Error ? error.message : String(error),
     executionSummary: {
       allocationEstimatedTotal: 0,
@@ -530,8 +537,10 @@ export async function getLastRunGroupsByTickers(
   for (const fileEntries of entriesByFile) {
     const { accountType, entries } = fileEntries;
 
-    // Get the most recent entry for this account
-    const mostRecentEntry = entries[0];
+    // Get the most recent non-error entry for this account. Error entries carry
+    // zeroed snapshots and empty groups — they are not representative of
+    // account state and should not surface as the "last known" position data.
+    const mostRecentEntry = entries.find((e) => e.entryType !== "error");
     if (!mostRecentEntry) {
       continue;
     }

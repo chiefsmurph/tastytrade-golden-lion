@@ -55,6 +55,10 @@ export interface ClosePositionDependencies {
   // illiquid position can be flattened on demand regardless of spread. Only the
   // manual IPC close path sets this — the cycle never does.
   forceThroughSpreadGate?: boolean;
+  // Override the default order source tag written to the broker. Used to stamp
+  // overnight-reduction sells with a distinct source so the cancel sweep can
+  // protect them from being cancelled between cycles.
+  orderSource?: string;
 }
 
 function getMinTickSize(referencePrice: number): number {
@@ -212,6 +216,7 @@ export async function closePosition(
     dependencies.maxTickMoves ?? MAX_CLOSE_TICK_MOVES,
   );
   let remainingToClose = dependencies.maxQuantityToClose ?? Infinity;
+  const orderSource = dependencies.orderSource;
 
   const morningSpreadGate = dependencies.forceThroughSpreadGate
     ? { shouldSkip: false as const }
@@ -233,7 +238,7 @@ export async function closePosition(
     const snapshotQty = Math.abs(Number(snapshot.position.quantity) || 0);
     const qtyToClose = Math.min(snapshotQty, remainingToClose);
 
-    let baseOrder = buildClosingOrderPayload(snapshot);
+    let baseOrder = buildClosingOrderPayload(snapshot, orderSource);
     if (qtyToClose < snapshotQty && baseOrder) {
       baseOrder = {
         ...baseOrder,
