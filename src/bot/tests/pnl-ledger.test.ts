@@ -62,7 +62,7 @@ function build(overrides: Partial<Parameters<typeof buildPnlLedgerEntries>[0]> =
     strategyDecisions: [
       buildDecision("Profit target reached (12.00% >= 10.00%) - close position and lock in gains"),
     ],
-    openedAtByUnderlying: new Map([["AAPL", "2026-06-05T14:00:00Z"]]),
+    entryContextByUnderlying: new Map([["AAPL", { openedAt: "2026-06-05T14:00:00Z" }]]),
     ...overrides,
   });
 }
@@ -96,7 +96,8 @@ test("take-profit round trip: P&L math, attribution, timing fields", () => {
   assert.equal(entry.positionAgeDays, 5); // 06-05 → 06-10
   assert.equal(entry.side, "call");
   assert.equal(entry.accountType, "margin");
-  // Reserved entry-side fields stay null until entry-side recording lands
+  // Entry-side fields are null when the registry carried no entry context
+  // (the default build passes openedAt only).
   assert.equal(entry.entrySpreadPct, null);
   assert.equal(entry.gateScoreAtEntry, null);
 });
@@ -191,9 +192,79 @@ test("gate score and max target are carried from the group's position gate", () 
 });
 
 test("missing registry openedAt leaves entry-relative fields null but keeps DTE at close", () => {
-  const entries = build({ openedAtByUnderlying: new Map() });
+  const entries = build({ entryContextByUnderlying: new Map() });
   const entry = entries[0]!;
   assert.equal(entry.dteAtEntry, null);
   assert.equal(entry.positionAgeDays, null);
   assert.equal(entry.dteAtClose, 9);
+  assert.equal(entry.entrySpreadPct, null);
+  assert.equal(entry.gateScoreAtEntry, null);
+});
+
+// v8 #13: entry spread + gate score captured at open (in the registry) are
+// copied onto the close-side row via entryContextByUnderlying.
+test("copies registry entry spread and gate score onto the ledger row", () => {
+  const entries = build({
+    entryContextByUnderlying: new Map([
+      ["AAPL", { openedAt: "2026-06-05T14:00:00Z", entrySpreadPct: 0.18, gateScoreAtEntry: 6 }],
+    ]),
+  });
+  const entry = entries[0]!;
+  assert.ok(Math.abs((entry.entrySpreadPct ?? 0) - 0.18) < 1e-9);
+  assert.equal(entry.gateScoreAtEntry, 6);
+  // openedAt from the same context still drives the entry/age DTE math
+  assert.equal(entry.dteAtEntry, 14);
+  assert.equal(entry.positionAgeDays, 5);
+});
+
+test("entry enrichment is independent of the close-side gate score", () => {
+  // A wide entry spread with a strong gate at entry, closed while the current
+  // gate score reads differently — both sides are recorded separately.
+  const entries = build({
+    groups: [
+      buildGroup({
+        positionGate: {
+          signals: {
+            crossAccountYes: true,
+            basicStockYes: false,
+            strongStockYes: false,
+            goodBooleanScore: 3,
+            allBooleansGood: false,
+          },
+          maxTargetPct: 0.1,
+          strongStockYesPctThreshold: 30,
+          strongStockYesScoreThreshold: -100,
+          basicStockYesPctThreshold: 25,
+          basicStockYesScoreThreshold: -40,
+        },
+      }),
+    ],
+    entryContextByUnderlying: new Map([
+      ["AAPL", { openedAt: "2026-06-05T14:00:00Z", entrySpreadPct: 0.2, gateScoreAtEntry: 8 }],
+    ]),
+  });
+  const entry = entries[0]!;
+  assert.equal(entry.gateScoreAtEntry, 8);
+  assert.equal(entry.gateScoreAtClose, 3);
+  assert.ok(Math.abs((entry.entrySpreadPct ?? 0) - 0.2) < 1e-9);
+});
+
+// v8 #9: the 12:50 clock liquidation and the −10% post-cutoff price stop must
+// resolve to distinct decisionTypes so P&L can attribute "flattened by the
+// clock" separately from "given back to a stop". Both remain urgent closes.
+test("clock liquidation and post-cutoff price stop are distinct urgent decisionTypes", () => {
+  const clock = build({
+    strategyDecisions: [buildDecision("Market closed or closing - liquidate all positions immediately")],
+  })[0]!;
+  const priceStop = build({
+    strategyDecisions: [
+      buildDecision("End-of-day risk management (-11.00% <= -10%) - close losing positions before market close"),
+    ],
+  })[0]!;
+
+  assert.equal(clock.decisionType, "eod-liquidation");
+  assert.equal(priceStop.decisionType, "eod-stop");
+  assert.notEqual(clock.decisionType, priceStop.decisionType);
+  assert.equal(clock.isUrgentClose, true);
+  assert.equal(priceStop.isUrgentClose, true);
 });

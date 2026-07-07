@@ -51,7 +51,10 @@ export interface PnlLedgerEntry {
   spreadPctAtCycle: number | null;
   gateScoreAtClose: number | null;
   gateMaxTargetPctAtClose: number | null;
-  // Reserved: populated once entry-side recording exists (v5 code #3).
+  // Entry-side context carried from the position registry at open (v8 #13):
+  // the spread and gate score observed when the position was first tracked
+  // open. Null when the registry never captured it (pre-v8 / seed-only opens
+  // that no later cycle backfilled).
   entrySpreadPct: number | null;
   gateScoreAtEntry: number | null;
 }
@@ -104,6 +107,16 @@ function diffDays(laterDateOnly: string, earlierDateOnly: string): number {
   return Math.round((later - earlier) / 86_400_000);
 }
 
+// Entry-side context carried from the position registry (which spans
+// open→close) onto the close-side ledger row (v8 #13). openedAt drives the
+// entry/age DTE math; entrySpreadPct/gateScoreAtEntry unlock entry-quality
+// attribution ("did we enter at a bad spread / low gate score?").
+export interface LedgerEntryContext {
+  openedAt: string;
+  entrySpreadPct?: number | null;
+  gateScoreAtEntry?: number | null;
+}
+
 export interface BuildPnlLedgerEntriesInput {
   accountNumber: string;
   accountType: "margin" | "cash" | "unknown";
@@ -113,8 +126,8 @@ export interface BuildPnlLedgerEntriesInput {
   overnightCloseOrders: RunCloseOrder[];
   groups: RunGroupReturn[];
   strategyDecisions: RunStrategyDecision[];
-  // UNDERLYING (uppercased) -> registry openedAt ISO
-  openedAtByUnderlying: Map<string, string>;
+  // UNDERLYING (uppercased) -> registry-carried entry context
+  entryContextByUnderlying: Map<string, LedgerEntryContext>;
   now?: Date;
 }
 
@@ -185,7 +198,8 @@ export function buildPnlLedgerEntries(input: BuildPnlLedgerEntriesInput): PnlLed
       const dteAtClose =
         expirationDateOnly && closeDateOnly ? diffDays(expirationDateOnly, closeDateOnly) : null;
 
-      const openedAt = input.openedAtByUnderlying.get(underlyingKey) ?? null;
+      const entryContext = input.entryContextByUnderlying.get(underlyingKey) ?? null;
+      const openedAt = entryContext?.openedAt ?? null;
       const openedDateOnly = openedAt ? getPstDateString(openedAt) : null;
       const dteAtEntry =
         expirationDateOnly && openedDateOnly ? diffDays(expirationDateOnly, openedDateOnly) : null;
@@ -232,8 +246,8 @@ export function buildPnlLedgerEntries(input: BuildPnlLedgerEntriesInput): PnlLed
         spreadPctAtCycle,
         gateScoreAtClose: group?.positionGate?.signals.goodBooleanScore ?? null,
         gateMaxTargetPctAtClose: group?.positionGate?.maxTargetPct ?? null,
-        entrySpreadPct: null,
-        gateScoreAtEntry: null,
+        entrySpreadPct: entryContext?.entrySpreadPct ?? null,
+        gateScoreAtEntry: entryContext?.gateScoreAtEntry ?? null,
       });
     }
   }

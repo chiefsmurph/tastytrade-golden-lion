@@ -24,7 +24,7 @@ import {
   getRegistryEntry,
   PositionOpenSnapshot,
 } from "./position-registry";
-import { buildPnlLedgerEntries, appendPnlLedgerEntries } from "./pnl-ledger";
+import { buildPnlLedgerEntries, appendPnlLedgerEntries, LedgerEntryContext } from "./pnl-ledger";
 import { executeOvernightReductions } from "./overnight-position-reduction";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { getEffectiveTotalCapital } from "~/core/account-balance";
@@ -43,6 +43,17 @@ const POSITION_BUILT_TARGET_FRACTION = 0.75;
 const POSITION_BUILT_REARM_FRACTION = 0.70;
 const positionBuiltNotified = new Set<string>();
 
+// Mid-based option spread for the evaluated group this cycle. Mirrors the
+// close-side reconstruction in pnl-ledger so entry and close spreads are
+// comparable; null when quotes are unusable (crossed / non-positive).
+function computeEntrySpreadPct(evaluation: PositionGroupEvaluation): number | null {
+  const bid = evaluation.metrics.currentBidPrice;
+  const ask = evaluation.metrics.currentAskPrice;
+  const mid = (bid + ask) / 2;
+  if (!(bid > 0) || !(ask >= bid) || !(mid > 0)) return null;
+  return (ask - bid) / mid;
+}
+
 function toPositionOpenSnapshots(
   evaluations: PositionGroupEvaluation[],
 ): PositionOpenSnapshot[] {
@@ -58,7 +69,21 @@ function toPositionOpenSnapshots(
       .filter((value): value is string => Boolean(value));
     if (createdAts.length === 0) continue;
 
-    snapshots.push({ symbol, side, openedAt: createdAts.sort()[0] });
+    // Entry-side quality snapshot (v8 #13). syncPositionOpens only records this
+    // on the first cycle a position is seen open (or backfills it if missing),
+    // so it captures spread/gate score at — or shortly after — entry.
+    const gateScoreAtEntry =
+      evaluation.executionTargets?.positionGate?.signals.goodBooleanScore ?? null;
+
+    snapshots.push({
+      symbol,
+      side,
+      openedAt: createdAts.sort()[0],
+      entryContext: {
+        entrySpreadPct: computeEntrySpreadPct(evaluation),
+        gateScoreAtEntry,
+      },
+    });
   }
 
   return snapshots;
@@ -389,11 +414,15 @@ export default async function runBotCycle(
         .filter((order) => order.placedOrder && order.fills.length > 0)
         .map((order) => order.underlyingSymbol.toUpperCase()),
     );
-    const openedAtByUnderlying = new Map<string, string>();
+    const entryContextByUnderlying = new Map<string, LedgerEntryContext>();
     for (const symbol of filledCloseUnderlyings) {
       const registryEntry = await getRegistryEntry(context.preview.accountNumber, symbol);
       if (registryEntry?.openedAt) {
-        openedAtByUnderlying.set(symbol, registryEntry.openedAt);
+        entryContextByUnderlying.set(symbol, {
+          openedAt: registryEntry.openedAt,
+          entrySpreadPct: registryEntry.entrySpreadPct ?? null,
+          gateScoreAtEntry: registryEntry.gateScoreAtEntry ?? null,
+        });
       }
     }
 
@@ -404,7 +433,7 @@ export default async function runBotCycle(
       overnightCloseOrders: overnightCloseOrdersForHistory,
       groups: context.preview.groups,
       strategyDecisions: context.strategyDecisions,
-      openedAtByUnderlying,
+      entryContextByUnderlying,
     });
     await appendPnlLedgerEntries(
       context.preview.accountNumber,
