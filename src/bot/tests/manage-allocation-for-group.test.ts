@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   manageAllocationForGroup,
+  isTooCloseToAccumulationCutoff,
   type AllocationBudget,
   type ManageAllocationDependencies,
 } from "../actions/manage-allocation";
@@ -25,6 +26,7 @@ const fullBudget: AllocationBudget = {
 
 function buildEvaluation(
   targets: ExecutionTargets | undefined,
+  currentTime: Date = new Date(),
 ): PositionGroupEvaluation {
   return {
     currentReturn: 0,
@@ -33,8 +35,8 @@ function buildEvaluation(
     metrics: {
       currentAskPrice: 1.2,
       currentBidPrice: 1.0,
-      currentTime: new Date(),
-      lastActionTime: new Date(),
+      currentTime,
+      lastActionTime: currentTime,
       weightedAverageFill: 1,
     },
     positionSnapshots: [
@@ -204,4 +206,100 @@ test("manageAllocationForGroup skips when there is no candidate and no held fall
     }),
   );
   assert.equal(result.skippedReason, "no option candidate found");
+});
+
+// Helper: build a Date at a specific HH:MM in local time (matches how
+// getTimeInMinutes interprets currentTime throughout the strategy engine).
+function localTimeAt(hours: number, minutes: number, seconds = 0): Date {
+  const d = new Date();
+  d.setHours(hours, minutes, seconds, 0);
+  return d;
+}
+
+// isTooCloseToAccumulationCutoff unit tests
+
+test("isTooCloseToAccumulationCutoff: margin — well before cutoff returns false", () => {
+  // 12:20 PM PT, cutoff 12:30 PM, 4-min interval → buffer = 8 min
+  // 12:30 - 8 = 12:22, and 12:20 < 12:22 → not too close
+  const time = localTimeAt(12, 20);
+  assert.equal(isTooCloseToAccumulationCutoff(time, "margin", 4 * 60 * 1000), false);
+});
+
+test("isTooCloseToAccumulationCutoff: margin — within buffer returns true", () => {
+  // 12:25 PM PT, cutoff 12:30, buffer = 8 min → threshold at 12:22 → 12:25 > 12:22
+  const time = localTimeAt(12, 25);
+  assert.equal(isTooCloseToAccumulationCutoff(time, "margin", 4 * 60 * 1000), true);
+});
+
+test("isTooCloseToAccumulationCutoff: margin — exactly at cutoff returns true", () => {
+  const time = localTimeAt(12, 30, 17); // 12:30:17 — the JOBY scenario
+  assert.equal(isTooCloseToAccumulationCutoff(time, "margin", 4 * 60 * 1000), true);
+});
+
+test("isTooCloseToAccumulationCutoff: cash — well before cutoff returns false", () => {
+  // 12:50 PM PT, cutoff 1:00 PM, buffer = 8 min → threshold at 12:52 → 12:50 < 12:52
+  const time = localTimeAt(12, 50);
+  assert.equal(isTooCloseToAccumulationCutoff(time, "cash", 4 * 60 * 1000), false);
+});
+
+test("isTooCloseToAccumulationCutoff: cash — within buffer returns true", () => {
+  // 12:55 PM PT, cutoff 1:00 PM, buffer = 8 min → threshold at 12:52 → 12:55 > 12:52
+  const time = localTimeAt(12, 55);
+  assert.equal(isTooCloseToAccumulationCutoff(time, "cash", 4 * 60 * 1000), true);
+});
+
+test("manageAllocationForGroup skips when too close to accumulation cutoff", async () => {
+  // Simulate 12:25 PM for a margin account (within 2×4-min = 8-min buffer of 12:30 cutoff).
+  // BOT_RUN_INTERVAL_MS defaults to 4 min; override via the injected runIntervalMs in
+  // isTooCloseToAccumulationCutoff by setting the env var momentarily.
+  const savedEnv = process.env.BOT_RUN_INTERVAL_MS;
+  process.env.BOT_RUN_INTERVAL_MS = String(4 * 60 * 1000);
+
+  try {
+    const tooLate = localTimeAt(12, 25); // within 8-min buffer of 12:30 margin cutoff
+    const result = await manageAllocationForGroup(
+      "ACC-1",
+      buildEvaluation(baseTargets, tooLate),
+      bigBudget,
+      1,
+      { accountMarginOrCash: "margin" },
+      candidateDeps(),
+    );
+    assert.equal(result.placedOrder, false);
+    assert.match(
+      result.skippedReason ?? "",
+      /too close to accumulation cutoff/,
+    );
+  } finally {
+    if (savedEnv === undefined) {
+      delete process.env.BOT_RUN_INTERVAL_MS;
+    } else {
+      process.env.BOT_RUN_INTERVAL_MS = savedEnv;
+    }
+  }
+});
+
+test("manageAllocationForGroup does NOT skip when well before accumulation cutoff", async () => {
+  const savedEnv = process.env.BOT_RUN_INTERVAL_MS;
+  process.env.BOT_RUN_INTERVAL_MS = String(4 * 60 * 1000);
+
+  try {
+    const earlyTime = localTimeAt(10, 0); // 10:00 AM — nowhere near any cutoff
+    const result = await manageAllocationForGroup(
+      "ACC-1",
+      buildEvaluation(baseTargets, earlyTime),
+      bigBudget,
+      1,
+      { accountMarginOrCash: "margin" },
+      candidateDeps(),
+    );
+    // Should have placed an order (guard did not fire)
+    assert.equal(result.placedOrder, true);
+  } finally {
+    if (savedEnv === undefined) {
+      delete process.env.BOT_RUN_INTERVAL_MS;
+    } else {
+      process.env.BOT_RUN_INTERVAL_MS = savedEnv;
+    }
+  }
 });

@@ -30,7 +30,11 @@ import {
   roundOrderPrice,
   waitForOrderFillById,
 } from "./order-utils";
-import { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
+import {
+  ExecutionTargets,
+  getNoBuyCutoffMinute,
+  type StrategyAccountType,
+} from "~/strategy/evaluate-trading-strategy";
 import {
   getMaxBuyExposurePctForAccountType,
   getMaxUnderlyingContracts,
@@ -645,6 +649,38 @@ export function candidateDteResultFields(
   };
 }
 
+// Reads the configured run-cycle interval in ms from the same env vars as the
+// scheduler (BOT_RUN_INTERVAL_MS → BOT_RUN_INTERVAL_MINUTES → 4 min default).
+function getRunIntervalMs(): number {
+  const fromMs = Number(process.env.BOT_RUN_INTERVAL_MS);
+  if (Number.isFinite(fromMs) && fromMs > 0) {
+    return Math.floor(fromMs);
+  }
+  const fromMinutes = Number(process.env.BOT_RUN_INTERVAL_MINUTES);
+  if (Number.isFinite(fromMinutes) && fromMinutes > 0) {
+    return Math.floor(fromMinutes * 60 * 1000);
+  }
+  return 4 * 60 * 1000;
+}
+
+// Returns true when a new buy placed right now would land inside the EOD
+// liquidation window. The guard fires if:
+//   now > accumulationCutoff - 2 × runIntervalMs
+// Two intervals back means: one interval to be sure the *next* cycle won't also
+// buy (the entry cycle), and one more so the position has at least one full
+// interval of life before the cutoff cycle can arrive and liquidate it.
+export function isTooCloseToAccumulationCutoff(
+  currentTime: Date,
+  accountType: StrategyAccountType,
+  runIntervalMs = getRunIntervalMs(),
+): boolean {
+  const timeInMinutes = currentTime.getHours() * 60 + currentTime.getMinutes()
+    + currentTime.getSeconds() / 60;
+  const cutoffMinute = getNoBuyCutoffMinute(accountType);
+  const bufferMinutes = (2 * runIntervalMs) / (60 * 1000);
+  return timeInMinutes > cutoffMinute - bufferMinutes;
+}
+
 // Injectable broker dependencies so manageAllocationForGroup can be characterized
 // in tests without hitting the network (mirrors PlaceRouteOrdersDependencies).
 export interface ManageAllocationDependencies {
@@ -716,6 +752,37 @@ export async function manageAllocationForGroup(
 
   if (exposureHeadroom <= 0 || budget.buyingPowerRemaining <= 0) {
     return skip({ skippedReason: "no remaining exposure or buying power" });
+  }
+
+  // Guard: do not open a new position when the current time is within two run
+  // intervals of the accumulation cutoff. A buy placed that close is virtually
+  // guaranteed to be EOD-liquidated in the very next cycle — a round-trip churn
+  // loss with no chance to hold. Only applies when options.accountMarginOrCash is
+  // known; if it's absent the guard is skipped (can't determine the right cutoff).
+  const cutoffAccountType = options.accountMarginOrCash;
+  if (cutoffAccountType) {
+    const currentTime = evaluation.metrics.currentTime;
+    if (isTooCloseToAccumulationCutoff(currentTime, cutoffAccountType)) {
+      const cutoffMinute = getNoBuyCutoffMinute(cutoffAccountType);
+      const cutoffHH = String(Math.floor(cutoffMinute / 60)).padStart(2, "0");
+      const cutoffMM = String(cutoffMinute % 60).padStart(2, "0");
+      console.log(
+        JSON.stringify({
+          scope: "manage-allocation-cutoff-guard",
+          action: "skip",
+          accountNumber,
+          underlyingSymbol: evaluation.underlyingSymbol,
+          accountType: cutoffAccountType,
+          currentTime: currentTime.toISOString(),
+          accumulationCutoff: `${cutoffHH}:${cutoffMM} PT`,
+          runIntervalMs: getRunIntervalMs(),
+          reason: "too close to accumulation cutoff — skipping new entry",
+        }),
+      );
+      return skip({
+        skippedReason: `too close to accumulation cutoff (${cutoffHH}:${cutoffMM} PT) — skipping new entry for ${evaluation.underlyingSymbol}`,
+      });
+    }
   }
 
   // Absolute per-underlying accumulation ceilings (IMPROVEMENTS.v8 #4): bound

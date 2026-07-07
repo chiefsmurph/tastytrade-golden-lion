@@ -272,6 +272,18 @@ export default async function runBotCycle(
       .filter((symbol) => symbol.length > 0),
   );
 
+  // Symbols with a live overnight-reduction order already working (protected
+  // from the cancel sweep). Passed to executeOvernightReductions so it skips
+  // placing a duplicate for the same symbol this cycle.
+  const liveOvernightReductionSymbols = new Set(
+    executionResults.cancelledOrders
+      .filter(
+        (r) => !r.cancelled && r.skippedReason === "protected overnight reduction order",
+      )
+      .map((r) => r.underlyingSymbol)
+      .filter((s): s is string => Boolean(s)),
+  );
+
   const overnightReductionOrders =
     context.accountMarginOrCash === "cash"
       ? await executeOvernightReductions(
@@ -281,6 +293,7 @@ export default async function runBotCycle(
           getEffectiveTotalCapital(context.accountBalances),
           closedUnderlyingSymbolsThisRun,
           new Date(),
+          liveOvernightReductionSymbols,
         )
       : [];
 

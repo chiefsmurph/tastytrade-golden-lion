@@ -1,4 +1,5 @@
 import { readEnvInt, readEnvPct } from "~/core/env-utils";
+import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
 
 function parseEnvFraction(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -62,6 +63,16 @@ const DIP_BOOST_MIN_LOSS_FRACTION = 0.02;
 const DIP_BOOST_MAX_LOSS_FRACTION = 0.12;
 const DIP_BOOST_MIN_BOOLEAN_SCORE = 4;
 
+// Bid-safety gate: do not press a "dip" when the bid return is already within
+// DIP_BOOST_BID_SAFETY_MARGIN of the intraday stop-loss floor. If the bid is
+// already at e.g. −20% with a −30% floor and a 10-point margin, the boost is
+// suppressed to avoid averaging into what is about to be a forced close.
+// The 2026-07-07 TE case: mid was −3% (just enough to trigger), but bid was
+// already −27%; the boost added exposure and the position hit −33% bid stop
+// about an hour later. The safety margin of 0.10 means: if bid ≤ −20% with a
+// 30% floor, no boost.
+const DIP_BOOST_BID_SAFETY_MARGIN = 0.10;
+
 // Wide-spread suppression: leaning INTO a "dip" that is really just a widening
 // spread is backwards (you would average down into a name you cannot get out
 // of). When the position's current bid/ask spread (fraction of mid) exceeds
@@ -92,6 +103,7 @@ export function getMarginDipTargetBoostPct(
   midReturnFraction: number,
   goodBooleanScore: number | null,
   spreadFraction?: number | null,
+  bidReturnFraction?: number | null,
 ): number {
   const maxBoost = parseEnvFraction("STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT", 0);
   if (maxBoost <= 0) return 0;
@@ -100,6 +112,28 @@ export function getMarginDipTargetBoostPct(
   }
   // Don't press a "dip" that is really a blown-out spread (see comment above).
   if (isDipBoostSuppressedByWideSpread(spreadFraction)) return 0;
+
+  // Bid-safety gate: if the bid return is already within DIP_BOOST_BID_SAFETY_MARGIN
+  // of the intraday stop-loss floor, the boost is suppressed. Averaging into a
+  // position that is approaching a forced close only makes the forced-close loss
+  // larger. See 2026-07-07 TE case for why this gate is needed.
+  if (bidReturnFraction != null && Number.isFinite(bidReturnFraction)) {
+    const stopLossFloor = getIntradayStopLossFloor();
+    const bidSafetyThreshold = -(stopLossFloor - DIP_BOOST_BID_SAFETY_MARGIN);
+    if (bidReturnFraction <= bidSafetyThreshold) {
+      console.log(
+        JSON.stringify({
+          scope: "dip-boost-bid-safety-gate",
+          reason: "bid-too-close-to-stop-floor",
+          bidReturnFraction,
+          bidSafetyThreshold,
+          stopLossFloor,
+          safetyMargin: DIP_BOOST_BID_SAFETY_MARGIN,
+        }),
+      );
+      return 0;
+    }
+  }
 
   const lossFraction = -midReturnFraction;
   if (lossFraction <= DIP_BOOST_MIN_LOSS_FRACTION) return 0;
