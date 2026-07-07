@@ -160,6 +160,39 @@ test("with suppression on, a wide-spread position is suppressed but a tight one 
   });
 });
 
+// Bid-safety gate tests (2026-07-07 Issue B, TE margin case).
+// Default intraday stop floor is 30% (from STRATEGY_INTRADAY_STOP_LOSS_PCT).
+// Safety margin is 10 points → gate threshold is −20% bid return.
+
+test("bid-safety gate suppresses the boost when bid is within 10% of the stop floor", () => {
+  withBoostEnv("0.25", () => {
+    // mid = −5% (enough to trigger), bid = −21% (past the −20% gate with 30% floor).
+    // The TE 2026-07-07 scenario: boost fired, position hit −33% stop an hour later.
+    assert.equal(getMarginDipTargetBoostPct(-0.05, 8, null, -0.21), 0);
+    // Exactly at the gate boundary (−20%): suppressed.
+    assert.equal(getMarginDipTargetBoostPct(-0.05, 8, null, -0.20), 0);
+  });
+});
+
+test("bid-safety gate allows the boost when bid is well above the stop floor", () => {
+  withBoostEnv("0.25", () => {
+    // mid = −7%, bid = −10%: bid is only 10% down, well above the −20% gate.
+    assert.ok(getMarginDipTargetBoostPct(-0.07, 8, null, -0.10) > 0);
+    // mid = −7%, bid = −19%: just inside the safe zone (−19% > −20% threshold).
+    assert.ok(getMarginDipTargetBoostPct(-0.07, 8, null, -0.19) > 0);
+  });
+});
+
+test("bid-safety gate degrades gracefully when bid is absent (null/undefined)", () => {
+  withBoostEnv("0.25", () => {
+    // No bid data: gate does not suppress (missing quote ≠ danger).
+    assert.ok(getMarginDipTargetBoostPct(-0.07, 8, null, null) > 0);
+    assert.ok(getMarginDipTargetBoostPct(-0.07, 8, null, undefined) > 0);
+    // Old 3-arg call signature (no bid arg): still works, gate skipped.
+    assert.ok(getMarginDipTargetBoostPct(-0.07, 8, null) > 0);
+  });
+});
+
 test("max allocation buy position multiple is off unless set", () => {
   const key = "STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE";
   const previous = process.env[key];

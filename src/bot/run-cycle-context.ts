@@ -580,7 +580,9 @@ export async function buildRunCycleContext(
   // read the last N cycles, build each underwater group's price series
   // (oldest → newest + this cycle), and log a stabilization signal. Log-only —
   // gates nothing yet; the point is to see whether adds land into free-falls.
-  const stabilizationHistory = await getRecentRunHistory(12, resolvedAccountNumber);
+  const stabilizationHistory = (await getRecentRunHistory(12, resolvedAccountNumber)).filter(
+    (entry) => entry.entryType !== "error",
+  );
   for (const evaluation of completedEvaluations) {
     if (evaluation.currentReturn >= 0) {
       continue;

@@ -28,7 +28,7 @@ export interface ExecutionTargets {
   positionGate?: PositionGateResult;
 }
 
-function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {
+export function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {
   return accountType === "cash" ? 13 * 60 : 12 * 60 + 30;
 }
 

@@ -62,6 +62,7 @@ export function roundOrderPrice(price: number): string {
 
 export function buildClosingOrderPayload(
   snapshot: PositionQuoteSnapshot,
+  source?: string,
 ): OrderPayload | null {
   const quantity = getPositionQuantity(snapshot.position);
   if (quantity <= 0) {
@@ -77,7 +78,7 @@ export function buildClosingOrderPayload(
   const action = getClosingAction(snapshot.position);
 
   return {
-    source: "tastytrade-golden-lion",
+    source: source ?? "tastytrade-golden-lion",
     "time-in-force": "Day",
     "order-type": "Limit",
     price: roundOrderPrice(price),
