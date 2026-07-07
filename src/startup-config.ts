@@ -4,6 +4,11 @@
 // drift behind the 07-02 prod incident: a pre-refactor server .env would
 // silently disable ~30 renamed vars on the next deploy).
 import { getMaxOptionSpreadPct, getMinIvRankPct, getMarginTargetCallDelta } from "~/strategy/entry-filters";
+import {
+  getMarginMaxEntrySpreadPct,
+  getMinOpenInterest,
+  isPhantomQuoteGuardEnabled,
+} from "~/strategy/liquidity-gate";
 import { getMarginMaxBuyExposurePct, getCashMaxBuyExposurePct } from "~/strategy/risk-limits";
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
 import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
@@ -128,6 +133,9 @@ export function getStartupConfigSnapshot(
     resolved = {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       maxOptionSpreadPct: getMaxOptionSpreadPct(),
+      marginMaxEntrySpreadPct: getMarginMaxEntrySpreadPct(),
+      minOpenInterest: getMinOpenInterest(),
+      phantomQuoteGuardEnabled: isPhantomQuoteGuardEnabled(),
       intradayStopLossFloor: getIntradayStopLossFloor(),
       minIvRankPct: getMinIvRankPct(),
       marginTargetCallDelta: getMarginTargetCallDelta(),
