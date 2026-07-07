@@ -105,6 +105,17 @@ export function getGroupMarketValue(positionSnapshots: PositionQuoteSnapshot[]):
   );
 }
 
+// Total option contracts held across a group's snapshots (absolute lot count,
+// multiplier-agnostic — 15 long calls => 15). This is the unit the underlying
+// contract cap is expressed in: exit liquidity scales with lot count vs. the
+// book's depth, not with premium dollars.
+export function getGroupContractCount(positionSnapshots: PositionQuoteSnapshot[]): number {
+  return positionSnapshots.reduce(
+    (sum, snapshot) => sum + Math.abs(Number(snapshot.position.quantity) || 0),
+    0,
+  );
+}
+
 export function inferOptionSide(symbol: string): "call" | "put" | null {
   const trimmed = symbol.trim();
   const match = trimmed.match(/([CP])(\d+)$/i);

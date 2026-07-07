@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
+import {
+  getMarginDipTargetBoostMaxSpreadPct,
+  getMarginDipTargetBoostPct,
+  isDipBoostSuppressedByWideSpread,
+} from "~/strategy/risk-limits";
 import { getPositionFillSeedMultiplier, getScaledThresholds } from "~/strategy/seed-decision";
 import { computePositionGate } from "~/strategy/position-gate";
 import { getMaxAllocationBuyPositionMultiple } from "~/bot/actions/manage-allocation";
@@ -24,6 +28,22 @@ function withBoostEnv<T>(value: string | undefined, fn: () => T): T {
   }
 }
 
+function withSpreadSuppressionEnv<T>(value: string | undefined, fn: () => T): T {
+  const key = "STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_SPREAD_PCT";
+  const previous = process.env[key];
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+}
+
 test("dip boost is off by default", () => {
   withBoostEnv(undefined, () => {
     assert.equal(getMarginDipTargetBoostPct(-0.1, 8), 0);
@@ -38,12 +58,13 @@ test("dip boost requires good boolean signals", () => {
   });
 });
 
-test("dip boost scales with loss depth between 2% and 12%", () => {
+test("dip boost scales with MID loss depth between 2% and 12%", () => {
   withBoostEnv("0.25", () => {
+    // First arg is the MID return (fair value), not the ask.
     // At cost or shallow losses: no boost.
     assert.equal(getMarginDipTargetBoostPct(0, 8), 0);
     assert.equal(getMarginDipTargetBoostPct(-0.02, 8), 0);
-    // Midway (7% loss = halfway through the 2%-12% band): half the max.
+    // Midway (7% mid loss = halfway through the 2%-12% band): half the max.
     const midway = getMarginDipTargetBoostPct(-0.07, 8);
     assert.ok(Math.abs(midway - 0.125) < 1e-9, `expected 0.125, got ${midway}`);
     // At and beyond the deep end: full boost, no runaway scaling.
@@ -51,6 +72,91 @@ test("dip boost scales with loss depth between 2% and 12%", () => {
     assert.equal(getMarginDipTargetBoostPct(-0.3, 8), 0.25);
     // Gains never boost.
     assert.equal(getMarginDipTargetBoostPct(0.1, 8), 0);
+  });
+});
+
+// The WEN case (2026-07-06): ask stayed +1% to +7% while the bid ran −9% to
+// −18%. Under the old ask-based trigger the boost never fired despite a boolean
+// score of 6. With the mid-return basis, the mid is deep enough to fire.
+test("dip boost now fires when the ask is flat/up but the MID is down (WEN case)", () => {
+  withBoostEnv("0.25", () => {
+    // ask ≈ +5%, bid ≈ −15% → mid ≈ −5% (down through the 2% floor).
+    const askReturn = 0.05;
+    const bidReturn = -0.15;
+    const midReturn = (askReturn + bidReturn) / 2; // -0.05
+    // Old behavior (ask basis) would be 0; new behavior (mid basis) fires.
+    assert.equal(getMarginDipTargetBoostPct(askReturn, 6), 0, "ask-basis would not fire");
+    assert.ok(
+      getMarginDipTargetBoostPct(midReturn, 6) > 0,
+      "mid-basis fires on the same position",
+    );
+  });
+});
+
+test("dip boost does NOT fire for a genuinely healthy position (mid up)", () => {
+  withBoostEnv("0.25", () => {
+    // Both sides up: mid is positive, no dip regardless of a wide-ish spread.
+    assert.equal(getMarginDipTargetBoostPct(0.05, 8), 0);
+    // Mid barely below cost but inside the 2% deadband: still no boost.
+    assert.equal(getMarginDipTargetBoostPct(-0.015, 8), 0);
+  });
+});
+
+test("wide-spread suppression is off (non-binding) by default", () => {
+  // Absent → Infinity (never suppresses).
+  withSpreadSuppressionEnv(undefined, () => {
+    assert.equal(getMarginDipTargetBoostMaxSpreadPct(), Infinity);
+  });
+  // Blank env var resolves to the in-code default (off), never NaN.
+  withSpreadSuppressionEnv("", () => {
+    assert.equal(getMarginDipTargetBoostMaxSpreadPct(), Infinity);
+  });
+  // Non-positive is treated as unset (off).
+  withSpreadSuppressionEnv("-0.1", () => {
+    assert.equal(getMarginDipTargetBoostMaxSpreadPct(), Infinity);
+  });
+  withSpreadSuppressionEnv("0.15", () => {
+    assert.equal(getMarginDipTargetBoostMaxSpreadPct(), 0.15);
+  });
+});
+
+test("with suppression off, a wide spread does not block the boost (only ask→mid changes)", () => {
+  withBoostEnv("0.25", () => {
+    withSpreadSuppressionEnv(undefined, () => {
+      // 18%-wide spread, deep mid dip → still boosts (suppression is off).
+      assert.ok(getMarginDipTargetBoostPct(-0.07, 6, 0.18) > 0);
+    });
+  });
+});
+
+test("isDipBoostSuppressedByWideSpread only suppresses a known spread over a set ceiling", () => {
+  // Ceiling unset → never suppresses, regardless of spread.
+  withSpreadSuppressionEnv(undefined, () => {
+    assert.equal(isDipBoostSuppressedByWideSpread(0.5), false);
+    assert.equal(isDipBoostSuppressedByWideSpread(null), false);
+  });
+  withSpreadSuppressionEnv("0.15", () => {
+    assert.equal(isDipBoostSuppressedByWideSpread(0.18), true); // over ceiling
+    assert.equal(isDipBoostSuppressedByWideSpread(0.15), false); // exactly at ceiling
+    assert.equal(isDipBoostSuppressedByWideSpread(0.1), false); // under ceiling
+    // Unknown/degenerate spread degrades gracefully (no suppression).
+    assert.equal(isDipBoostSuppressedByWideSpread(null), false);
+    assert.equal(isDipBoostSuppressedByWideSpread(undefined), false);
+    assert.equal(isDipBoostSuppressedByWideSpread(Number.NaN), false);
+  });
+});
+
+test("with suppression on, a wide-spread position is suppressed but a tight one still boosts", () => {
+  withBoostEnv("0.25", () => {
+    withSpreadSuppressionEnv("0.15", () => {
+      // 18% spread > 15% threshold → suppressed (this is the WEN trap).
+      assert.equal(getMarginDipTargetBoostPct(-0.07, 6, 0.18), 0);
+      // 10% spread ≤ 15% threshold → the boost still applies.
+      assert.ok(getMarginDipTargetBoostPct(-0.07, 6, 0.1) > 0);
+      // Unknown/absent spread degrades gracefully: does NOT suppress.
+      assert.ok(getMarginDipTargetBoostPct(-0.07, 6, null) > 0);
+      assert.ok(getMarginDipTargetBoostPct(-0.07, 6, undefined) > 0);
+    });
   });
 });
 

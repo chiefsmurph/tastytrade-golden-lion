@@ -15,7 +15,7 @@ Companion to the runbook [2026-07-06-monday.md](2026-07-06-monday.md). Written a
 | 3 — Behavior live & safe | 🟢 GREEN | DTE cap, EOD-flat, re-eval guard, routes, liquidity logs all confirmed |
 | 4 — Strategy sane | 🟢 GREEN | Zero-target collapsed, honest skips, fallbacks, ledger populated |
 
-**Realized P&L: margin −$169.59 · cash +$38.00 · net −$131.59.** (Cash carries WEN + HTZ overnight, unrealized.) The tradeable day was essentially **WEN** in both accounts, plus exiting 07-02 cash holds.
+**Realized P&L: net negative — margin red, cash green** (margin ≈ −22% on the 15-lot WEN; cash +23% / +21% on the two ENVX exits). (Cash carries WEN + HTZ overnight, unrealized.) The tradeable day was essentially **WEN** in both accounts, plus exiting 07-02 cash holds.
 
 ## Checklist results (maps to runbook §3)
 
@@ -41,14 +41,14 @@ Companion to the runbook [2026-07-06-monday.md](2026-07-06-monday.md). Written a
 
 ## The day's lesson: WEN and the spread trap
 
-Margin's −$170 was a single **15-contract WEN lot stopped out at EOD −$160.86 (−12.3% bid)**. The mechanism is [stop-loss/spread coupling](../improvements/) in the flesh:
+Margin's loss was a single **15-contract WEN lot stopped out at EOD (−12.3% bid, ≈ −22% realized)**. The mechanism is [stop-loss/spread coupling](../improvements/) in the flesh:
 
 - WEN's option spread was **~18%** — it *just* cleared the 20% entry gate (`STRATEGY_MAX_OPTION_SPREAD_PCT`), with day-volume as thin as **4–20** contracts.
 - All day WEN's **ask stayed +1% to +7%** (≈flat on the mid) while the **bid ran −9% to −18%** — pure spread, not a real move.
 - The account accumulated to 15 lots via **normal MANAGE_ALLOCATION** (the ask looked healthy), reaching size in ~70 min (11:22→12:30).
 - The **−10% post-cutoff *bid* stop** then force-sold into that wide bid at EOD. An 18%-spread name is **born pre-stopped**.
 
-Cash, by contrast, made **+$38**, both from ENVX exits (overnight-reduction +$20/+23%, take-profit +$18/+21%). ENVX's close was blocked 06:30–08:07 by the morning spread gate (91%→32% spread), then filled cleanly at 10:33 once it tightened — the gate delayed, didn't trap.
+Cash, by contrast, was **green**, both from ENVX exits (overnight-reduction +23%, take-profit +21%). ENVX's close was blocked 06:30–08:07 by the morning spread gate (91%→32% spread), then filled cleanly at 10:33 once it tightened — the gate delayed, didn't trap.
 
 ## New findings → action items
 
