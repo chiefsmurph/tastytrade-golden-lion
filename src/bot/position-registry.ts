@@ -11,6 +11,39 @@ export interface PositionRegistryEntry {
   // Set when the close was written by broker reconciliation rather than a
   // close-order placement (which sets closingOrderId instead).
   closedVia?: "broker-reconcile";
+  // Entry-side context captured at open (IMPROVEMENTS.v8 #13). The registry
+  // spans open→close, so it is the natural carrier that lets the P&L ledger
+  // join entry quality (spread, gate score) onto the close-side row. Optional
+  // because pre-v8 entries and seed-path opens may not have it; backfilled by
+  // syncPositionOpens on a later cycle once the data is available.
+  entrySpreadPct?: number | null;
+  gateScoreAtEntry?: number | null;
+}
+
+// Spread + gate score observed at (or shortly after) open.
+export interface PositionEntryContext {
+  entrySpreadPct?: number | null;
+  gateScoreAtEntry?: number | null;
+}
+
+// Only fills entry-context fields that are currently missing — never overwrites
+// an already-recorded value, so the earliest observation wins even when a later
+// cycle re-supplies context. Returns whether anything changed.
+function mergeEntryContext(
+  entry: PositionRegistryEntry,
+  context: PositionEntryContext | undefined,
+): boolean {
+  if (!context) return false;
+  let changed = false;
+  if (entry.entrySpreadPct == null && context.entrySpreadPct != null) {
+    entry.entrySpreadPct = context.entrySpreadPct;
+    changed = true;
+  }
+  if (entry.gateScoreAtEntry == null && context.gateScoreAtEntry != null) {
+    entry.gateScoreAtEntry = context.gateScoreAtEntry;
+    changed = true;
+  }
+  return changed;
 }
 
 // Key format: `${accountNumber}:${SYMBOL}:${openDate}` e.g. "5WT12345:RUM:2026-06-28"
@@ -75,15 +108,25 @@ export async function recordPositionOpened(
   accountNumber: string,
   symbol: string,
   side: "call" | "put",
+  entryContext?: PositionEntryContext,
 ): Promise<void> {
   const data = await readRegistry();
-  if (openEntryForSymbol(data, accountNumber, symbol)) return;
+  const existing = openEntryForSymbol(data, accountNumber, symbol);
+  if (existing) {
+    // Already tracked as open; only backfill any missing entry context.
+    if (mergeEntryContext(existing[1], entryContext)) {
+      await writeRegistry(data);
+    }
+    return;
+  }
   const key = registryKey(accountNumber, symbol, todayDate());
   data[key] = {
     accountNumber,
     symbol: symbol.trim().toUpperCase(),
     side,
     openedAt: new Date().toISOString(),
+    entrySpreadPct: entryContext?.entrySpreadPct ?? null,
+    gateScoreAtEntry: entryContext?.gateScoreAtEntry ?? null,
   };
   await writeRegistry(data);
 }
@@ -92,6 +135,7 @@ export interface PositionOpenSnapshot {
   symbol: string;
   side: "call" | "put";
   openedAt: string;
+  entryContext?: PositionEntryContext;
 }
 
 // Shape of an evaluated position group that the snapshot helpers below
@@ -119,8 +163,9 @@ function hasOpenQuantity(group: RegistryGroupSource): boolean {
 // processing, and backfilling one would overwrite the just-written closedAt
 // on the same-day registry entry (same account:symbol:date key), resurrecting
 // it as a phantom OPEN entry that then never closes.
-export function toPositionOpenSnapshots(
-  groups: RegistryGroupSource[],
+export function toPositionOpenSnapshots<T extends RegistryGroupSource>(
+  groups: T[],
+  getEntryContext?: (group: T) => PositionEntryContext | undefined,
 ): PositionOpenSnapshot[] {
   const snapshots: PositionOpenSnapshot[] = [];
 
@@ -135,7 +180,13 @@ export function toPositionOpenSnapshots(
       .filter((value): value is string => Boolean(value));
     if (createdAts.length === 0) continue;
 
-    snapshots.push({ symbol, side, openedAt: createdAts.sort()[0] });
+    const entryContext = getEntryContext?.(group);
+    snapshots.push({
+      symbol,
+      side,
+      openedAt: createdAts.sort()[0],
+      ...(entryContext ? { entryContext } : {}),
+    });
   }
 
   return snapshots;
@@ -170,13 +221,23 @@ export async function syncPositionOpens(
   let changed = false;
 
   for (const snapshot of snapshots) {
-    if (openEntryForSymbol(data, accountNumber, snapshot.symbol)) continue;
+    const existing = openEntryForSymbol(data, accountNumber, snapshot.symbol);
+    if (existing) {
+      // Position already tracked (e.g. opened via a seed path that had no gate
+      // data): backfill entry context if this cycle now has it (v8 #13).
+      if (mergeEntryContext(existing[1], snapshot.entryContext)) {
+        changed = true;
+      }
+      continue;
+    }
     const key = registryKey(accountNumber, snapshot.symbol, snapshot.openedAt.slice(0, 10));
     data[key] = {
       accountNumber,
       symbol: snapshot.symbol.trim().toUpperCase(),
       side: snapshot.side,
       openedAt: snapshot.openedAt,
+      entrySpreadPct: snapshot.entryContext?.entrySpreadPct ?? null,
+      gateScoreAtEntry: snapshot.entryContext?.gateScoreAtEntry ?? null,
     };
     changed = true;
   }
