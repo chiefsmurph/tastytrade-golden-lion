@@ -22,7 +22,9 @@ import {
   isOvernightPosition,
   syncPositionOpens,
   getRegistryEntry,
-  PositionOpenSnapshot,
+  reconcileWithBrokerPositions,
+  toHeldUnderlyingSymbols,
+  toPositionOpenSnapshots,
 } from "./position-registry";
 import { buildPnlLedgerEntries, appendPnlLedgerEntries, LedgerEntryContext } from "./pnl-ledger";
 import { executeOvernightReductions } from "./overnight-position-reduction";
@@ -54,39 +56,15 @@ function computeEntrySpreadPct(evaluation: PositionGroupEvaluation): number | nu
   return (ask - bid) / mid;
 }
 
-function toPositionOpenSnapshots(
-  evaluations: PositionGroupEvaluation[],
-): PositionOpenSnapshot[] {
-  const snapshots: PositionOpenSnapshot[] = [];
-
-  for (const evaluation of evaluations) {
-    const symbol = String(evaluation.underlyingSymbol ?? "").toUpperCase();
-    const side = evaluation.groupKey?.split("::")[1];
-    if (!symbol || (side !== "call" && side !== "put")) continue;
-
-    const createdAts = evaluation.positions
-      .map((position) => position["created-at"])
-      .filter((value): value is string => Boolean(value));
-    if (createdAts.length === 0) continue;
-
-    // Entry-side quality snapshot (v8 #13). syncPositionOpens only records this
-    // on the first cycle a position is seen open (or backfills it if missing),
-    // so it captures spread/gate score at — or shortly after — entry.
-    const gateScoreAtEntry =
-      evaluation.executionTargets?.positionGate?.signals.goodBooleanScore ?? null;
-
-    snapshots.push({
-      symbol,
-      side,
-      openedAt: createdAts.sort()[0],
-      entryContext: {
-        entrySpreadPct: computeEntrySpreadPct(evaluation),
-        gateScoreAtEntry,
-      },
-    });
-  }
-
-  return snapshots;
+// Entry-side quality snapshot (v8 #13). syncPositionOpens only records this
+// on the first cycle a position is seen open (or backfills it if missing),
+// so it captures spread/gate score at — or shortly after — entry.
+function toEntryContext(evaluation: PositionGroupEvaluation) {
+  return {
+    entrySpreadPct: computeEntrySpreadPct(evaluation),
+    gateScoreAtEntry:
+      evaluation.executionTargets?.positionGate?.signals.goodBooleanScore ?? null,
+  };
 }
 
 async function withOvernightCloseOverrides(
@@ -234,11 +212,41 @@ export default async function runBotCycle(
   console.log({ accountNumber: context.preview.accountNumber, run: "bot-cycle" });
   logCycle(context);
 
+  // Reconcile the registry against what the broker actually holds before
+  // anything reads it this cycle. Tracked-but-not-held OPEN entries otherwise
+  // persist indefinitely and poison isOvernightPosition / position-age reads
+  // for any re-entry of the symbol (a stale margin entry force-closes fresh
+  // re-entries via the overnight override below). completedEvaluations is the
+  // full broker snapshot — including do-not-touch groups — so a held position
+  // (e.g. a legitimate overnight cash hold) is never mistaken for stale;
+  // quantity-0 rows (same-day closed positions the API still lists) count as
+  // not held. Fail-safe: a failed position fetch throws in
+  // buildRunCycleContext above, so reconciliation only ever runs against a
+  // successfully fetched snapshot.
+  const reconciledEntries = await reconcileWithBrokerPositions(
+    context.preview.accountNumber,
+    toHeldUnderlyingSymbols(context.completedEvaluations),
+  );
+  if (reconciledEntries.length > 0) {
+    console.log(
+      JSON.stringify({
+        scope: "position-registry-reconcile",
+        accountNumber: context.preview.accountNumber,
+        message: "tracked-but-not-held registry entries marked closed",
+        entries: reconciledEntries.map((entry) => ({
+          symbol: entry.symbol,
+          side: entry.side,
+          openedAt: entry.openedAt,
+        })),
+      }),
+    );
+  }
+
   // Backfill registry opens from broker created-at before anything reads
   // isOvernightPosition/getPositionAgeDays this cycle.
   await syncPositionOpens(
     context.preview.accountNumber,
-    toPositionOpenSnapshots(context.evaluationsWithGroupTargets),
+    toPositionOpenSnapshots(context.evaluationsWithGroupTargets, toEntryContext),
   );
 
   const evaluationsForExecution =

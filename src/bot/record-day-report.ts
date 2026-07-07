@@ -1,5 +1,6 @@
 import { getAccountBalanceNumber } from "~/core/account-balance";
 import { TastytradeAccountBalance } from "~/core/types";
+import { EOD_FORCED_CLOSE_MINUTE } from "~/strategy/spread-thresholds";
 import { buildRunCycleContext } from "./run-cycle-context";
 import {
   appendDayReport,
@@ -11,10 +12,18 @@ import {
 } from "./day-report-store";
 import type { RunGroupReturn } from "./run-history";
 
-const ONE_PM_PST_MINUTES = 13 * 60; // 780
+// The day-report snapshot must be recorded on the last *live* cycle of the day.
+// The scheduler only calls runBotCycle while the regular equities session is
+// open, which ends at 1:00 PM PT — so a gate at 1:00 PM never overlaps a running
+// cycle and the report never writes. Anchor to the margin EOD forced-close
+// minute (12:55 PM PT) instead: by then the day's liquidation has run, yet the
+// market is still open, so the final pre-close cycle captures the settled
+// end-of-day state. The once-per-day dedup in maybeRecordDayReport keeps this to
+// a single write per account even though several cycles now pass the gate.
+const DAY_REPORT_MINUTE = EOD_FORCED_CLOSE_MINUTE; // 12:55 PM PT
 
 export function isDayReportTime(): boolean {
-  return getPstTimeInMinutes() >= ONE_PM_PST_MINUTES;
+  return getPstTimeInMinutes() >= DAY_REPORT_MINUTE;
 }
 
 function buildGroupsFromRunGroups(runGroups: RunGroupReturn[]): DayReportGroup[] {
