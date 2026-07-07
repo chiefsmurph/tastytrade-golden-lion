@@ -434,6 +434,12 @@ export async function buildRunCycleContext(
       weightedAverageFill > 0
         ? (currentMidPrice - weightedAverageFill) / weightedAverageFill
         : 0;
+    // Bid return drives the bid-safety gate inside getMarginDipTargetBoostPct:
+    // suppresses the dip boost when the bid is already near the stop-loss floor.
+    const bidReturnPerc =
+      weightedAverageFill > 0
+        ? (currentBidPrice - weightedAverageFill) / weightedAverageFill
+        : 0;
     // Current bid/ask spread as a fraction of mid, for wide-spread suppression
     // of the dip boost. Null when the mid is non-positive so an absent/degenerate
     // quote degrades gracefully (does not suppress) rather than reading as 0.
@@ -481,6 +487,7 @@ export async function buildRunCycleContext(
         midReturnPerc,
         goodBooleanScore,
         dipSpreadFraction,
+        bidReturnPerc,
       );
       const scaledTargetAccountExposure =
         finalTargets.targetAccountExposure * marginMaxTargetPct;
@@ -498,6 +505,7 @@ export async function buildRunCycleContext(
           dipTargetBoostPct,
           askReturnPerc,
           midReturnPerc,
+          bidReturnPerc,
           dipSpreadFraction,
           originalTargetPct: finalTargets.targetAccountExposure,
           effectiveTargetPct: scaledTargetAccountExposure,
@@ -580,7 +588,9 @@ export async function buildRunCycleContext(
   // read the last N cycles, build each underwater group's price series
   // (oldest → newest + this cycle), and log a stabilization signal. Log-only —
   // gates nothing yet; the point is to see whether adds land into free-falls.
-  const stabilizationHistory = await getRecentRunHistory(12, resolvedAccountNumber);
+  const stabilizationHistory = (await getRecentRunHistory(12, resolvedAccountNumber)).filter(
+    (entry) => entry.entryType !== "error",
+  );
   for (const evaluation of completedEvaluations) {
     if (evaluation.currentReturn >= 0) {
       continue;

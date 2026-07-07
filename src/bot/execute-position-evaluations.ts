@@ -35,6 +35,7 @@ import {
 } from "./do-not-touch-groups";
 import {
   isMarginSeedFromCashOrderSource,
+  isOvernightReductionOrderSource,
   isSecretAutoSeedOrderSource,
 } from "./order-sources";
 import { isOvernightPosition } from "./position-registry";
@@ -45,6 +46,9 @@ export interface CancelOrderResult {
   orderId: number;
   response?: TastytradeOrder;
   skippedReason?: string;
+  // Populated for overnight-reduction orders that were skipped (not cancelled)
+  // so callers can build the set of live overnight reduction symbols.
+  underlyingSymbol?: string;
 }
 
 export interface PositionEvaluationExecutionResult {
@@ -54,12 +58,33 @@ export interface PositionEvaluationExecutionResult {
   evaluations: PositionGroupEvaluation[];
 }
 
+// In-memory cache of order IDs confirmed as terminal (filled, cancelled, etc.)
+// keyed by account number. Survives the bot session; cleared on restart.
+// Prevents repeated cancel attempts and log noise for orders the broker
+// continues to surface via getLiveOrders after they have reached a terminal state.
+const terminalOrderIdsByAccount = new Map<string, Set<number>>();
+
+function getTerminalOrderIds(accountNumber: string): Set<number> {
+  let ids = terminalOrderIdsByAccount.get(accountNumber);
+  if (!ids) {
+    ids = new Set<number>();
+    terminalOrderIdsByAccount.set(accountNumber, ids);
+  }
+  return ids;
+}
+
+function markOrderTerminal(accountNumber: string, orderId: number): void {
+  getTerminalOrderIds(accountNumber).add(orderId);
+}
+
+
 function isTerminalOrderStatus(status: string | undefined): boolean {
   return ["Cancelled", "Canceled", "Filled", "Expired", "Rejected", "Removed", "Partially Removed"].includes(
     status ?? "",
   );
 }
 
+// fallow-ignore-next-line complexity
 export async function cancelAllLiveOrders(
   accountNumber?: string,
 ): Promise<CancelOrderResult[]> {
@@ -75,6 +100,7 @@ export async function cancelAllLiveOrders(
     resolvedAccountNumber,
   );
 
+  const terminalIds = getTerminalOrderIds(resolvedAccountNumber);
   const results: CancelOrderResult[] = [];
   for (const order of liveOrders) {
     const orderId = Number(order.id);
@@ -82,7 +108,14 @@ export async function cancelAllLiveOrders(
       continue;
     }
 
+    // Skip orders already confirmed terminal in a prior cycle — no API call,
+    // no log entry. We re-learn on restart (one extra failed cancel is fine).
+    if (terminalIds.has(orderId)) {
+      continue;
+    }
+
     if (!order.cancellable || isTerminalOrderStatus(order.status)) {
+      markOrderTerminal(resolvedAccountNumber, orderId);
       results.push({
         cancelled: false,
         orderId,
@@ -109,6 +142,18 @@ export async function cancelAllLiveOrders(
       continue;
     }
 
+    if (isOvernightReductionOrderSource(order.source)) {
+      const underlyingSymbol =
+        String(order["underlying-symbol"] ?? "").toUpperCase() || undefined;
+      results.push({
+        cancelled: false,
+        orderId,
+        skippedReason: "protected overnight reduction order",
+        underlyingSymbol,
+      });
+      continue;
+    }
+
     if (isOrderDoNotTouch(order, doNotTouchGroupKeys)) {
       results.push({
         cancelled: false,
@@ -118,15 +163,33 @@ export async function cancelAllLiveOrders(
       continue;
     }
 
-    const response = await tastytradeApi.orderService.cancelOrder(
-      resolvedAccountNumber,
-      orderId,
-    );
-    results.push({
-      cancelled: true,
-      orderId,
-      response,
-    });
+    try {
+      const response = await tastytradeApi.orderService.cancelOrder(
+        resolvedAccountNumber,
+        orderId,
+      );
+      results.push({
+        cancelled: true,
+        orderId,
+        response,
+      });
+    } catch (err) {
+      // If the broker rejects the cancel because the order is already terminal,
+      // cache the order ID so we don't attempt it again next cycle.
+      const message = err instanceof Error ? err.message : String(err);
+      const isNotCancellable =
+        /not cancell?able/i.test(message) ||
+        /already.*(?:filled|cancelled|canceled|expired|rejected)/i.test(message) ||
+        /order.*(?:filled|cancelled|canceled|expired|rejected)/i.test(message);
+      if (isNotCancellable) {
+        markOrderTerminal(resolvedAccountNumber, orderId);
+      }
+      results.push({
+        cancelled: false,
+        orderId,
+        skippedReason: `cancel failed: ${message}`,
+      });
+    }
   }
 
   return results;
