@@ -1,8 +1,8 @@
 import tastytradeApi from "./tastytrade-client";
 import { restartOnFatalQuoteStreamerError } from "./quote-streamer-recovery";
+import { ensureQuoteStreamerSessionConnected } from "./quote-streamer-session";
 
 type QuoteEvent = Record<string, any>;
-let quoteStreamerConnectPromise: Promise<void> | null = null;
 
 function toNumber(value: unknown): number | null {
   if (value == null) return null;
@@ -128,22 +128,16 @@ async function withQuoteSubscription<T>(
   });
 }
 
+// Connects via quote-streamer-session, which owns the dxLink client so the
+// session can be torn down for real on shutdown/recovery. Single-flight and
+// the dxLinkFeed presence check live inside the session module.
 async function ensureQuoteStreamerConnected(): Promise<void> {
-  if (tastytradeApi.quoteStreamer.dxLinkFeed) {
-    return;
+  try {
+    await ensureQuoteStreamerSessionConnected();
+  } catch (error) {
+    restartOnFatalQuoteStreamerError("quoteStreamer.connect", error);
+    throw error;
   }
-
-  quoteStreamerConnectPromise ??= tastytradeApi.quoteStreamer
-    .connect()
-    .catch((error) => {
-      restartOnFatalQuoteStreamerError("quoteStreamer.connect", error);
-      throw error;
-    })
-    .finally(() => {
-      quoteStreamerConnectPromise = null;
-    });
-
-  await quoteStreamerConnectPromise;
 }
 
 export async function getBidAskForSymbol(
