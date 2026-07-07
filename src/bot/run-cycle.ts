@@ -9,6 +9,7 @@ import {
   MultiAccountRunCyclePreview,
 } from "./run-cycle-context";
 import { maybeRecordDayReport } from "./record-day-report";
+import { maybeRecordOpenSnapshot } from "./open-snapshot";
 import {
   logRunSnapshot,
   logGroupReturns,
@@ -469,6 +470,17 @@ export default async function runBotCycle(
     );
   } catch (error) {
     console.error("Failed to record day report:", error);
+  }
+
+  try {
+    await maybeRecordOpenSnapshot(
+      context.preview.accountNumber,
+      context.accountBalances,
+      context.preview.groups,
+      context.preview.snapshot.totalCapital,
+    );
+  } catch (error) {
+    console.error("Failed to record open snapshot:", error);
   }
 
   return runHistoryEntry;

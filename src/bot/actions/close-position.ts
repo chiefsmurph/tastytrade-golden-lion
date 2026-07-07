@@ -51,6 +51,10 @@ export interface ClosePositionDependencies {
   // Account type for the execution-time strategy re-check — cutoff minutes and
   // the EOD liquidation rule differ by account type.
   accountType?: StrategyAccountType;
+  // Operator-initiated surgical close: bypass the morning spread gate so an
+  // illiquid position can be flattened on demand regardless of spread. Only the
+  // manual IPC close path sets this — the cycle never does.
+  forceThroughSpreadGate?: boolean;
 }
 
 function getMinTickSize(referencePrice: number): number {
@@ -209,7 +213,9 @@ export async function closePosition(
   );
   let remainingToClose = dependencies.maxQuantityToClose ?? Infinity;
 
-  const morningSpreadGate = shouldSkipClosePositionForMorningSpread(evaluation);
+  const morningSpreadGate = dependencies.forceThroughSpreadGate
+    ? { shouldSkip: false as const }
+    : shouldSkipClosePositionForMorningSpread(evaluation);
   if (morningSpreadGate.shouldSkip) {
     return evaluation.positionSnapshots.map((snapshot) => ({
       accountNumber,

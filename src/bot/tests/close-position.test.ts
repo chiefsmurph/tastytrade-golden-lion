@@ -185,6 +185,37 @@ test("closePosition skips all order placement when the morning gate is active", 
   assert.match(results[0]?.skippedReason ?? "", /Morning spread gate active/);
 });
 
+test("closePosition forceThroughSpreadGate bypasses the morning gate (manual bailout)", async () => {
+  // Mirrors the stranded-EOSE case: a wide-spread group whose current action is
+  // MANAGE_ALLOCATION (so the execution-time flip re-check is not in play), which
+  // the morning gate would normally block. An operator close (bot:closePosition)
+  // sets forceThroughSpreadGate to flatten it anyway.
+  const evaluation = buildEvaluation("2026-06-25T06:30:00", {
+    metrics: {
+      currentAskPrice: 1.12,
+      currentBidPrice: 1.00,
+      currentTime: new Date("2026-06-25T06:30:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1,
+    },
+    strategy: { action: "MANAGE_ALLOCATION", reason: "test" },
+  });
+
+  let createOrderCalls = 0;
+  const results = await closePosition("ACC-1", evaluation, {
+    forceThroughSpreadGate: true,
+    createOrder: async () => {
+      createOrderCalls += 1;
+      return { order: { id: "1" } } as never;
+    },
+    checkOrderFilled: async () => true,
+  });
+
+  assert.equal(createOrderCalls, 1);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.placedOrder, true);
+});
+
 test("closePosition chases sell-to-close from midpoint down to bid", async () => {
   // Fill 1.6 vs bid 1.0 → -37.5%: the stop trigger holds at execution-time
   // prices, so the re-check confirms the close and the chase proceeds.

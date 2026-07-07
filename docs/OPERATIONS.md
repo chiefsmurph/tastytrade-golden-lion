@@ -9,6 +9,7 @@ Ordered by "if this is wrong, stop and fix before reading further" — same phil
 ### 1. Did anything break? (2 min)
 
 - **Secret-server log stream**: any `tastytrade-golden-lion ERROR [...]` lines? (`cycle-exception`, `cancel-orders-failed`.) Each one is a real incident — investigate before anything else. INFO lines (`hard-risk-close`, `position-closed`, `position-built`) are normal activity.
+  - **Zero lines all day is itself a finding** (as of 07-06 the emit path is UNVALIDATED end-to-end): the client emits a `client:act` event and logs a local breadcrumb on every `notifyEvent`. Breadcrumbs in pm2 out-log but nothing on the secret server = event-name/handler mismatch server-side; no breadcrumbs either = the events never fired (fine on a quiet day) or the socket was down.
 - **Error-typed run-history entries**: `node run bot:getRecentRunHistory 60` — any entries with an `error` field mean a cycle exploded mid-execution; orders may have been placed before the throw.
 - **Restart count**: `grep -c 'Exiting for PM2 restart' <pm2 error log>` — expect ~0–3. A spike means the crash-loop is back and every downstream signal that day is suspect.
 
@@ -66,6 +67,15 @@ The point: nearly every open strategy item in [improvements/STATUS.md](improveme
 
 14. Re-read the daily one-liners from step 5 — recurring "weird" notes are the discovery backlog for the next improvements pass.
 15. Reconcile: STATUS.md AFTER-MONDAY items whose data question is now answered move to "build"; anything two weeks of data didn't touch probably wasn't worth tracking — cut or demote it.
+
+## Server / pm2 gotchas (learned 2026-07-05, the hard way)
+
+The deploy box runs **multiple pm2 apps under one daemon** — golden-lion is not alone. Rules that follow from that:
+
+- **Never `pm2 kill` casually** — it takes down *every* app the daemon manages, not just ours. Prefer `pm2 delete tastytrade-golden-lion` + `pm2 start ecosystem.config.cjs` for our app alone.
+- **If the roster is ever lost**: `pm2 resurrect` restores from `~/.pm2/dump.pm2`. If a bad `pm2 save` overwrote it, the previous roster is in `~/.pm2/dump.pm2.bak` — copy it back and resurrect. Last resort: `ls ~/.pm2/logs/` is a complete roster of every app name that ever ran.
+- **`pm2 save` snapshots the *current* list** — never save while apps are missing; you overwrite the good dump (`.bak` then holds the only copy).
+- **Node version**: the deploy shell's default node was v20 (no global `WebSocket` → the streamer throws `WebSocket is not defined`). The app needs v24; `ecosystem.config.cjs` pins `interpreter: process.execPath`, so **always run `pm2 start` from a shell where `node -v` says v24** (`nvm use 24`, or better `nvm alias default 24` once). The pm2 `startup` boot hook snapshots PATH at generation time — regenerate it after changing the default node.
 
 ## Cadence summary
 
