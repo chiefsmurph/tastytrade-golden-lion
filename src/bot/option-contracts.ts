@@ -11,6 +11,11 @@ const STRIKES_AROUND_ATM = 2;
 const MIN_VOLUME = 120;
 
 export interface OptionCandidateSelectionOptions {
+  // Account context for the entry liquidity/spread gate during candidate
+  // selection (margin gets a tighter entry-spread ceiling — see
+  // ~/strategy/liquidity-gate). Not used for strike/expiration selection;
+  // omitted/"unknown" uses the shared gate.
+  accountType?: "margin" | "cash" | "unknown";
   maxDTE?: number;
   minDTE?: number;
   preferredDTE?: number;

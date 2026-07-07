@@ -1,6 +1,6 @@
 # Improvements — consolidated status
 
-**This is the live tracker.** `IMPROVEMENTS.v1`–`v7` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-04 against committed code (v5 items folded in same day; v6 and v7 folded 2026-07-04).
+**This is the live tracker.** `IMPROVEMENTS.v1`–`v8` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-06 against committed code (v5 folded same day; v6/v7 folded 2026-07-04; v8 — the first production-data pass — folded 2026-07-06).
 
 > **Static-analysis (fallow) findings live in their own tracker: [FALLOW.md](FALLOW.md)** — complexity/dead-code/duplication/circular-dep work, plus the gate's gotchas. Start there for "let's address fallow findings."
 
@@ -8,7 +8,7 @@ Three buckets, as requested: **DONE** (shipped this session, under the `monday-2
 
 *(fable)* = use Fable 5 for implementation — safety-critical logic, multi-site correctness bugs where a subtle mistake silently gives wrong answers, or new architectural mechanisms with non-obvious invariants. Everything else is fine on Sonnet/Opus.
 
-Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (2026-07-03 second pass) added **20 new items** — 10 code, 10 profitability. v6 (copilot pass, same day) added **20 more** — 8 code/ops, 9 strategy, 3 infra — none overlapping v1–v5. v7 (2026-07-04 brother's-branch review) added **8 residuals**. All folded into the buckets below.
+Reality check: of ~45 distinct items catalogued across v1–v4, roughly **18 are done** — almost all bugs/safety/plumbing. The **strategy/profitability work is largely untouched** and lives in the AFTER-MONDAY bucket by design (most needs live data to tune). v5 (2026-07-03 second pass) added **20 new items** — 10 code, 10 profitability. v6 (copilot pass, same day) added **20 more** — 8 code/ops, 9 strategy, 3 infra — none overlapping v1–v5. v7 (2026-07-04 brother's-branch review) added **8 residuals**. v8 (2026-07-06) is the **first production-data pass** — 13 items from the verified Monday session, each backed by a dollar cost or log count rather than a code read; several *promote* an existing hypothesis to confirmed-with-evidence. All folded into the buckets below.
 
 ---
 
@@ -87,10 +87,11 @@ Rationale: landing the log-only diagnostics before Monday means Monday's run cap
 > **Reclassified 2026-07-05:** 8 items moved up to 🟢 PULL-FORWARD above (safe before Monday): v5 #6, v6 ops #9, v6 strategy #12, v6 strategy #18, v7 #2, v7 #5, v7 #8, plus config-drift docs (v4 #51 remainder). Their entries in the lists below are the discovery detail.
 
 ### Blocked on Monday's data (don't guess — tune from distributions)
-- **Unsignalled base tier vs no-trade** — the "target exposure is zero" #1-skip decision; verify it collapses now that the crash loop is fixed before building anything. (v3, v4 #1)
-- **Seed IV-fallback bars (50/70)** — MARA read 35; may be unreachable. (v4 #3 followup)
-- **Liquidity gating steps 2–3** — OI floor + phantom-quote guard, then liquidity score + size-aware chasing; thresholds from step-1 logs. (v4 #4)
-- **Dip-boost ≥4 vs ≥7 boolean bar.** (open tuning Q)
+> **Monday (v8) delivered the data — see the annotations below and [IMPROVEMENTS.v8-prod-data.md](IMPROVEMENTS.v8-prod-data.md).**
+- **Unsignalled base tier vs no-trade** — the "target exposure is zero" #1-skip decision; verify it collapses now that the crash loop is fixed before building anything. (v3, v4 #1) **→ Monday: collapsed to ~3% margin / ~10% cash (was 35% / 78%); residual is cold-cache morning noise, not a base-tier gap. Don't build yet; re-check once the dxLink loop (v8 #6) is fixed.**
+- **Seed IV-fallback bars (50/70)** — MARA read 35; may be unreachable. (v4 #3 followup) **→ Monday: no new evidence — ranks in play were 42–83, booleans weren't dark.**
+- **Liquidity gating steps 2–3** — OI floor + phantom-quote guard, then liquidity score + size-aware chasing; thresholds from step-1 logs. (v4 #4) **→ Monday: step-1 data confirmed flowing (real sizes/vol/OI); WEN's 18% spread + vol 4–20 cost the day's loss — this is the go-signal. See v8 #2.**
+- **Dip-boost ≥4 vs ≥7 boolean bar.** (open tuning Q) **→ Monday: moot until the trigger metric is fixed — the boost reads *ask*-return and is blind to bid-side spread pain; never fired despite booleans=6. See v8 #3.**
 
 ### Behavior-changing strategy work (build any time, deploy after Monday clears)
 - **Stop-loss grace period + mid-based catastrophic floor, and move the stop above the 10-min cooldown** *(fable)* — the LCID-churn fix; the one item robust to whatever Monday shows (best "build now" candidate). (v1, v3, v4 #5 + #39)
@@ -168,3 +169,30 @@ Strategy/profitability:
 - **Aggressiveness boost largest for lowest-conviction signals** — flat +100/+200 `buyWeight` addition has 100–200% effect on low-weight signals, ≤14% on high-weight; scale boost by remaining headroom instead. (v6 strategy #15)
 - **Cross-account aggregate exposure untracked** *(fable)* — each account independently allocates up to `maxTargetPct` on the same symbol; add optional `STRATEGY_MAX_COMBINED_SYMBOL_EXPOSURE_PCT`. (v6 strategy #16)
 - **Small-order execution weight mismatch** — floor+greedy can silently collapse a 3-contract order to bid/mid only; log actual executed weight split alongside configured weights. (v6 strategy #18)
+
+---
+
+### New in v8 (2026-07-06 first production-data pass — see [IMPROVEMENTS.v8-prod-data.md](IMPROVEMENTS.v8-prod-data.md))
+
+Every item is evidence-backed by the verified Monday session (net negative; all-WEN day; full writeup in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md)). Priority: **#6 (dxLink) and #11 (registry leak) should NOT wait for the 1–2-week review.**
+
+Infra/reliability:
+- **dxLink session-limit restart loop** *(fable)* — 23 restarts from `UNAUTHORIZED: number of user sessions exceeded limit` (login U0001058779); self-reinforcing (a restart orphans a session before it expires). Tear down the streamer session on SIGTERM + find any 2nd consumer of the login. The 07-06 analog of the 07-02 restart storm — same symptom, new root cause; backoff kept the 06:30→10:24 prime window clean. **Top priority.** `src/core/quote-streamer-recovery.ts`. (v8 #6)
+- **Streamer fault → process-restart amplifies the fault** — for connectivity faults, attempt in-process reconnect-with-backoff before process-exit; reserve exit for unrecoverable state. Adjacent to v8 #6. (v8 #7)
+
+Strategy/profitability:
+- **Entry spread gate (20%) too loose** — WEN entered at ~18%, born pre-stopped, force-sold 15 lots into an 18% bid at EOD at ≈ −22% realized. Tighter buy-side threshold and/or the liquidity floor below. **Promotes v4 #5 (stop/spread coupling) from hypothesis to confirmed-with-cost.** (v8 #1)
+- **Promote liquidity gating to step-2 floors** — this is the **go-signal for v4 #4** (above): step-1 logging worked, and WEN (vol 4–20, sizeless asks) is the worked example of what to gate. OI floor + phantom-quote guard, unknown-degrades-gracefully. (v8 #2)
+- **Dip boost reads the wrong side of the market** — triggers on ask-return, blind to bid-side spread pain; never fired despite booleans=6. Re-derive "dip" on mid/bid. **Supersedes the "≥4 vs ≥7 boolean bar" tuning-Q framing.** `src/strategy/risk-limits.ts`. (v8 #3)
+- **Alloc-buy multiple compounds** — 3×-per-add reached a 15-lot in ~70 min; bound it to a session-start baseline or an absolute per-underlying cap. `src/bot/actions/manage-allocation.ts`. (v8 #4)
+- **Single-name buy funnel** — only WEN was buy-eligible all day (5 names evaluated, 1 considered for buys); 100% of new risk in one illiquid name. Mostly dissolved by v8 #2; a per-underlying ceiling is the backstop (adjacent v6 strategy #16). (v8 #5)
+
+Ops/observability:
+- **Notifications have no local breadcrumb** — `hard-risk-close`/`position-closed`/`position-built` emit to the secret server with zero local trace; EOD check #16 unverifiable from the bot's own logs. Log a line in `src/bot/notify.ts`. Merge-safe. (v8 #8)
+- **`eod-stop` conflates the price stop with the clock liquidation** — `src/bot/pnl-ledger.ts:64` maps every "End-of-day risk management" reason to one type, so the −10% post-cutoff stop and the 12:50 clock liquidation are indistinguishable; breaks the stops-vs-liquidation attribution OPERATIONS §3/§6 needs. Give the clock liquidation a distinct decisionType. (v8 #9)
+- **`scripts/pull-today.sh` doesn't grab `data/ledger/`** — the artifact the daily EOD routine depends on; had to scp by hand. Merge-safe. (v8 #10)
+
+Data/bookkeeping:
+- **Registry leaks closed margin positions** *(fable)* — margin MARA/CLSK from 07-02 still show `OPEN` (impossible; margin flattens daily); close-back never written. Reconcile against live broker positions at cycle start. **Correctness** — check whether any consumer (sizing/do-not-touch/dedupe) trusts stale entries before sizing severity. `src/bot/position-registry.ts`. (v8 #11)
+- **Day-report writer is dead** — `data/day-reports/*` frozen at June 30 with null fields; wire `record-day-report` back into the cycle or delete if the ledger supersedes it. (v8 #12)
+- **Ledger entry-side enrichment never populated** — `entrySpreadPct`/`gateScoreAtEntry` null on every row. **This is the reserved gap from v5 code #3** — carry entry context via the registry (open→close). Unlocks the entry-quality attribution OPERATIONS §6 needs and the proof for v8 #1. (v8 #13)

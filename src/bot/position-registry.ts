@@ -8,6 +8,42 @@ export interface PositionRegistryEntry {
   openedAt: string;
   closingOrderId?: string;
   closedAt?: string;
+  // Set when the close was written by broker reconciliation rather than a
+  // close-order placement (which sets closingOrderId instead).
+  closedVia?: "broker-reconcile";
+  // Entry-side context captured at open (IMPROVEMENTS.v8 #13). The registry
+  // spans open→close, so it is the natural carrier that lets the P&L ledger
+  // join entry quality (spread, gate score) onto the close-side row. Optional
+  // because pre-v8 entries and seed-path opens may not have it; backfilled by
+  // syncPositionOpens on a later cycle once the data is available.
+  entrySpreadPct?: number | null;
+  gateScoreAtEntry?: number | null;
+}
+
+// Spread + gate score observed at (or shortly after) open.
+export interface PositionEntryContext {
+  entrySpreadPct?: number | null;
+  gateScoreAtEntry?: number | null;
+}
+
+// Only fills entry-context fields that are currently missing — never overwrites
+// an already-recorded value, so the earliest observation wins even when a later
+// cycle re-supplies context. Returns whether anything changed.
+function mergeEntryContext(
+  entry: PositionRegistryEntry,
+  context: PositionEntryContext | undefined,
+): boolean {
+  if (!context) return false;
+  let changed = false;
+  if (entry.entrySpreadPct == null && context.entrySpreadPct != null) {
+    entry.entrySpreadPct = context.entrySpreadPct;
+    changed = true;
+  }
+  if (entry.gateScoreAtEntry == null && context.gateScoreAtEntry != null) {
+    entry.gateScoreAtEntry = context.gateScoreAtEntry;
+    changed = true;
+  }
+  return changed;
 }
 
 // Key format: `${accountNumber}:${SYMBOL}:${openDate}` e.g. "5WT12345:RUM:2026-06-28"
@@ -72,15 +108,25 @@ export async function recordPositionOpened(
   accountNumber: string,
   symbol: string,
   side: "call" | "put",
+  entryContext?: PositionEntryContext,
 ): Promise<void> {
   const data = await readRegistry();
-  if (openEntryForSymbol(data, accountNumber, symbol)) return;
+  const existing = openEntryForSymbol(data, accountNumber, symbol);
+  if (existing) {
+    // Already tracked as open; only backfill any missing entry context.
+    if (mergeEntryContext(existing[1], entryContext)) {
+      await writeRegistry(data);
+    }
+    return;
+  }
   const key = registryKey(accountNumber, symbol, todayDate());
   data[key] = {
     accountNumber,
     symbol: symbol.trim().toUpperCase(),
     side,
     openedAt: new Date().toISOString(),
+    entrySpreadPct: entryContext?.entrySpreadPct ?? null,
+    gateScoreAtEntry: entryContext?.gateScoreAtEntry ?? null,
   };
   await writeRegistry(data);
 }
@@ -89,6 +135,78 @@ export interface PositionOpenSnapshot {
   symbol: string;
   side: "call" | "put";
   openedAt: string;
+  entryContext?: PositionEntryContext;
+}
+
+// Shape of an evaluated position group that the snapshot helpers below
+// accept. Structural (rather than importing PositionGroupEvaluation) so this
+// module — and its tests — stay free of the run-cycle/broker-client import
+// graph.
+export interface RegistryGroupSource {
+  underlyingSymbol?: string | null;
+  groupKey?: string;
+  positions: {
+    quantity?: number | string | null;
+    "created-at"?: string;
+  }[];
+}
+
+function hasOpenQuantity(group: RegistryGroupSource): boolean {
+  return group.positions.some(
+    (position) => Math.abs(Number(position.quantity) || 0) > 0,
+  );
+}
+
+// Maps evaluated position groups to open snapshots for syncPositionOpens.
+// Groups with no non-zero-quantity leg are skipped: Tastytrade keeps same-day
+// closed positions in the positions list with quantity 0 until end-of-day
+// processing, and backfilling one would overwrite the just-written closedAt
+// on the same-day registry entry (same account:symbol:date key), resurrecting
+// it as a phantom OPEN entry that then never closes.
+export function toPositionOpenSnapshots<T extends RegistryGroupSource>(
+  groups: T[],
+  getEntryContext?: (group: T) => PositionEntryContext | undefined,
+): PositionOpenSnapshot[] {
+  const snapshots: PositionOpenSnapshot[] = [];
+
+  for (const group of groups) {
+    const symbol = String(group.underlyingSymbol ?? "").trim().toUpperCase();
+    const side = group.groupKey?.split("::")[1];
+    if (!symbol || (side !== "call" && side !== "put")) continue;
+    if (!hasOpenQuantity(group)) continue;
+
+    const createdAts = group.positions
+      .map((position) => position["created-at"])
+      .filter((value): value is string => Boolean(value));
+    if (createdAts.length === 0) continue;
+
+    const entryContext = getEntryContext?.(group);
+    snapshots.push({
+      symbol,
+      side,
+      openedAt: createdAts.sort()[0],
+      ...(entryContext ? { entryContext } : {}),
+    });
+  }
+
+  return snapshots;
+}
+
+// Underlying symbols the broker currently reports as actually held (any
+// non-zero-quantity leg) — the ground truth that
+// reconcileWithBrokerPositions compares registry entries against.
+export function toHeldUnderlyingSymbols(
+  groups: RegistryGroupSource[],
+): Set<string> {
+  const held = new Set<string>();
+
+  for (const group of groups) {
+    const symbol = String(group.underlyingSymbol ?? "").trim().toUpperCase();
+    if (!symbol || !hasOpenQuantity(group)) continue;
+    held.add(symbol);
+  }
+
+  return held;
 }
 
 // Backfills open entries from broker position data (`created-at`). Positions
@@ -103,13 +221,23 @@ export async function syncPositionOpens(
   let changed = false;
 
   for (const snapshot of snapshots) {
-    if (openEntryForSymbol(data, accountNumber, snapshot.symbol)) continue;
+    const existing = openEntryForSymbol(data, accountNumber, snapshot.symbol);
+    if (existing) {
+      // Position already tracked (e.g. opened via a seed path that had no gate
+      // data): backfill entry context if this cycle now has it (v8 #13).
+      if (mergeEntryContext(existing[1], snapshot.entryContext)) {
+        changed = true;
+      }
+      continue;
+    }
     const key = registryKey(accountNumber, snapshot.symbol, snapshot.openedAt.slice(0, 10));
     data[key] = {
       accountNumber,
       symbol: snapshot.symbol.trim().toUpperCase(),
       side: snapshot.side,
       openedAt: snapshot.openedAt,
+      entrySpreadPct: snapshot.entryContext?.entrySpreadPct ?? null,
+      gateScoreAtEntry: snapshot.entryContext?.gateScoreAtEntry ?? null,
     };
     changed = true;
   }
@@ -143,6 +271,65 @@ export async function recordPositionClosed(
     closedAt: new Date().toISOString(),
   };
   await writeRegistry(data);
+}
+
+// Opens are recorded when a seed order is *placed*, not filled, so a fresh
+// entry can legitimately precede its broker position while the fill lands.
+// Within this window a tracked-but-not-held entry is left alone; the next
+// cycle catches it if the order was cancelled instead.
+const RECONCILE_GRACE_MS = 30 * 60 * 1000;
+
+// Marks OPEN entries closed when the broker no longer reports their symbol as
+// held for the account. This is the janitor for every close-write leak path:
+// a close-back that never got recorded (crash between placement and write),
+// a seed order that was placed (and registered) but cancelled before filling,
+// manual closes, and expirations. Entries for other accounts and for symbols
+// the broker still holds are untouched — legitimately-open overnight holds
+// survive because the broker keeps reporting them.
+//
+// Fail-safe contract: heldUnderlyingSymbols must come from a *successful*
+// broker position fetch, and callers must skip this call entirely when the
+// fetch fails — an empty set means "the account is genuinely flat", not
+// "positions unavailable".
+export async function reconcileWithBrokerPositions(
+  accountNumber: string,
+  heldUnderlyingSymbols: Iterable<string>,
+  now: Date = new Date(),
+): Promise<PositionRegistryEntry[]> {
+  const held = new Set(
+    Array.from(heldUnderlyingSymbols, (symbol) =>
+      String(symbol).trim().toUpperCase(),
+    ),
+  );
+
+  const data = await readRegistry();
+  const reconciled: PositionRegistryEntry[] = [];
+
+  for (const [key, entry] of Object.entries(data)) {
+    if (entry.accountNumber !== accountNumber || entry.closedAt) continue;
+    if (held.has(entry.symbol.trim().toUpperCase())) continue;
+
+    // An unparseable openedAt is treated as old — leaving it would leak it
+    // forever, and nothing legitimate writes a non-ISO openedAt.
+    const openedMs = Date.parse(entry.openedAt);
+    if (Number.isFinite(openedMs) && now.getTime() - openedMs < RECONCILE_GRACE_MS) {
+      continue;
+    }
+
+    const updated: PositionRegistryEntry = {
+      ...entry,
+      closedAt: now.toISOString(),
+      closedVia: "broker-reconcile",
+    };
+    data[key] = updated;
+    reconciled.push(updated);
+  }
+
+  if (reconciled.length > 0) {
+    await writeRegistry(data);
+  }
+
+  return reconciled;
 }
 
 function isSameCalendarDay(isoA: string, isoB: string): boolean {

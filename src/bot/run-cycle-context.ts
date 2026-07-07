@@ -421,10 +421,24 @@ export async function buildRunCycleContext(
   // Calculate per-group execution targets based on position stats
   const evaluationsWithGroupTargets = actionableCompletedEvaluations.map((evaluation) => {
     const weightedAverageFill = evaluation.metrics.weightedAverageFill;
+    const currentBidPrice = evaluation.metrics.currentBidPrice;
+    const currentAskPrice = evaluation.metrics.currentAskPrice;
+    const currentMidPrice = (currentBidPrice + currentAskPrice) / 2;
     const askReturnPerc =
       weightedAverageFill > 0
-        ? (evaluation.metrics.currentAskPrice - weightedAverageFill) / weightedAverageFill
+        ? (currentAskPrice - weightedAverageFill) / weightedAverageFill
         : 0;
+    // Dip is measured on MID return, not ask — the ask is blind to bid-side
+    // spread pain (see IMPROVEMENTS.v8 #3). Mid is the fair-value proxy.
+    const midReturnPerc =
+      weightedAverageFill > 0
+        ? (currentMidPrice - weightedAverageFill) / weightedAverageFill
+        : 0;
+    // Current bid/ask spread as a fraction of mid, for wide-spread suppression
+    // of the dip boost. Null when the mid is non-positive so an absent/degenerate
+    // quote degrades gracefully (does not suppress) rather than reading as 0.
+    const dipSpreadFraction =
+      currentMidPrice > 0 ? (currentAskPrice - currentBidPrice) / currentMidPrice : null;
     const timeSinceLastActionMs =
       currentTime.getTime() - evaluation.metrics.lastActionTime.getTime();
 
@@ -461,9 +475,12 @@ export async function buildRunCycleContext(
       });
       const multiplier = getMarginTargetMultiplier();
       const marginMaxTargetPct = gate.maxTargetPct * multiplier;
+      // Dip boost triggers on MID return (not ask) so it can see bid-side spread
+      // pain, with optional wide-spread suppression (off by default). See v8 #3.
       const dipTargetBoostPct = getMarginDipTargetBoostPct(
-        askReturnPerc,
+        midReturnPerc,
         goodBooleanScore,
+        dipSpreadFraction,
       );
       const scaledTargetAccountExposure =
         finalTargets.targetAccountExposure * marginMaxTargetPct;
@@ -479,6 +496,9 @@ export async function buildRunCycleContext(
           marginMaxTargetPct,
           booleanSurplusPct,
           dipTargetBoostPct,
+          askReturnPerc,
+          midReturnPerc,
+          dipSpreadFraction,
           originalTargetPct: finalTargets.targetAccountExposure,
           effectiveTargetPct: scaledTargetAccountExposure,
         }),

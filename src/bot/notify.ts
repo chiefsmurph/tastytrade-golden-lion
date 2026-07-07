@@ -1,4 +1,4 @@
-import { emitSecretLog } from "~/strategy/secret";
+import { emitSecretLog, getSecretSocketStatus } from "~/strategy/secret";
 
 // Operational event notifications. The single sink today is the live secret
 // socket (bare-string "log" event); the wrapper exists so a second sink (HTTP
@@ -25,5 +25,18 @@ const EVENT_SEVERITY: Record<NotifyEventType, "ERROR" | "WARN" | "INFO"> = {
 };
 
 export function notifyEvent(type: NotifyEventType, message: string): void {
-  emitSecretLog(`${EVENT_SEVERITY[type]} [${type}] ${message}`);
+  const severity = EVENT_SEVERITY[type];
+  emitSecretLog(`${severity} [${type}] ${message}`);
+
+  // Local breadcrumb so the daily EOD check (OPERATIONS §1 / runbook #16) can
+  // confirm a notification fired from the bot's own pm2 log, without depending
+  // on the secret server's stream. The `sink` flag records whether the socket
+  // was connected — i.e. whether the emit above was actually delivered vs.
+  // silently dropped. Best-effort and non-throwing, like the emit itself.
+  try {
+    const sink = getSecretSocketStatus().connected ? "sent" : "no-socket";
+    console.log(`[notify] ${severity} ${type} (${sink}) ${message}`);
+  } catch {
+    // logging must never touch the trading path
+  }
 }

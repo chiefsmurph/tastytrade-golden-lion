@@ -99,6 +99,33 @@ test("rejects a contract expiring today for cash accounts but allows it for marg
   assert.equal(marginResult.dte, 0);
 });
 
+test("margin entry-spread override tightens the held-contract fallback too", () => {
+  // WEN-shaped 18.2% spread: within the shared 30% gate, outside a 10% margin
+  // entry ceiling. Cash must keep the shared behavior.
+  const evaluation = buildEvaluation([
+    { symbol: occSymbol("LCID", "260717", "00006000"), bid: 0.85, ask: 1.02 },
+  ]);
+
+  const originalEnv = process.env.STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT;
+  process.env.STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT = "0.10";
+
+  try {
+    const marginResult = getHeldContractFallbackCandidate(evaluation, "margin", at1030);
+    assert.equal(marginResult.symbol, undefined);
+    assert.match(marginResult.skippedReason ?? "", /spread .* exceeds 10\.00% max/);
+
+    const cashResult = getHeldContractFallbackCandidate(evaluation, "cash", at1030);
+    assert.equal(cashResult.symbol, occSymbol("LCID", "260717", "00006000"));
+    assert.equal(cashResult.skippedReason, undefined);
+  } finally {
+    if (originalEnv !== undefined) {
+      process.env.STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT = originalEnv;
+    } else {
+      delete process.env.STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT;
+    }
+  }
+});
+
 test("picks the dominant holding when the group spans multiple contracts", () => {
   const small = occSymbol("LCID", "260710", "00005500");
   const dominant = occSymbol("LCID", "260717", "00006000");
