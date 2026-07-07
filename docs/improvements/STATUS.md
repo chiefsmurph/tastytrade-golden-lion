@@ -1,6 +1,6 @@
 # Improvements — consolidated status
 
-**This is the live tracker.** `IMPROVEMENTS.v1`–`v8` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-06 against committed code (v5 folded same day; v6/v7 folded 2026-07-04; v8 — the first production-data pass — folded 2026-07-06).
+**This is the live tracker.** `IMPROVEMENTS.v1`–`v8` are the point-in-time discovery logs (how each item was found); their inline checkboxes are NOT kept current. Read this file for what's done and what's left. Last reconciled 2026-07-06 evening against committed code (v5 folded same day; v6/v7 folded 2026-07-04; v8 — the first production-data pass — folded 2026-07-06 and **all 13 items shipped the same evening via PRs #2–#7**).
 
 > **Static-analysis (fallow) findings live in their own tracker: [FALLOW.md](FALLOW.md)** — complexity/dead-code/duplication/circular-dep work, plus the gate's gotchas. Start there for "let's address fallow findings."
 
@@ -174,25 +174,27 @@ Strategy/profitability:
 
 ### New in v8 (2026-07-06 first production-data pass — see [IMPROVEMENTS.v8-prod-data.md](IMPROVEMENTS.v8-prod-data.md))
 
-Every item is evidence-backed by the verified Monday session (net negative; all-WEN day; full writeup in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md)). Priority: **#6 (dxLink) and #11 (registry leak) should NOT wait for the 1–2-week review.**
+Every item is evidence-backed by the verified Monday session (net negative; all-WEN day; full writeup in [../plans/2026-07-06-monday-results.md](../plans/2026-07-06-monday-results.md)).
+
+> **✅ ALL 13 ITEMS SHIPPED 2026-07-06 evening** — PR #2 (#1–#5), PR #3 (#8), PR #4 (#12), PR #5 (#9, #13), PR #6 (#11), PR #7 (#6, #7); #10 fixed in the local-only (gitignored) script. Full discovery detail stays in [IMPROVEMENTS.v8-prod-data.md](IMPROVEMENTS.v8-prod-data.md). Next verification session should confirm: no dxLink session-limit kicks, registry stays clean, ledger rows carry entry context.
 
 Infra/reliability:
-- **dxLink session-limit restart loop** *(fable)* — 23 restarts from `UNAUTHORIZED: number of user sessions exceeded limit` (login U0001058779); self-reinforcing (a restart orphans a session before it expires). Tear down the streamer session on SIGTERM + find any 2nd consumer of the login. The 07-06 analog of the 07-02 restart storm — same symptom, new root cause; backoff kept the 06:30→10:24 prime window clean. **Top priority.** `src/core/quote-streamer-recovery.ts`. (v8 #6)
-- **Streamer fault → process-restart amplifies the fault** — for connectivity faults, attempt in-process reconnect-with-backoff before process-exit; reserve exit for unrecoverable state. Adjacent to v8 #6. (v8 #7)
+- ~~**dxLink session-limit restart loop**~~ ✅ *(fable)* — root cause found deeper than the SIGTERM guess: the SDK's `quoteStreamer.connect()` never retains its `DXLinkWebSocketClient`, so `disconnect()` only drops listeners and the server-side session lives on as a zombie; per-fetch connects in `fetchOptionVolumes` stacked sessions to the limit. New `src/core/quote-streamer-session.ts` owns the client (real teardown on shutdown/watchdog-exit/reconnect); volume fetches reuse the managed session. (v8 #6, PR #7)
+- ~~**Streamer fault → process-restart amplifies the fault**~~ ✅ — in-process reconnect (fresh token → re-auth → wait for AUTHORIZED) attempted before process-exit; transport reconnects bounded. (v8 #7, PR #7)
 
 Strategy/profitability:
-- **Entry spread gate (20%) too loose** — WEN entered at ~18%, born pre-stopped, force-sold 15 lots into an 18% bid at EOD at ≈ −22% realized. Tighter buy-side threshold and/or the liquidity floor below. **Promotes v4 #5 (stop/spread coupling) from hypothesis to confirmed-with-cost.** (v8 #1)
-- **Promote liquidity gating to step-2 floors** — this is the **go-signal for v4 #4** (above): step-1 logging worked, and WEN (vol 4–20, sizeless asks) is the worked example of what to gate. OI floor + phantom-quote guard, unknown-degrades-gracefully. (v8 #2)
-- **Dip boost reads the wrong side of the market** — triggers on ask-return, blind to bid-side spread pain; never fired despite booleans=6. Re-derive "dip" on mid/bid. **Supersedes the "≥4 vs ≥7 boolean bar" tuning-Q framing.** `src/strategy/risk-limits.ts`. (v8 #3)
-- **Alloc-buy multiple compounds** — 3×-per-add reached a 15-lot in ~70 min; bound it to a session-start baseline or an absolute per-underlying cap. `src/bot/actions/manage-allocation.ts`. (v8 #4)
-- **Single-name buy funnel** — only WEN was buy-eligible all day (5 names evaluated, 1 considered for buys); 100% of new risk in one illiquid name. Mostly dissolved by v8 #2; a per-underlying ceiling is the backstop (adjacent v6 strategy #16). (v8 #5)
+- ~~**Entry spread gate (20%) too loose**~~ ✅ — account-aware entry liquidity gate; buy-side thresholds tightened. (v8 #1, PR #2)
+- ~~**Promote liquidity gating to step-2 floors**~~ ✅ — `src/strategy/liquidity-gate.ts`: OI floor + phantom-quote guard, unknown-degrades-gracefully; closes the v4 #4 loop. (v8 #2, PR #2)
+- ~~**Dip boost reads the wrong side of the market**~~ ✅ — dip-boost now measures mid-return, not ask-return. (v8 #3, PR #2)
+- ~~**Alloc-buy multiple compounds**~~ ✅ — absolute per-underlying contract/notional cap in `manage-allocation.ts`. (v8 #4, PR #2)
+- ~~**Single-name buy funnel**~~ ✅ — addressed by the liquidity gate (v8 #2) + per-underlying cap (v8 #4) as the backstop ceiling. (v8 #5, PR #2)
 
 Ops/observability:
-- **Notifications have no local breadcrumb** — `hard-risk-close`/`position-closed`/`position-built` emit to the secret server with zero local trace; EOD check #16 unverifiable from the bot's own logs. Log a line in `src/bot/notify.ts`. Merge-safe. (v8 #8)
-- **`eod-stop` conflates the price stop with the clock liquidation** — `src/bot/pnl-ledger.ts:64` maps every "End-of-day risk management" reason to one type, so the −10% post-cutoff stop and the 12:50 clock liquidation are indistinguishable; breaks the stops-vs-liquidation attribution OPERATIONS §3/§6 needs. Give the clock liquidation a distinct decisionType. (v8 #9)
-- **`scripts/pull-today.sh` doesn't grab `data/ledger/`** — the artifact the daily EOD routine depends on; had to scp by hand. Merge-safe. (v8 #10)
+- ~~**Notifications have no local breadcrumb**~~ ✅ — `notifyEvent` logs a local line before emitting to the secret server. (v8 #8, PR #3)
+- ~~**`eod-stop` conflates the price stop with the clock liquidation**~~ ✅ — clock liquidation split into its own decisionType in the P&L ledger taxonomy. (v8 #9, PR #5)
+- ~~**`scripts/pull-today.sh` doesn't grab `data/ledger/`**~~ ✅ — script now copies `data/ledger/` (script is local-only; `scripts/` is gitignored). (v8 #10)
 
 Data/bookkeeping:
-- **Registry leaks closed margin positions** *(fable)* — margin MARA/CLSK from 07-02 still show `OPEN` (impossible; margin flattens daily); close-back never written. Reconcile against live broker positions at cycle start. **Correctness** — check whether any consumer (sizing/do-not-touch/dedupe) trusts stale entries before sizing severity. `src/bot/position-registry.ts`. (v8 #11)
-- **Day-report writer is dead** — `data/day-reports/*` frozen at June 30 with null fields; wire `record-day-report` back into the cycle or delete if the ledger supersedes it. (v8 #12)
-- **Ledger entry-side enrichment never populated** — `entrySpreadPct`/`gateScoreAtEntry` null on every row. **This is the reserved gap from v5 code #3** — carry entry context via the registry (open→close). Unlocks the entry-quality attribution OPERATIONS §6 needs and the proof for v8 #1. (v8 #13)
+- ~~**Registry leaks closed margin positions**~~ ✅ *(fable)* — `reconcileWithBrokerPositions` runs at cycle start against the successfully-fetched broker snapshot; tracked-but-not-held OPEN entries marked closed (`closedVia: "broker-reconcile"`), with a 30-min placement grace window. (v8 #11, PR #6)
+- ~~**Day-report writer is dead**~~ ✅ — `maybeRecordDayReport` wired back into the cycle path. (v8 #12, PR #4)
+- ~~**Ledger entry-side enrichment never populated**~~ ✅ — registry carries `entrySpreadPct`/`gateScoreAtEntry` open→close (`syncPositionOpens` captures/backfills, earliest observation wins); ledger joins them onto close rows. Closes the reserved gap from v5 code #3; unlocks the entry-quality attribution for v8 #1. (v8 #13, PR #5)
