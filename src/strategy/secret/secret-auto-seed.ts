@@ -10,13 +10,13 @@ import { toBooleanFlag } from "~/core/env-utils";
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 
-export function shouldAutoSeedOnSecretPositionsUpdate(): boolean {
+function shouldAutoSeedOnSecretPositionsUpdate(): boolean {
   const raw =
     process.env.SECRET_AUTO_SEED_ON_POSITIONS_UPDATE?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
-export function shouldAutoSeedOnTickerRecsUpdate(): boolean {
+function shouldAutoSeedOnTickerRecsUpdate(): boolean {
   const raw =
     process.env.SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
@@ -159,7 +159,7 @@ export async function maybeAutoSeedFromSecretPositions(
         scope: "secret-auto-seed-margin-all-signals",
         accountNumber: marginAccountNumber,
         cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
-        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/10 good`,
+        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/11 good`,
         goodBooleanScore,
         booleanSurplusPct,
       });

@@ -122,7 +122,7 @@ export function getScaledThresholds(
 
 // Two zones split at the midpoint of [minDownPct, maxDownPct]:
 //   Early zone  (loss < mid): seed if booleans ≥ 4/5  OR  IV rank ≥ 50
-//   Deep zone   (loss ≥ mid): seed if booleans ≥ 7/10 OR  IV rank ≥ 70
+//   Deep zone   (loss ≥ mid): seed if booleans ≥ 7/11 OR  IV rank ≥ 70
 // Boolean score takes precedence to avoid an extra API call when data is present.
 // When neither source is available, don't seed — unknown thesis = no action.
 export async function getSeedDecision(
@@ -142,8 +142,8 @@ export async function getSeedDecision(
         shouldSeed: passes,
         ivRank: null,
         reason: passes
-          ? `boolean ${goodBooleanScore}/10 passes deep-loss threshold (7)`
-          : `boolean ${goodBooleanScore}/10 below deep-loss threshold (7)`,
+          ? `boolean ${goodBooleanScore}/11 passes deep-loss threshold (7)`
+          : `boolean ${goodBooleanScore}/11 below deep-loss threshold (7)`,
       };
     } else {
       const passes = shouldSeedMarginFromBooleans(secretPosition);
@@ -151,8 +151,8 @@ export async function getSeedDecision(
         shouldSeed: passes,
         ivRank: null,
         reason: passes
-          ? `boolean ${goodBooleanScore}/10 passes early-loss threshold (4/5 signals)`
-          : `boolean ${goodBooleanScore}/10 below early-loss threshold (4/5 signals)`,
+          ? `boolean ${goodBooleanScore}/11 passes early-loss threshold (4/5 signals)`
+          : `boolean ${goodBooleanScore}/11 below early-loss threshold (4/5 signals)`,
       };
     }
   }

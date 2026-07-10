@@ -166,8 +166,10 @@ function getDaytradeScorePoints(position: SecretSourcePosition | undefined): num
   return Math.min(3, Math.floor((Math.abs(score) - 50) / 100) + 1);
 }
 
-// Returns 0–10: 5 state booleans (1pt each) + willBuy (2pts) + daytradeScore points (0–3).
-// Max conviction = all booleans + willBuy + daytradeScore ≤ -250.
+// Returns 0–11: 5 health booleans (1pt each) + qualityToBuy (1pt) + willBuy (2pts, skipped
+// when buyEligible is explicitly false) + daytradeScore (0–3pts).
+// willBuy reflects account buy-intent, not thesis quality — skipping it when buyEligible=false
+// keeps health-signal scores live during liquidation periods without penalizing the sell state.
 export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
   let count = 0;
@@ -176,7 +178,10 @@ export function countGoodBooleans(position: SecretSourcePosition | undefined): n
   if (toBooleanFlag(position.isAboveStabMin)) count++;
   if (toBooleanFlag(position.isClearedToBuy)) count++;
   if (toBooleanFlag(position.currentlyAboveMinBuyWeight)) count++;
-  if (toBooleanFlag(position.willBuy)) count += 2;
+  if (toBooleanFlag(position.qualityToBuy)) count++;
+  const buyEligibleExplicitlyFalse =
+    position.buyEligible !== undefined && !toBooleanFlag(position.buyEligible);
+  if (!buyEligibleExplicitlyFalse && toBooleanFlag(position.willBuy)) count += 2;
   count += getDaytradeScorePoints(position);
   return count;
 }
@@ -217,6 +222,7 @@ function isQualityToBuy(position: SecretSourcePosition | undefined): boolean {
   return position != null && toBooleanFlag(position.qualityToBuy);
 }
 
+// fallow-ignore-next-line complexity
 export function computePositionGate(options: {
   crossAccountAskReturnFraction: number | null;
   secretPosition: SecretSourcePosition | undefined;
@@ -240,7 +246,7 @@ export function computePositionGate(options: {
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
-  const allBooleansGood = goodBooleanScore === 10;
+  const allBooleansGood = goodBooleanScore === 11;
 
   // basic: qualityToBuy, a bullish daytradeScore below the basic threshold,
   // or percentOfBalance above the basic threshold (both time-scaled)
@@ -288,8 +294,4 @@ export function computePositionGate(options: {
     basicStockYesPctThreshold: basicThresholds.pct,
     basicStockYesScoreThreshold: basicThresholds.daytradeScore,
   };
-}
-
-export function getMarginPositionMaxTargetPct(cashMaxTargetPct: number): number {
-  return cashMaxTargetPct * getMarginTargetMultiplier();
 }
