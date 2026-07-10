@@ -19,8 +19,6 @@ export {
 	isAnySecretAutoSeedEnabled,
 	maybeAutoSeedFromSecretPositions,
 	maybeAutoSeedFromTickerRecs,
-	shouldAutoSeedOnSecretPositionsUpdate,
-	shouldAutoSeedOnTickerRecsUpdate,
 } from "./secret-auto-seed";
 export type {
 	DebugSecretExecutionTargetInputs,
