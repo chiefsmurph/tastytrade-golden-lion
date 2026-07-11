@@ -166,11 +166,9 @@ function getDaytradeScorePoints(position: SecretSourcePosition | undefined): num
   return Math.min(3, Math.floor((Math.abs(score) - 50) / 100) + 1);
 }
 
-// Returns 0–11: 5 health booleans (1pt each) + isQualityToBuy (1pt) + willBuy (2pts, skipped
-// when isBuyEligible is explicitly false) + daytradeScore (0–3pts).
-// willBuy reflects account buy-intent, not thesis quality — skipping it when isBuyEligible=false
-// keeps health-signal scores live during liquidation periods without penalizing the sell state.
-export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
+// The thesis scale — the "100%": 5 health booleans + isQualityToBuy (1pt each)
+// + daytradeScore (0–3pts) → 0–9. willBuy is deliberately NOT part of this scale.
+function countThesisBooleanScore(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
   let count = 0;
   if (toBooleanFlag(position.isAboveMinSin)) count++;
@@ -179,11 +177,22 @@ export function countGoodBooleans(position: SecretSourcePosition | undefined): n
   if (toBooleanFlag(position.isClearedToBuy)) count++;
   if (toBooleanFlag(position.isAboveMinBuyWeight)) count++;
   if (toBooleanFlag(position.isQualityToBuy)) count++;
-  const buyEligibleExplicitlyFalse =
-    position.isBuyEligible !== undefined && !toBooleanFlag(position.isBuyEligible);
-  if (!buyEligibleExplicitlyFalse && toBooleanFlag(position.willBuy)) count += 2;
   count += getDaytradeScorePoints(position);
   return count;
+}
+
+// willBuy is icing on the cake: +2 on top of the thesis scale, able to push a score
+// past "full" but never required to reach it — every threshold downstream is reachable
+// by thesis alone. Skipped when isBuyEligible is explicitly false, since buy-intent is
+// meaningless while the source account is liquidating (EOD/open windows).
+// Total range 0–11 (thesis 0–9 + icing 0–2).
+export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
+  if (!position) return 0;
+  const buyEligibleExplicitlyFalse =
+    position.isBuyEligible !== undefined && !toBooleanFlag(position.isBuyEligible);
+  const willBuyIcing =
+    !buyEligibleExplicitlyFalse && toBooleanFlag(position.willBuy) ? 2 : 0;
+  return countThesisBooleanScore(position) + willBuyIcing;
 }
 
 // For the margin seed decision only: isClearedToBuy OR isAboveMinBuyWeight counts as one slot.
@@ -207,7 +216,7 @@ export function shouldSeedMarginFromBooleans(
 }
 
 // Per-action buy exposure surplus added on top of the account-type base for both accounts.
-// Score is 0–11 (willBuy=2pts, daytradeScore up to 3pts).
+// Score is thesis 0–9 plus willBuy icing (+2); every tier is reachable by thesis alone.
 export function getBooleanSurplusPct(goodBooleanScore: number): number {
   if (goodBooleanScore >= 8) return 0.30;
   if (goodBooleanScore >= 7) return 0.25;
@@ -246,7 +255,8 @@ export function computePositionGate(options: {
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
-  const allBooleansGood = goodBooleanScore === 11;
+  // Full marks on the thesis scale (9) — willBuy icing is not required.
+  const allBooleansGood = countThesisBooleanScore(options.secretPosition) === 9;
 
   // basic: isQualityToBuy, a bullish daytradeScore below the basic threshold,
   // or percentOfBalance above the basic threshold (both time-scaled)

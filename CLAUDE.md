@@ -44,7 +44,7 @@ Each `runCycle` call (every N minutes during market hours):
 - `manage-allocation.ts` — buys via strike selection (delta-targeted for margin, ITM for cash), quantity sizing, tick-chasing
 - `close-position.ts` — sells with mid→ask aggressiveness, up to 10 tick-chase steps every 30s
 
-**`src/strategy/position-gate.ts`** — Cross-account signal gating. Computes `PositionGateResult` from secret position booleans (`isAboveMinSin`, `isAboveMinSis`, `isAboveMinStab`, `isClearedToBuy`, `isAboveMinBuyWeight`, `isQualityToBuy`, `willBuy`, `daytradeScore`). Scores 0–11; 4 of 5 merged slots enables margin seeding from booleans.
+**`src/strategy/position-gate.ts`** — Cross-account signal gating. Computes `PositionGateResult` from secret position booleans (`isAboveMinSin`, `isAboveMinSis`, `isAboveMinStab`, `isClearedToBuy`, `isAboveMinBuyWeight`, `isQualityToBuy`, `willBuy`, `daytradeScore`). Thesis score 0–9 with `willBuy` as +2 icing on top (total 0–11; all thresholds reachable by thesis alone); 4 of 5 merged slots enables margin seeding from booleans.
 
 **`src/bot/run-cycle-seed.ts`** — Cross-account margin seeding. Iterates cash account evaluations; seeds margin when cash `askReturnPct < -minDownPct` AND the cash position's strategy is still `MANAGE_ALLOCATION`.
 

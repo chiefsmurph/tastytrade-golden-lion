@@ -89,7 +89,8 @@ export function getPositionFillSeedMultiplier(fillRatio: number | null): number 
 }
 
 // Boolean multiplier: good signals lower thresholds so seeding fires on smaller losses.
-// Score 0–11: <3=neutral (1.0×), 3-4=slight boost (0.95×), 5-6=good (0.85×), 7+=great (0.7×).
+// Score = thesis 0–9 + willBuy icing (+2): <3=neutral (1.0×), 3-4=slight boost (0.95×),
+// 5-6=good (0.85×), 7+=great (0.7×). Every tier is reachable by thesis alone.
 export function getBooleanSeedMultiplier(goodBooleanScore: number | null): number {
   if (goodBooleanScore === null) return 1.0;
   if (goodBooleanScore >= 7) return 0.7;
@@ -122,7 +123,7 @@ export function getScaledThresholds(
 
 // Two zones split at the midpoint of [minDownPct, maxDownPct]:
 //   Early zone  (loss < mid): seed if booleans ≥ 4/5  OR  IV rank ≥ 50
-//   Deep zone   (loss ≥ mid): seed if booleans ≥ 6/11 OR  IV rank ≥ 70
+//   Deep zone   (loss ≥ mid): seed if booleans ≥ 6/9 OR  IV rank ≥ 70 (willBuy icing can exceed 9)
 // Boolean score takes precedence to avoid an extra API call when data is present.
 // When neither source is available, don't seed — unknown thesis = no action.
 export async function getSeedDecision(
@@ -142,8 +143,8 @@ export async function getSeedDecision(
         shouldSeed: passes,
         ivRank: null,
         reason: passes
-          ? `boolean ${goodBooleanScore}/11 passes deep-loss threshold (6)`
-          : `boolean ${goodBooleanScore}/11 below deep-loss threshold (6)`,
+          ? `boolean ${goodBooleanScore}/9 passes deep-loss threshold (6)`
+          : `boolean ${goodBooleanScore}/9 below deep-loss threshold (6)`,
       };
     } else {
       const passes = shouldSeedMarginFromBooleans(secretPosition);
@@ -151,8 +152,8 @@ export async function getSeedDecision(
         shouldSeed: passes,
         ivRank: null,
         reason: passes
-          ? `boolean ${goodBooleanScore}/11 passes early-loss threshold (4/5 signals)`
-          : `boolean ${goodBooleanScore}/11 below early-loss threshold (4/5 signals)`,
+          ? `boolean ${goodBooleanScore}/9 passes early-loss threshold (4/5 signals)`
+          : `boolean ${goodBooleanScore}/9 below early-loss threshold (4/5 signals)`,
       };
     }
   }

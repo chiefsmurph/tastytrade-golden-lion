@@ -159,7 +159,7 @@ export async function maybeAutoSeedFromSecretPositions(
         scope: "secret-auto-seed-margin-all-signals",
         accountNumber: marginAccountNumber,
         cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
-        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/11 good`,
+        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/9 good`,
         goodBooleanScore,
         booleanSurplusPct,
       });
