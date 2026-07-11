@@ -55,7 +55,7 @@ function getBasicPercentOfBalanceThreshold(): number {
   return readEnvPct("STRATEGY_GATE_BASIC_PERCENT_OF_BALANCE_THRESHOLD", 25);
 }
 
-// percentOfBalance above this qualifies (with qualityToBuy) as a strong stock YES.
+// percentOfBalance above this qualifies (with isQualityToBuy) as a strong stock YES.
 function getStrongPercentOfBalanceThreshold(): number {
   return readEnvPctWithLegacy(
     "STRATEGY_GATE_STRONG_PERCENT_OF_BALANCE_THRESHOLD",
@@ -69,7 +69,7 @@ function getBasicDaytradeScoreThreshold(): number {
   return readEnvPct("STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD", -40);
 }
 
-// daytradeScore below this (more negative) qualifies (with qualityToBuy) as a
+// daytradeScore below this (more negative) qualifies (with isQualityToBuy) as a
 // strong stock YES. Legacy name expressed this as a positive magnitude, so the
 // value is normalized to negative either way.
 function getStrongDaytradeScoreThreshold(): number {
@@ -82,7 +82,7 @@ function getStrongDaytradeScoreThreshold(): number {
   );
 }
 
-// Additional maxTargetPct added per "good" boolean signal (isAboveMinSinFloor etc.)
+// Additional maxTargetPct added per "good" boolean signal (isAboveMinSin etc.)
 function getBooleanBoostPct(): number {
   return readEnvPct("STRATEGY_GATE_BOOLEAN_BOOST_PCT", 0.03);
 }
@@ -166,40 +166,40 @@ function getDaytradeScorePoints(position: SecretSourcePosition | undefined): num
   return Math.min(3, Math.floor((Math.abs(score) - 50) / 100) + 1);
 }
 
-// Returns 0–11: 5 health booleans (1pt each) + qualityToBuy (1pt) + willBuy (2pts, skipped
-// when buyEligible is explicitly false) + daytradeScore (0–3pts).
-// willBuy reflects account buy-intent, not thesis quality — skipping it when buyEligible=false
+// Returns 0–11: 5 health booleans (1pt each) + isQualityToBuy (1pt) + willBuy (2pts, skipped
+// when isBuyEligible is explicitly false) + daytradeScore (0–3pts).
+// willBuy reflects account buy-intent, not thesis quality — skipping it when isBuyEligible=false
 // keeps health-signal scores live during liquidation periods without penalizing the sell state.
 export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
   let count = 0;
-  if (toBooleanFlag(position.isAboveMinSinFloor)) count++;
-  if (toBooleanFlag(position.aboveMinSis)) count++;
-  if (toBooleanFlag(position.isAboveStabMin)) count++;
+  if (toBooleanFlag(position.isAboveMinSin)) count++;
+  if (toBooleanFlag(position.isAboveMinSis)) count++;
+  if (toBooleanFlag(position.isAboveMinStab)) count++;
   if (toBooleanFlag(position.isClearedToBuy)) count++;
-  if (toBooleanFlag(position.currentlyAboveMinBuyWeight)) count++;
-  if (toBooleanFlag(position.qualityToBuy)) count++;
+  if (toBooleanFlag(position.isAboveMinBuyWeight)) count++;
+  if (toBooleanFlag(position.isQualityToBuy)) count++;
   const buyEligibleExplicitlyFalse =
-    position.buyEligible !== undefined && !toBooleanFlag(position.buyEligible);
+    position.isBuyEligible !== undefined && !toBooleanFlag(position.isBuyEligible);
   if (!buyEligibleExplicitlyFalse && toBooleanFlag(position.willBuy)) count += 2;
   count += getDaytradeScorePoints(position);
   return count;
 }
 
-// For the margin seed decision only: isClearedToBuy OR currentlyAboveMinBuyWeight counts as one slot.
+// For the margin seed decision only: isClearedToBuy OR isAboveMinBuyWeight counts as one slot.
 // This gives 5 effective slots; threshold is 4/5.
 function countMergedBooleansForMarginSeed(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
   let count = 0;
-  if (toBooleanFlag(position.isAboveMinSinFloor)) count++;
-  if (toBooleanFlag(position.aboveMinSis)) count++;
-  if (toBooleanFlag(position.isAboveStabMin)) count++;
-  if (toBooleanFlag(position.isClearedToBuy) || toBooleanFlag(position.currentlyAboveMinBuyWeight)) count++;
-  if (toBooleanFlag(position.willBuy)) count++;
+  if (toBooleanFlag(position.isAboveMinSin)) count++;
+  if (toBooleanFlag(position.isAboveMinSis)) count++;
+  if (toBooleanFlag(position.isAboveMinStab)) count++;
+  if (toBooleanFlag(position.isClearedToBuy) || toBooleanFlag(position.isAboveMinBuyWeight)) count++;
+  if (toBooleanFlag(position.isQualityToBuy)) count++;
   return count;
 }
 
-// Seed margin when 4 of the 5 effective slots are good (isClearedToBuy||currentlyAboveMinBuyWeight = 1 slot)
+// Seed margin when 4 of the 5 effective slots are good (isClearedToBuy||isAboveMinBuyWeight = 1 slot)
 export function shouldSeedMarginFromBooleans(
   position: SecretSourcePosition | undefined,
 ): boolean {
@@ -207,7 +207,7 @@ export function shouldSeedMarginFromBooleans(
 }
 
 // Per-action buy exposure surplus added on top of the account-type base for both accounts.
-// Score is 0–10 (willBuy=2pts, daytradeScore up to 3pts).
+// Score is 0–11 (willBuy=2pts, daytradeScore up to 3pts).
 export function getBooleanSurplusPct(goodBooleanScore: number): number {
   if (goodBooleanScore >= 8) return 0.30;
   if (goodBooleanScore >= 7) return 0.25;
@@ -219,7 +219,7 @@ export function getBooleanSurplusPct(goodBooleanScore: number): number {
 }
 
 function isQualityToBuy(position: SecretSourcePosition | undefined): boolean {
-  return position != null && toBooleanFlag(position.qualityToBuy);
+  return position != null && toBooleanFlag(position.isQualityToBuy);
 }
 
 // fallow-ignore-next-line complexity
@@ -248,7 +248,7 @@ export function computePositionGate(options: {
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
   const allBooleansGood = goodBooleanScore === 11;
 
-  // basic: qualityToBuy, a bullish daytradeScore below the basic threshold,
+  // basic: isQualityToBuy, a bullish daytradeScore below the basic threshold,
   // or percentOfBalance above the basic threshold (both time-scaled)
   const basicThresholds = getBasicStockYesThresholds(options.currentTime);
   const basicStockYes =
@@ -256,7 +256,7 @@ export function computePositionGate(options: {
     (daytradeScore !== null && daytradeScore < basicThresholds.daytradeScore) ||
     percentOfBalance > basicThresholds.pct;
 
-  // strong: qualityToBuy + pct or daytradeScore crosses time-scaled threshold
+  // strong: isQualityToBuy + pct or daytradeScore crosses time-scaled threshold
   const strongStockYes =
     qualityToBuy &&
     (percentOfBalance > thresholds.pct ||

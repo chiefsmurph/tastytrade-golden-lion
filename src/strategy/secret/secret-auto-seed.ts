@@ -133,7 +133,7 @@ export async function maybeAutoSeedFromSecretPositions(
       continue;
     }
 
-    if (!toBooleanFlag(position.qualityToBuy)) {
+    if (!toBooleanFlag(position.isQualityToBuy)) {
       continue;
     }
 
@@ -147,7 +147,7 @@ export async function maybeAutoSeedFromSecretPositions(
       scope: "secret-auto-seed-cash",
       accountNumber: cashAccountNumber,
       cooldownMap: lastCashAutoSeedAtBySymbol,
-      triggerReason: "secret-positions-update: qualityToBuy",
+      triggerReason: "secret-positions-update: isQualityToBuy",
       goodBooleanScore,
       booleanSurplusPct,
     });
