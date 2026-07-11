@@ -89,10 +89,10 @@ export function getPositionFillSeedMultiplier(fillRatio: number | null): number 
 }
 
 // Boolean multiplier: good signals lower thresholds so seeding fires on smaller losses.
-// Score 0–10: <3=neutral (1.0×), 3-4=slight boost (0.95×), 5-7=good (0.85×), 8+=great (0.7×).
+// Score 0–11: <3=neutral (1.0×), 3-4=slight boost (0.95×), 5-6=good (0.85×), 7+=great (0.7×).
 export function getBooleanSeedMultiplier(goodBooleanScore: number | null): number {
   if (goodBooleanScore === null) return 1.0;
-  if (goodBooleanScore >= 8) return 0.7;
+  if (goodBooleanScore >= 7) return 0.7;
   if (goodBooleanScore >= 5) return 0.85;
   if (goodBooleanScore >= 3) return 0.95;
   return 1.0;
@@ -122,7 +122,7 @@ export function getScaledThresholds(
 
 // Two zones split at the midpoint of [minDownPct, maxDownPct]:
 //   Early zone  (loss < mid): seed if booleans ≥ 4/5  OR  IV rank ≥ 50
-//   Deep zone   (loss ≥ mid): seed if booleans ≥ 7/11 OR  IV rank ≥ 70
+//   Deep zone   (loss ≥ mid): seed if booleans ≥ 6/11 OR  IV rank ≥ 70
 // Boolean score takes precedence to avoid an extra API call when data is present.
 // When neither source is available, don't seed — unknown thesis = no action.
 export async function getSeedDecision(
@@ -137,13 +137,13 @@ export async function getSeedDecision(
 
   if (goodBooleanScore !== null) {
     if (isDeepLoss) {
-      const passes = goodBooleanScore >= 7;
+      const passes = goodBooleanScore >= 6;
       return {
         shouldSeed: passes,
         ivRank: null,
         reason: passes
-          ? `boolean ${goodBooleanScore}/11 passes deep-loss threshold (7)`
-          : `boolean ${goodBooleanScore}/11 below deep-loss threshold (7)`,
+          ? `boolean ${goodBooleanScore}/11 passes deep-loss threshold (6)`
+          : `boolean ${goodBooleanScore}/11 below deep-loss threshold (6)`,
       };
     } else {
       const passes = shouldSeedMarginFromBooleans(secretPosition);
