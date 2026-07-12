@@ -90,6 +90,11 @@ test("isBuyEligible=false suppresses willBuy contribution so liquidation doesn't
   assert.equal(healthyWhileLiquidating.signals.goodBooleanScore, 2);
 });
 
+test("daytrade points cap at 2 even though THESIS_MAX prices 3", () => {
+  const result = gate({ ticker: "X", daytradeScore: -350 });
+  assert.equal(result.signals.goodBooleanScore, 2);
+});
+
 test("new thesis flags isInBssRange and isAboveMinPsWordPerc each score 1pt", () => {
   const result = gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true });
   assert.equal(result.signals.goodBooleanScore, 2);

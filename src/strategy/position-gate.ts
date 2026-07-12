@@ -156,14 +156,16 @@ function getBasicStockYesThresholds(currentTime: Date): {
   };
 }
 
-// daytradeScore: 1 pt per 100 below -50, capped at 3.
-// -50 to -150 → 1, -150 to -250 → 2, -250+ → 3
+// daytradeScore: 1 pt per 100 below -50. Actual contribution caps at
+// DAYTRADE_SCORE_CAP even though THESIS_MAX prices it at DAYTRADE_SCORE_MAX_PTS —
+// deliberate headroom so daytrade alone can't max the thesis scale.
+// -50 to -150 → 1, -150+ → 2
 function getDaytradeScorePoints(position: SecretSourcePosition | undefined): number {
   const raw = position?.daytradeScore;
   if (raw == null) return 0;
   const score = Number(raw);
   if (!Number.isFinite(score) || score > -50) return 0;
-  return Math.min(3, Math.floor((Math.abs(score) - 50) / 100) + 1);
+  return Math.min(DAYTRADE_SCORE_CAP, Math.floor((Math.abs(score) - 50) / 100) + 1);
 }
 
 // The thesis scale — the "100%": every flag below (1pt each) + daytradeScore
@@ -181,8 +183,11 @@ const THESIS_FLAGS = [
   "isAboveMinBuyWeight",
 ] as const satisfies ReadonlyArray<keyof SecretSourcePosition>;
 
-const DAYTRADE_SCORE_MAX_PTS = 3;
+const DAYTRADE_SCORE_MAX_PTS = 3; // what THESIS_MAX prices daytrade at
 export const THESIS_MAX = THESIS_FLAGS.length + DAYTRADE_SCORE_MAX_PTS; // self-updating
+// Actual daytrade contribution cap — one point below the priced max, so the
+// scale carries deliberate headroom that daytrade alone can never fill.
+const DAYTRADE_SCORE_CAP = 2;
 
 function countThesisBooleanScore(
   position: SecretSourcePosition | undefined,
@@ -259,8 +264,11 @@ export function computePositionGate(options: {
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
-  // Full marks on the thesis scale — willBuy icing is not required.
-  const allBooleansGood = countThesisBooleanScore(options.secretPosition) === THESIS_MAX;
+  // Every THESIS_FLAG true — daytrade's capped points can't reach the priced
+  // THESIS_MAX, so the flag set (not the scale total) is the "all good" test.
+  const allBooleansGood = THESIS_FLAGS.every((flag) =>
+    toBooleanFlag(options.secretPosition?.[flag]),
+  );
 
   // basic: isQualityToBuy, a bullish daytradeScore below the basic threshold,
   // or percentOfBalance above the basic threshold (both time-scaled)
