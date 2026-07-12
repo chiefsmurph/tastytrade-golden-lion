@@ -156,16 +156,14 @@ function getBasicStockYesThresholds(currentTime: Date): {
   };
 }
 
-// daytradeScore: 1 pt per 100 below -50. Actual contribution caps at
-// DAYTRADE_SCORE_CAP even though THESIS_MAX prices it at DAYTRADE_SCORE_MAX_PTS —
-// deliberate headroom so daytrade alone can't max the thesis scale.
+// daytradeScore: 1 pt per 100 below -50, capped at DAYTRADE_SCORE_MAX_PTS.
 // -50 to -150 → 1, -150+ → 2
 function getDaytradeScorePoints(position: SecretSourcePosition | undefined): number {
   const raw = position?.daytradeScore;
   if (raw == null) return 0;
   const score = Number(raw);
   if (!Number.isFinite(score) || score > -50) return 0;
-  return Math.min(DAYTRADE_SCORE_CAP, Math.floor((Math.abs(score) - 50) / 100) + 1);
+  return Math.min(DAYTRADE_SCORE_MAX_PTS, Math.floor((Math.abs(score) - 50) / 100) + 1);
 }
 
 // The thesis scale — the "100%": every flag below (1pt each) + daytradeScore
@@ -183,11 +181,8 @@ const THESIS_FLAGS = [
   "isAboveMinBuyWeight",
 ] as const satisfies ReadonlyArray<keyof SecretSourcePosition>;
 
-const DAYTRADE_SCORE_MAX_PTS = 3; // what THESIS_MAX prices daytrade at
+const DAYTRADE_SCORE_MAX_PTS = 2;
 export const THESIS_MAX = THESIS_FLAGS.length + DAYTRADE_SCORE_MAX_PTS; // self-updating
-// Actual daytrade contribution cap — one point below the priced max, so the
-// scale carries deliberate headroom that daytrade alone can never fill.
-const DAYTRADE_SCORE_CAP = 2;
 
 function countThesisBooleanScore(
   position: SecretSourcePosition | undefined,
@@ -264,8 +259,8 @@ export function computePositionGate(options: {
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
-  // Every THESIS_FLAG true — daytrade's capped points can't reach the priced
-  // THESIS_MAX, so the flag set (not the scale total) is the "all good" test.
+  // Every THESIS_FLAG true — the boolean set, not the scale total (daytrade
+  // points are a separate, non-boolean contribution).
   const allBooleansGood = THESIS_FLAGS.every((flag) =>
     toBooleanFlag(options.secretPosition?.[flag]),
   );

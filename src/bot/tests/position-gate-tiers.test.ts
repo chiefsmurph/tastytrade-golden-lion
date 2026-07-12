@@ -90,7 +90,7 @@ test("isBuyEligible=false suppresses willBuy contribution so liquidation doesn't
   assert.equal(healthyWhileLiquidating.signals.goodBooleanScore, 2);
 });
 
-test("daytrade points cap at 2 even though THESIS_MAX prices 3", () => {
+test("daytrade points cap at 2", () => {
   const result = gate({ ticker: "X", daytradeScore: -350 });
   assert.equal(result.signals.goodBooleanScore, 2);
 });
