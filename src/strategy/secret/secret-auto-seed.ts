@@ -3,7 +3,7 @@ import { SECRET_AUTO_SEED_ORDER_SOURCE } from "~/bot/order-sources";
 import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct, THESIS_MAX } from "~/strategy/position-gate";
 import { recordPositionOpened } from "~/bot/position-registry";
 import { toBooleanFlag } from "~/core/env-utils";
 
@@ -159,7 +159,7 @@ export async function maybeAutoSeedFromSecretPositions(
         scope: "secret-auto-seed-margin-all-signals",
         accountNumber: marginAccountNumber,
         cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
-        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/9 good`,
+        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/${THESIS_MAX} good`,
         goodBooleanScore,
         booleanSurplusPct,
       });
