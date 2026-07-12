@@ -4,6 +4,7 @@ import { buildGroupExecutionTargets } from "~/strategy/group-execution-targets";
 import { getSecretSocketStatus } from "~/strategy/secret";
 import type { RunCyclePreview } from "./run-cycle-context";
 import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";
+import { THESIS_MAX } from "~/strategy/position-gate";
 import type { StrategyAccountType } from "~/strategy/evaluate-trading-strategy";
 
 type BaseExecutionTargets = {
@@ -235,7 +236,7 @@ export function logExecutionTargetsByGroup(
         const { signals } = gate;
         const surplusStr = surplusPct > 0 ? ` +${(surplusPct * 100).toFixed(0)}% surplus` : "";
         console.log(
-          `  Position Gate:      crossAccountYes=${signals.crossAccountYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/11${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
+          `  Position Gate:      crossAccountYes=${signals.crossAccountYes}, basicYes=${signals.basicStockYes}, strongYes=${signals.strongStockYes}, booleans=${signals.goodBooleanScore}/${THESIS_MAX}${surplusStr}, maxTargetPct=${formatPercent(gate.maxTargetPct)}`,
         );
       }
       const baseBuyPct = getMaxBuyExposurePctForAccountType(accountType === "unknown" ? "cash" : accountType);

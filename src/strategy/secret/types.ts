@@ -2,17 +2,20 @@ export interface SecretSourcePosition {
   ticker?: string;
   buyWeight?: number;
   daytradeScore?: number;
-  buyEligible?: boolean | string | number;
-  qualityToBuy?: boolean | string | number;
+  isBuyEligible?: boolean | string | number;
+  isQualityToBuy?: boolean | string | number;
   returnPerc?: number;
   superRecScore?: number;
   distanceToAsk?: number;
   percentOfBalance?: number;
-  isAboveMinSinFloor?: boolean | string | number;
-  aboveMinSis?: boolean | string | number;
-  isAboveStabMin?: boolean | string | number;
+  isAboveMinSin?: boolean | string | number;
+  isAboveMinSis?: boolean | string | number;
+  isAboveMinStab?: boolean | string | number;
+  isInBssRange?: boolean | string | number;
+  isAboveMinPsWordPerc?: boolean | string | number;
+  isInZScoreRange?: boolean | string | number;
   isClearedToBuy?: boolean | string | number;
-  currentlyAboveMinBuyWeight?: boolean | string | number;
+  isAboveMinBuyWeight?: boolean | string | number;
   willBuy?: boolean | string | number;
   [key: string]: unknown;
 }
