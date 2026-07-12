@@ -13,6 +13,7 @@ export interface SecretSourcePosition {
   isAboveMinStab?: boolean | string | number;
   isInBssRange?: boolean | string | number;
   isAboveMinPsWordPerc?: boolean | string | number;
+  isInZScoreRange?: boolean | string | number;
   isClearedToBuy?: boolean | string | number;
   isAboveMinBuyWeight?: boolean | string | number;
   willBuy?: boolean | string | number;
