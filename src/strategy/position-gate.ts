@@ -177,6 +177,11 @@ const THESIS_FLAGS = [
   "isAboveMinStab",
   "isInBssRange",
   "isAboveMinPsWordPerc",
+  // Upstream hard gate, not just a scoring signal: the feed computes
+  // isBuyEligible (and therefore willBuy) as false whenever isInZScoreRange is
+  // false — so willBuy:true with isInZScoreRange:false should never arrive.
+  // It still belongs in the thesis scale so our score matches the feed's own.
+  "isInZScoreRange",
   "isClearedToBuy",
   "isAboveMinBuyWeight",
 ] as const satisfies ReadonlyArray<keyof SecretSourcePosition>;
@@ -205,6 +210,9 @@ function countThesisBooleanScore(
 // past "full" but never required to reach it — every threshold downstream is reachable
 // by thesis alone. Skipped when isBuyEligible is explicitly false, since buy-intent is
 // meaningless while the source account is liquidating (EOD/open windows).
+// Note: upstream computes willBuy = Boolean(isBuyEligible && ...), so willBuy can never
+// arrive true with isBuyEligible false — this guard is redundant today and kept only as
+// defense against the two flags decoupling upstream. Feed side confirmed 2026-07-12.
 // Total range 0–(THESIS_MAX + 2).
 export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
