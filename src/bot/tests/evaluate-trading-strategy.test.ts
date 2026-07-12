@@ -54,10 +54,32 @@ test("getTimeOfDayExecutionTargets boundary at 06:30 is opening target set", () 
   const targets = getTimeOfDayExecutionTargetsForPstTime("06:30");
 
   assert.equal(targets.targetDTE, 30);
-  assert.equal(targets.targetAccountExposure, 0.4);
+  assert.equal(targets.targetAccountExposure, 0.6);
   assert.equal(targets.bidWeight, 0.7);
   assert.equal(targets.midWeight, 0.2);
   assert.equal(targets.askWeight, 0.1);
+});
+
+test("margin exposure opens at 60% and reaches full deployment by 10:30", () => {
+  const open = getTimeOfDayExecutionTargetsForPstTime("06:30", "margin");
+  assert.equal(open.targetAccountExposure, 0.6);
+
+  const nineAm = getTimeOfDayExecutionTargetsForPstTime("09:00", "margin");
+  assert.equal(nineAm.targetAccountExposure, 0.8);
+
+  const tenThirty = getTimeOfDayExecutionTargetsForPstTime("10:30", "margin");
+  assert.equal(tenThirty.targetAccountExposure, 1);
+});
+
+test("cash exposure opens at 55% and keeps its 12:45 peak", () => {
+  const open = getTimeOfDayExecutionTargetsForPstTime("06:30", "cash");
+  assert.equal(open.targetAccountExposure, 0.55);
+
+  const tenAm = getTimeOfDayExecutionTargetsForPstTime("10:00", "cash");
+  assert.equal(tenAm.targetAccountExposure, 0.8);
+
+  const peak = getTimeOfDayExecutionTargetsForPstTime("12:45", "cash");
+  assert.equal(peak.targetAccountExposure, 1);
 });
 
 test("getTimeOfDayExecutionTargets boundary at 12:30 is fully risk-off", () => {
@@ -101,9 +123,9 @@ test("blank DTE env vars fall back to default 7 instead of producing NaN", () =>
 test("getTimeOfDayExecutionTargets keeps cash accounts active at 12:30", () => {
   const targets = getTimeOfDayExecutionTargetsForPstTime("12:30", "cash");
 
-  // Cash exposure ramps to 100% at 12:45; at 12:30 the blend sits at 0.98
+  // Cash exposure ramps 0.90 (11:00) → 1.00 (12:45); at 12:30 the blend sits at 0.99
   assert.equal(targets.targetDTE, 7);
-  assert.equal(targets.targetAccountExposure, 0.98);
+  assert.equal(targets.targetAccountExposure, 0.99);
   assert.equal(targets.bidWeight, 0);
   assert.equal(targets.midWeight, 0.15);
   assert.equal(targets.askWeight, 0.85);
