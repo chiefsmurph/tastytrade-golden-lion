@@ -90,6 +90,11 @@ test("isBuyEligible=false suppresses willBuy contribution so liquidation doesn't
   assert.equal(healthyWhileLiquidating.signals.goodBooleanScore, 2);
 });
 
+test("new thesis flags isInBssRange and isAboveMinPsWordPerc each score 1pt", () => {
+  const result = gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true });
+  assert.equal(result.signals.goodBooleanScore, 2);
+});
+
 test("isQualityToBuy scores 1pt regardless of isBuyEligible state", () => {
   const eligible = gate({ ticker: "X", isQualityToBuy: true, isBuyEligible: true });
   assert.equal(eligible.signals.goodBooleanScore, 1);
