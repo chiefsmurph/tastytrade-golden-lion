@@ -254,18 +254,30 @@ function getTimeOfDayExecutionTargetsForMinute(
   const targetDTE = accountType === "margin"
     ? Math.min(rawTargetDTE, marginMaxDTE)
     : Math.max(rawTargetDTE, cashMinDTE);
-  // Margin reaches 100% at noon; cash reaches 100% at 12:45pm
-  const TWELVE_PM          = 12 * 60;
+  // Morning-weighted exposure schedules (2026-07-12). Margin must be flat by
+  // ~12:55 and the cutoff guard blocks entries near the 12:30 cutoff, so early
+  // buys are the only ones with runway — margin ramps to full deployment by
+  // 10:30 AM. Cash holds overnight and keeps its later 12:45 peak with a
+  // raised morning floor. The morning entry-spread ramp (spread-thresholds.ts)
+  // is deliberately unchanged: this buys more of what already qualifies, not
+  // looser qualification.
+  const TEN_THIRTY_AM      = 10 * 60 + 30;
   const TWELVE_FORTY_FIVE  = 12 * 60 + 45;
-  const exposurePeakMinute = accountType === "cash" ? TWELVE_FORTY_FIVE : TWELVE_PM;
-  const targetAccountExposure = blendBySchedule(timeInMinutes, [
-    { minute: SIX_THIRTY_AM,  value: 0.40 },
-    { minute: NINE_AM,        value: 0.50 },
-    { minute: TEN_AM,         value: 0.65 },
-    { minute: ELEVEN_AM,      value: 0.85 },
-    { minute: exposurePeakMinute, value: 1.00 },
-    { minute: noBuyCutoffMinute,  value: 1.00 },
-  ]);
+  const targetAccountExposure = accountType === "cash"
+    ? blendBySchedule(timeInMinutes, [
+        { minute: SIX_THIRTY_AM,  value: 0.55 },
+        { minute: NINE_AM,        value: 0.70 },
+        { minute: TEN_AM,         value: 0.80 },
+        { minute: ELEVEN_AM,      value: 0.90 },
+        { minute: TWELVE_FORTY_FIVE, value: 1.00 },
+        { minute: noBuyCutoffMinute, value: 1.00 },
+      ])
+    : blendBySchedule(timeInMinutes, [
+        { minute: SIX_THIRTY_AM,  value: 0.60 },
+        { minute: NINE_AM,        value: 0.80 },
+        { minute: TEN_THIRTY_AM,  value: 1.00 },
+        { minute: noBuyCutoffMinute, value: 1.00 },
+      ]);
   const bidWeight = blendBySchedule(timeInMinutes, [
     { minute: SIX_THIRTY_AM, value: 0.70 },
     { minute: NINE_AM, value: 0.50 },
