@@ -1,5 +1,15 @@
 import { getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime } from "~/strategy/evaluate-trading-strategy";
 import { buildGroupExecutionTargets } from "~/strategy/group-execution-targets";
+import {
+  computePositionGate,
+  countGoodBooleans,
+  getBooleanSurplusPct,
+  shouldSeedMarginFromBooleans,
+  THESIS_MAX,
+  type PositionGateResult,
+} from "~/strategy/position-gate";
+import { getCachedSecretSourcePositions } from "./secret-socket-state";
+import type { SecretSourcePosition } from "./types";
 
 export interface DebugSecretExecutionTargetInputs {
   askReturnPerc?: number;
@@ -22,6 +32,15 @@ export interface DebugSecretExecutionTargetPayload {
   positionGroupTargets: ReturnType<typeof buildGroupExecutionTargets>["positionGroupTargets"];
   secretBuyWeight: number | null;
   secretExecutionTargets: ReturnType<typeof buildGroupExecutionTargets>["secretExecutionTargets"];
+  // The juicy part: the raw cached feed position and everything derived from it.
+  secretPosition: SecretSourcePosition | null;
+  derived: {
+    goodBooleanScore: number;
+    thesisMax: number;
+    booleanSurplusPct: number;
+    wouldSeedMargin: boolean;
+    positionGate: PositionGateResult;
+  } | null;
   symbol: string;
   timeOfDayTargets: ReturnType<typeof getTargetsForPstTime>;
 }
@@ -52,6 +71,26 @@ export function buildDebugSecretExecutionTargetPayload(
     timeSinceLastActionMs,
   });
 
+  const normalizedSymbol = inputs.symbol.trim().toUpperCase();
+  const secretPosition =
+    getCachedSecretSourcePositions().find(
+      (position) => String(position.ticker ?? "").trim().toUpperCase() === normalizedSymbol,
+    ) ?? null;
+
+  const derived = secretPosition
+    ? {
+        goodBooleanScore: countGoodBooleans(secretPosition),
+        thesisMax: THESIS_MAX,
+        booleanSurplusPct: getBooleanSurplusPct(countGoodBooleans(secretPosition)),
+        wouldSeedMargin: shouldSeedMarginFromBooleans(secretPosition),
+        positionGate: computePositionGate({
+          crossAccountAskReturnFraction: null,
+          secretPosition,
+          currentTime,
+        }),
+      }
+    : null;
+
   return {
     blendedTargets: groupTargetComponents.blendedTargets,
     currentTime: currentTime.toISOString(),
@@ -65,6 +104,8 @@ export function buildDebugSecretExecutionTargetPayload(
     positionGroupTargets: groupTargetComponents.positionGroupTargets,
     secretBuyWeight: groupTargetComponents.secretBuyWeight,
     secretExecutionTargets: groupTargetComponents.secretExecutionTargets,
+    secretPosition,
+    derived,
     symbol: inputs.symbol,
     timeOfDayTargets,
   };
