@@ -275,18 +275,20 @@ export function countGoodBooleans(position: SecretSourcePosition | undefined): n
   return countThesisBooleanScore(position) + willBuyIcing;
 }
 
-// Margin seed. Feed-consolidated path: thesisCount >= 4 — with the feed's
-// current thesisMax of 4 that means every feed thesis flag passing, which is
-// the agreed intent match for the legacy bar. Legacy fallback: 4 points on the
-// merged thesis scale (isClearedToBuy || isAboveMinBuyWeight collapse to one
-// slot → THESIS_MAX − 1 effective points, daytradeScore included).
+// Margin seed — the highest-conviction action, so the bar is "everything
+// passing". Feed-consolidated path: thesisCount >= thesisMax (thesisMax is in
+// the payload for exactly this; today that's 4/4, and the bar tracks the feed
+// if it grows its flag set). Legacy fallback: 4 points on the merged thesis
+// scale (isClearedToBuy || isAboveMinBuyWeight collapse to one slot →
+// THESIS_MAX − 1 effective points, daytradeScore included).
 export function shouldSeedMarginFromBooleans(
   position: SecretSourcePosition | undefined,
 ): boolean {
   if (!position) return false;
   const feedThesisCount = Number(position.thesisCount);
-  if (Number.isFinite(feedThesisCount)) {
-    return feedThesisCount >= 4;
+  const feedThesisMax = Number(position.thesisMax);
+  if (Number.isFinite(feedThesisCount) && feedThesisMax > 0) {
+    return feedThesisCount >= feedThesisMax;
   }
   return countThesisBooleanScore(position, true) >= 4;
 }

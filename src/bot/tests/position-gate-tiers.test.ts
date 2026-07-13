@@ -157,12 +157,17 @@ test("allBooleansGood follows buyFraction >= 1.0 when present, legacy flags othe
   );
 });
 
-test("margin seeding uses feed thesisCount >= 4 when present, legacy merged count otherwise", () => {
+test("margin seeding requires the FULL feed thesis (thesisCount >= thesisMax), legacy merged count otherwise", () => {
   const p = (extra: Partial<SecretSourcePosition>) =>
     ({ ticker: "X", ...extra }) as SecretSourcePosition;
 
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4 })), true);
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 3 })), false);
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4, thesisMax: 4 })), true);
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 3, thesisMax: 4 })), false);
+  // the bar tracks the feed if its flag set grows: 4/5 is no longer everything
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4, thesisMax: 5 })), false);
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 5, thesisMax: 5 })), true);
+  // thesisMax missing/invalid -> legacy fallback, not a guess
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4 })), false);
   // thesisCount absent -> legacy merged path (4 legacy signals = 4 merged points)
   assert.equal(
     shouldSeedMarginFromBooleans(
