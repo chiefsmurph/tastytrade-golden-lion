@@ -156,47 +156,16 @@ function getBasicStockYesThresholds(currentTime: Date): {
   };
 }
 
-// daytradeScore: 1 pt per 100 below -50, capped at DAYTRADE_SCORE_MAX_PTS.
-// -50 to -150 → 1, -150+ → 2
-function getDaytradeScorePoints(position: SecretSourcePosition | undefined): number {
-  const raw = position?.daytradeScore;
-  if (raw == null) return 0;
-  const score = Number(raw);
-  if (!Number.isFinite(score) || score > -50) return 0;
-  return Math.min(DAYTRADE_SCORE_MAX_PTS, Math.floor((Math.abs(score) - 50) / 100) + 1);
-}
-
-// The legacy thesis scale — the "100%": every flag below (1pt each) +
-// daytradeScore (0–DAYTRADE_SCORE_MAX_PTS) → 0–THESIS_MAX. willBuy is
-// deliberately NOT part of this scale. Adding/removing a feed flag here
-// self-updates THESIS_MAX and every denominator/cap derived from it.
-//
-// FALLBACK PATH since 2026-07-12: the feed consolidated its thesis and now
-// sends buyFraction/thesisCount/thesisMax, which supersede this per-flag count
-// when present (see countGoodBooleans). This array can be deleted once the
-// feed confirms it has stopped emitting the individual legacy flags.
-const THESIS_FLAGS = [
-  "isQualityToBuy",
-  "isAboveMinSis",
-  "isAboveMinSin",
-  "isAboveMinStab",
-  "isInBssRange",
-  "isAboveMinPsWordPerc",
-  // Upstream hard gate, not just a scoring signal: the feed computes
-  // isBuyEligible (and therefore willBuy) as false whenever isInZScoreRange is
-  // false — so willBuy:true with isInZScoreRange:false should never arrive.
-  // It still belongs in the thesis scale so our score matches the feed's own.
-  "isInZScoreRange",
-  "isClearedToBuy",
-  "isAboveMinBuyWeight",
-] as const satisfies ReadonlyArray<keyof SecretSourcePosition>;
-
-const DAYTRADE_SCORE_MAX_PTS = 2;
-export const THESIS_MAX = THESIS_FLAGS.length + DAYTRADE_SCORE_MAX_PTS; // self-updating
+// The thesis scale is the feed's manually-curated thesis: manualThesisMax is
+// always 10, so scores run 0–10 with the willBuy icing (+2) on top. Every
+// downstream bar (dip boost ≥4, seed multiplier 3/5/7, deep-loss ≥6, boost
+// ×0.03/pt, surplus cap at full) and log denominator is tuned to this scale.
+// The pre-2026-07-13 legacy per-flag counting (THESIS_FLAGS) is gone — the
+// feed sends its rollup on every position.
+export const THESIS_MAX = 10;
 
 // The feed's consolidated thesis rollup: 0→1.0 spans its thesis flags, and only
-// willBuy pushes it above 1.0 (to 1.25) — the same icing semantics as ours.
-// Null when the payload predates the consolidation (legacy per-flag fallback).
+// willBuy pushes it above 1.0 (to 1.25) — the icing signal.
 const BUY_FRACTION_ICING_MAX = 1.25;
 
 function getFeedBuyFraction(position: SecretSourcePosition | undefined): number | null {
@@ -205,10 +174,10 @@ function getFeedBuyFraction(position: SecretSourcePosition | undefined): number 
   return Math.min(raw, BUY_FRACTION_ICING_MAX);
 }
 
-// The feed's second, manually-curated thesis (0–manualThesisMax, currently /10)
-// — richer granularity than the 4-flag buyFraction (whose rescale can only land
-// on 0/3/6/8/11), so it is the preferred score source. Normalized onto the
-// legacy 0–THESIS_MAX scale so every downstream bar stays put.
+// The feed's manually-curated thesis — the preferred score source (richer
+// granularity than the 4-flag buyFraction). manualThesisMax is always 10 =
+// THESIS_MAX, so this is the raw count; the ratio form guards against the
+// feed ever changing its max.
 function getManualThesisScore(position: SecretSourcePosition): number | null {
   // NaN (missing/garbage fields), Infinity (max 0), and negatives all fail the
   // finite-and-non-negative check in one expression.
@@ -219,43 +188,17 @@ function getManualThesisScore(position: SecretSourcePosition): number | null {
   return Math.round(Math.min(fractionOfMax, 1) * THESIS_MAX);
 }
 
-function countThesisBooleanScore(
-  position: SecretSourcePosition | undefined,
-  mergeCleared = false, // true: isClearedToBuy || isAboveMinBuyWeight = 1 slot
-): number {
-  if (!position) return 0;
-  let count = 0;
-  for (const flag of THESIS_FLAGS) {
-    if (flag === "isAboveMinBuyWeight" && mergeCleared) continue;
-    if (flag === "isClearedToBuy" && mergeCleared) {
-      if (toBooleanFlag(position.isClearedToBuy) || toBooleanFlag(position.isAboveMinBuyWeight)) count++;
-      continue;
-    }
-    if (toBooleanFlag(position[flag])) count++;
-  }
-  return count + getDaytradeScorePoints(position);
-}
-
-// willBuy is icing on the cake: +2 on top of the thesis scale, able to push a score
-// past "full" but never required to reach it — every threshold downstream is reachable
-// by thesis alone. Skipped when isBuyEligible is explicitly false, since buy-intent is
-// meaningless while the source account is liquidating (EOD/open windows).
-// Note: upstream computes willBuy = Boolean(isBuyEligible && ...), so willBuy can never
-// arrive true with isBuyEligible false — this guard is redundant today and kept only as
-// defense against the two flags decoupling upstream. Feed side confirmed 2026-07-12.
-// Total range 0–(THESIS_MAX + 2).
+// The gate score, 0–THESIS_MAX(+2). Sources in preference order:
+//   1. Manual thesis (manualThesisCount/manualThesisMax) — the richer,
+//      manually-curated 0–10 score.
+//   2. buyFraction alone — the coarse 4-flag rollup, spread across the scale.
+// willBuy icing (+2) comes from buyFraction > 1 on both paths — the feed only
+// pushes past 1.0 when willBuy is true, and it computes willBuy false during
+// its own liquidation windows (isBuyEligible), so buy-intent noise is already
+// handled upstream. No rollup at all = no thesis = 0: unknown scores nothing.
 export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
 
-  // Feed-consolidated paths, in preference order. Both rescale onto the legacy
-  // point scale so every downstream bar (dip boost ≥4, seed multiplier 3/5/7,
-  // deep-loss ≥6, boost ×0.03/pt) and log denominator works unchanged.
-  //
-  // 1. Manual thesis (0–10): the richer, manually-curated score — preferred
-  //    for granularity. willBuy icing (+2) still comes from buyFraction > 1.
-  // 2. buyFraction alone: ≤ 1.0 spans the thesis scale; the excess above 1.0
-  //    is the willBuy icing — the feed only pushes past 1.0 when willBuy is
-  //    true, so the icing semantics carry over exactly.
   const feedFraction = getFeedBuyFraction(position);
   const feedIcing = feedFraction !== null && feedFraction > 1 ? 2 : 0;
 
@@ -268,29 +211,19 @@ export function countGoodBooleans(position: SecretSourcePosition | undefined): n
     return Math.round(Math.min(feedFraction, 1) * THESIS_MAX) + feedIcing;
   }
 
-  const buyEligibleExplicitlyFalse =
-    position.isBuyEligible !== undefined && !toBooleanFlag(position.isBuyEligible);
-  const willBuyIcing =
-    !buyEligibleExplicitlyFalse && toBooleanFlag(position.willBuy) ? 2 : 0;
-  return countThesisBooleanScore(position) + willBuyIcing;
+  return 0;
 }
 
 // Margin seed — the highest-conviction action, so the bar is "everything
-// passing". Feed-consolidated path: thesisCount >= thesisMax (thesisMax is in
-// the payload for exactly this; today that's 4/4, and the bar tracks the feed
-// if it grows its flag set). Legacy fallback: 4 points on the merged thesis
-// scale (isClearedToBuy || isAboveMinBuyWeight collapse to one slot →
-// THESIS_MAX − 1 effective points, daytradeScore included).
+// passing": thesisCount >= thesisMax (thesisMax is in the payload for exactly
+// this; today that's 4/4, and the bar tracks the feed if it grows its flag
+// set). Missing/invalid rollup = no seed — unknown thesis is not conviction.
 export function shouldSeedMarginFromBooleans(
   position: SecretSourcePosition | undefined,
 ): boolean {
-  if (!position) return false;
-  const feedThesisCount = Number(position.thesisCount);
-  const feedThesisMax = Number(position.thesisMax);
-  if (Number.isFinite(feedThesisCount) && feedThesisMax > 0) {
-    return feedThesisCount >= feedThesisMax;
-  }
-  return countThesisBooleanScore(position, true) >= 4;
+  // NaN (missing fields) and Infinity (max 0) both fail the finite check.
+  const ratio = Number(position?.thesisCount) / Number(position?.thesisMax);
+  return Number.isFinite(ratio) && ratio >= 1;
 }
 
 // Per-action buy exposure surplus added on top of the account-type base for both
@@ -328,15 +261,10 @@ export function computePositionGate(options: {
   const thresholds = getStrongStockYesThresholds(options.currentTime);
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
-  // Feed-consolidated path: full thesis = buyFraction >= 1.0 (only willBuy can
-  // push past it). Legacy fallback: every THESIS_FLAG true — the boolean set,
-  // not the scale total (daytrade points are a separate, non-boolean
-  // contribution).
+  // Full thesis = buyFraction >= 1.0 (only willBuy can push past it). No
+  // rollup = false.
   const gateFeedFraction = getFeedBuyFraction(options.secretPosition);
-  const allBooleansGood =
-    gateFeedFraction !== null
-      ? gateFeedFraction >= 1.0
-      : THESIS_FLAGS.every((flag) => toBooleanFlag(options.secretPosition?.[flag]));
+  const allBooleansGood = gateFeedFraction !== null && gateFeedFraction >= 1.0;
 
   // basic: isQualityToBuy, a bullish daytradeScore below the basic threshold,
   // or percentOfBalance above the basic threshold (both time-scaled)

@@ -126,6 +126,22 @@ function isSecretModuleConfigured(): boolean {
   );
 }
 
+// Tripwire: the thesis rollup is the SOLE score source (no legacy fallback
+// since 2026-07-13). A position arriving without it scores 0 — safe but
+// signal-blind — so make a feed regression loud instead of silent.
+function warnOnMissingThesisRollup(positions: SecretSourcePosition[]): void {
+  const missing = positions.filter(
+    (position) =>
+      !Number.isFinite(Number(position.manualThesisCount)) &&
+      !Number.isFinite(Number(position.buyFraction)),
+  );
+  if (missing.length === 0) return;
+  const tickers = missing.slice(0, 5).map((position) => position.ticker).join(", ");
+  console.warn(
+    `[secret] ${missing.length}/${positions.length} positions arrived WITHOUT thesis rollup fields (manualThesisCount/buyFraction) — they will score 0. Feed regression? Tickers: ${tickers}`,
+  );
+}
+
 function updateCachedPositionsFromPayload(payload: SecretDataUpdatePayload): void {
   const sourceKey = getSecretPositionsSourceKey();
   if (!sourceKey) {
@@ -140,6 +156,7 @@ function updateCachedPositionsFromPayload(payload: SecretDataUpdatePayload): voi
   cachedSourcePositions = sourcePositions as SecretSourcePosition[];
   lastSecretPositionsUpdateAt = new Date();
   persistSecretCacheToDisk();
+  warnOnMissingThesisRollup(cachedSourcePositions);
 
   void maybeAutoSeedFromSecretPositions(cachedSourcePositions);
 }

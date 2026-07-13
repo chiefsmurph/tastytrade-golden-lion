@@ -29,13 +29,12 @@ test("no signals and no cross-account confirmation → maxTargetPct 0 (the #1 sk
   assert.equal(gate({ ticker: "X" }).maxTargetPct, 0);
 });
 
-test("basic-only stock yes lands on the basic tier (plus boolean boost)", () => {
-  // isQualityToBuy makes basicStockYes true AND adds 1pt to the score → +1 boost on top of tier.
+test("basic-only stock yes lands exactly on the basic tier (score comes only from the rollup)", () => {
   const result = gate({ ticker: "X", isQualityToBuy: true });
   assert.equal(result.signals.basicStockYes, true);
   assert.equal(result.signals.strongStockYes, false);
-  assert.equal(result.signals.goodBooleanScore, 1);
-  assert.ok(Math.abs(result.maxTargetPct - (getBasicYesMaxTargetPct() + BOOST)) < 1e-9);
+  assert.equal(result.signals.goodBooleanScore, 0);
+  assert.ok(Math.abs(result.maxTargetPct - getBasicYesMaxTargetPct()) < 1e-9);
 });
 
 test("strong stock yes (isQualityToBuy + high pct) uses the single-yes tier", () => {
@@ -52,160 +51,58 @@ test("cross-account YES alone uses the single-yes tier", () => {
 });
 
 test("cross-account YES + strong stock YES escalates to the strong tier", () => {
-  // isQualityToBuy adds 1pt to score → +BOOST on top of the strong tier.
   const result = gate({ ticker: "X", isQualityToBuy: true, percentOfBalance: 80 }, -0.5);
-  assert.ok(Math.abs(result.maxTargetPct - (getStrongYesMaxTargetPct() + BOOST)) < 1e-9);
+  assert.ok(Math.abs(result.maxTargetPct - getStrongYesMaxTargetPct()) < 1e-9);
 });
 
 test("cross-account YES + basic stock YES escalates to the both tier", () => {
-  // isQualityToBuy adds 1pt to score → +BOOST on top of the both tier.
   const result = gate({ ticker: "X", isQualityToBuy: true }, -0.5);
   assert.equal(result.signals.strongStockYes, false);
-  assert.ok(Math.abs(result.maxTargetPct - (getBothYesMaxTargetPct() + BOOST)) < 1e-9);
+  assert.ok(Math.abs(result.maxTargetPct - getBothYesMaxTargetPct()) < 1e-9);
 });
 
-test("each good boolean adds a fixed boost on top of the tier", () => {
-  // willBuy = 2 points; base has no stock-yes so tier is 0, boost = 2 × 0.03.
-  const result = gate({ ticker: "X", willBuy: true });
+test("each thesis point adds a fixed boost on top of the tier", () => {
+  // manual thesis 2/10 → 2 pts; no stock-yes so tier is 0, boost = 2 × 0.03.
+  const result = gate({ ticker: "X", manualThesisCount: 2, manualThesisMax: 10 });
   assert.equal(result.signals.goodBooleanScore, 2);
   assert.ok(Math.abs(result.maxTargetPct - 2 * BOOST) < 1e-9);
 });
 
-test("isBuyEligible=false suppresses willBuy contribution so liquidation doesn't crater score", () => {
-  // With isBuyEligible absent: willBuy counts normally (2pts).
-  const withoutFlag = gate({ ticker: "X", willBuy: true });
-  assert.equal(withoutFlag.signals.goodBooleanScore, 2);
+// ── The thesis rollup is the sole score source (2026-07-13) ──────────────────
 
-  // With isBuyEligible=false: willBuy is skipped entirely (0pts), score stays from health booleans only.
-  const liquidating = gate({ ticker: "X", willBuy: true, isBuyEligible: false });
-  assert.equal(liquidating.signals.goodBooleanScore, 0);
-
-  // Health booleans still score normally even when isBuyEligible=false.
-  const healthyWhileLiquidating = gate({
-    ticker: "X",
-    willBuy: true,
-    isBuyEligible: false,
-    isAboveMinSin: true,
-    isAboveMinSis: true,
-  });
-  assert.equal(healthyWhileLiquidating.signals.goodBooleanScore, 2);
-});
-
-test("daytrade points cap at 2", () => {
-  const result = gate({ ticker: "X", daytradeScore: -350 });
-  assert.equal(result.signals.goodBooleanScore, 2);
-});
-
-test("new thesis flags isInBssRange and isAboveMinPsWordPerc each score 1pt", () => {
-  const result = gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true });
-  assert.equal(result.signals.goodBooleanScore, 2);
-});
-
-test("isQualityToBuy scores 1pt regardless of isBuyEligible state", () => {
-  const eligible = gate({ ticker: "X", isQualityToBuy: true, isBuyEligible: true });
-  assert.equal(eligible.signals.goodBooleanScore, 1);
-
-  const liquidating = gate({ ticker: "X", isQualityToBuy: true, isBuyEligible: false });
-  assert.equal(liquidating.signals.goodBooleanScore, 1);
-});
-
-// ── Feed-consolidated thesis (buyFraction / thesisCount, 2026-07-12) ─────────
-// When present these supersede the legacy per-flag count; rescaled onto the
-// 0–THESIS_MAX(+2) point scale so every downstream bar stays unchanged.
-
-test("buyFraction maps onto the legacy point scale at the endpoints", () => {
-  // full thesis (no willBuy) → THESIS_MAX (11)
-  assert.equal(gate({ ticker: "X", buyFraction: 1.0 }).signals.goodBooleanScore, 11);
-  // full thesis + willBuy icing → THESIS_MAX + 2 (13)
-  assert.equal(gate({ ticker: "X", buyFraction: 1.25 }).signals.goodBooleanScore, 13);
-  // zero
-  assert.equal(gate({ ticker: "X", buyFraction: 0 }).signals.goodBooleanScore, 0);
-});
-
-test("buyFraction quarter steps land where the legacy bars expect", () => {
-  // 3/4 feed flags → 8 pts (passes deep-loss ≥6 and multiplier ≥7)
-  assert.equal(gate({ ticker: "X", buyFraction: 0.75 }).signals.goodBooleanScore, 8);
-  // 2/4 feed flags → 6 pts (deep-loss just passes; dip boost ≥4 passes)
-  assert.equal(gate({ ticker: "X", buyFraction: 0.5 }).signals.goodBooleanScore, 6);
-  // 1/4 feed flags → 3 pts (multiplier ≥3 tier; dip boost ≥4 fails)
-  assert.equal(gate({ ticker: "X", buyFraction: 0.25 }).signals.goodBooleanScore, 3);
-});
-
-test("buyFraction supersedes legacy flags when both are present", () => {
-  // Legacy flags say 2 pts; feed rollup says full thesis — feed wins.
+test("legacy per-flag fields no longer score — no rollup means 0", () => {
   const result = gate({
     ticker: "X",
-    buyFraction: 1.0,
     isInBssRange: true,
     isAboveMinPsWordPerc: true,
+    willBuy: true,
+    daytradeScore: -350,
   });
-  assert.equal(result.signals.goodBooleanScore, 11);
+  assert.equal(result.signals.goodBooleanScore, 0);
 });
 
-test("legacy per-flag path still works when buyFraction is absent", () => {
-  const result = gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true });
-  assert.equal(result.signals.goodBooleanScore, 2);
-});
-
-test("allBooleansGood follows buyFraction >= 1.0 when present, legacy flags otherwise", () => {
-  assert.equal(gate({ ticker: "X", buyFraction: 1.0 }).signals.allBooleansGood, true);
-  assert.equal(gate({ ticker: "X", buyFraction: 0.75 }).signals.allBooleansGood, false);
-  // absent buyFraction → legacy every-flag check (2 of 9 → false)
-  assert.equal(
-    gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true }).signals.allBooleansGood,
-    false,
-  );
-});
-
-test("margin seeding requires the FULL feed thesis (thesisCount >= thesisMax), legacy merged count otherwise", () => {
-  const p = (extra: Partial<SecretSourcePosition>) =>
-    ({ ticker: "X", ...extra }) as SecretSourcePosition;
-
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4, thesisMax: 4 })), true);
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 3, thesisMax: 4 })), false);
-  // the bar tracks the feed if its flag set grows: 4/5 is no longer everything
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4, thesisMax: 5 })), false);
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 5, thesisMax: 5 })), true);
-  // thesisMax missing/invalid -> legacy fallback, not a guess
-  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4 })), false);
-  // thesisCount absent -> legacy merged path (4 legacy signals = 4 merged points)
-  assert.equal(
-    shouldSeedMarginFromBooleans(
-      p({ isQualityToBuy: true, isAboveMinSin: true, isAboveMinStab: true, isClearedToBuy: true }),
-    ),
-    true,
-  );
-  assert.equal(shouldSeedMarginFromBooleans(undefined), false);
-});
-
-// ── Manual thesis (manualThesisCount / manualThesisMax, second feed dataset) ──
-// Richer 0–10 score, preferred over the coarse buyFraction rescale; willBuy
-// icing still comes from buyFraction > 1.
-
-test("manualThesisCount is the preferred score source, normalized onto the legacy scale", () => {
-  // 10/10 → full thesis (11); +buyFraction icing → 13
+test("manualThesisCount is the score source, raw on the 0–10 scale", () => {
   assert.equal(
     gate({ ticker: "X", manualThesisCount: 10, manualThesisMax: 10 }).signals.goodBooleanScore,
-    11,
+    10,
   );
-  assert.equal(
-    gate({ ticker: "X", manualThesisCount: 10, manualThesisMax: 10, buyFraction: 1.25 })
-      .signals.goodBooleanScore,
-    13,
-  );
-  // mid-scale granularity the 4-flag fraction can't express: 5/10 → 6, 4/10 → 4
   assert.equal(
     gate({ ticker: "X", manualThesisCount: 5, manualThesisMax: 10 }).signals.goodBooleanScore,
-    6,
+    5,
   );
   assert.equal(
     gate({ ticker: "X", manualThesisCount: 4, manualThesisMax: 10 }).signals.goodBooleanScore,
     4,
   );
+  // willBuy icing (+2) comes from buyFraction > 1
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: 10, manualThesisMax: 10, buyFraction: 1.25 })
+      .signals.goodBooleanScore,
+    12,
+  );
 });
 
 test("manual thesis supersedes buyFraction for the score when both are present", () => {
-  // buyFraction says full thesis; manual says 3/10 — manual wins (no icing at 1.0)
   const result = gate({
     ticker: "X",
     manualThesisCount: 3,
@@ -215,17 +112,45 @@ test("manual thesis supersedes buyFraction for the score when both are present",
   assert.equal(result.signals.goodBooleanScore, 3);
 });
 
-test("invalid manual thesis falls through to buyFraction, then legacy flags", () => {
-  // manualThesisMax 0 is unusable → buyFraction path
+test("buyFraction alone spreads across the scale (fallback when manual is absent)", () => {
+  assert.equal(gate({ ticker: "X", buyFraction: 1.25 }).signals.goodBooleanScore, 12);
+  assert.equal(gate({ ticker: "X", buyFraction: 1.0 }).signals.goodBooleanScore, 10);
+  assert.equal(gate({ ticker: "X", buyFraction: 0.75 }).signals.goodBooleanScore, 8);
+  assert.equal(gate({ ticker: "X", buyFraction: 0.5 }).signals.goodBooleanScore, 5);
+  assert.equal(gate({ ticker: "X", buyFraction: 0.25 }).signals.goodBooleanScore, 3);
+  assert.equal(gate({ ticker: "X", buyFraction: 0 }).signals.goodBooleanScore, 0);
+});
+
+test("invalid manual thesis falls through to buyFraction, then to 0", () => {
   assert.equal(
     gate({ ticker: "X", manualThesisCount: 5, manualThesisMax: 0, buyFraction: 0.75 })
       .signals.goodBooleanScore,
     8,
   );
-  // neither rollup → legacy per-flag count
   assert.equal(
     gate({ ticker: "X", manualThesisCount: Number.NaN, isInBssRange: true })
       .signals.goodBooleanScore,
-    1,
+    0,
   );
+});
+
+test("allBooleansGood is buyFraction >= 1.0; no rollup means false", () => {
+  assert.equal(gate({ ticker: "X", buyFraction: 1.0 }).signals.allBooleansGood, true);
+  assert.equal(gate({ ticker: "X", buyFraction: 0.75 }).signals.allBooleansGood, false);
+  assert.equal(gate({ ticker: "X", isInBssRange: true }).signals.allBooleansGood, false);
+});
+
+test("margin seeding requires the FULL feed thesis (thesisCount >= thesisMax)", () => {
+  const p = (extra: Partial<SecretSourcePosition>) =>
+    ({ ticker: "X", ...extra }) as SecretSourcePosition;
+
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4, thesisMax: 4 })), true);
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 3, thesisMax: 4 })), false);
+  // the bar tracks the feed if its flag set grows: 4/5 is no longer everything
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4, thesisMax: 5 })), false);
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 5, thesisMax: 5 })), true);
+  // missing/invalid rollup = no seed — unknown thesis is not conviction
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4 })), false);
+  assert.equal(shouldSeedMarginFromBooleans(p({ isClearedToBuy: true, willBuy: true })), false);
+  assert.equal(shouldSeedMarginFromBooleans(undefined), false);
 });
