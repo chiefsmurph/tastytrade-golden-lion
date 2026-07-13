@@ -6,6 +6,7 @@ import {
   getBothYesMaxTargetPct,
   getSingleYesMaxTargetPct,
   getStrongYesMaxTargetPct,
+  shouldSeedMarginFromBooleans,
 } from "~/strategy/position-gate";
 import type { SecretSourcePosition } from "~/strategy/secret/types";
 
@@ -106,4 +107,68 @@ test("isQualityToBuy scores 1pt regardless of isBuyEligible state", () => {
 
   const liquidating = gate({ ticker: "X", isQualityToBuy: true, isBuyEligible: false });
   assert.equal(liquidating.signals.goodBooleanScore, 1);
+});
+
+// ── Feed-consolidated thesis (buyFraction / thesisCount, 2026-07-12) ─────────
+// When present these supersede the legacy per-flag count; rescaled onto the
+// 0–THESIS_MAX(+2) point scale so every downstream bar stays unchanged.
+
+test("buyFraction maps onto the legacy point scale at the endpoints", () => {
+  // full thesis (no willBuy) → THESIS_MAX (11)
+  assert.equal(gate({ ticker: "X", buyFraction: 1.0 }).signals.goodBooleanScore, 11);
+  // full thesis + willBuy icing → THESIS_MAX + 2 (13)
+  assert.equal(gate({ ticker: "X", buyFraction: 1.25 }).signals.goodBooleanScore, 13);
+  // zero
+  assert.equal(gate({ ticker: "X", buyFraction: 0 }).signals.goodBooleanScore, 0);
+});
+
+test("buyFraction quarter steps land where the legacy bars expect", () => {
+  // 3/4 feed flags → 8 pts (passes deep-loss ≥6 and multiplier ≥7)
+  assert.equal(gate({ ticker: "X", buyFraction: 0.75 }).signals.goodBooleanScore, 8);
+  // 2/4 feed flags → 6 pts (deep-loss just passes; dip boost ≥4 passes)
+  assert.equal(gate({ ticker: "X", buyFraction: 0.5 }).signals.goodBooleanScore, 6);
+  // 1/4 feed flags → 3 pts (multiplier ≥3 tier; dip boost ≥4 fails)
+  assert.equal(gate({ ticker: "X", buyFraction: 0.25 }).signals.goodBooleanScore, 3);
+});
+
+test("buyFraction supersedes legacy flags when both are present", () => {
+  // Legacy flags say 2 pts; feed rollup says full thesis — feed wins.
+  const result = gate({
+    ticker: "X",
+    buyFraction: 1.0,
+    isInBssRange: true,
+    isAboveMinPsWordPerc: true,
+  });
+  assert.equal(result.signals.goodBooleanScore, 11);
+});
+
+test("legacy per-flag path still works when buyFraction is absent", () => {
+  const result = gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true });
+  assert.equal(result.signals.goodBooleanScore, 2);
+});
+
+test("allBooleansGood follows buyFraction >= 1.0 when present, legacy flags otherwise", () => {
+  assert.equal(gate({ ticker: "X", buyFraction: 1.0 }).signals.allBooleansGood, true);
+  assert.equal(gate({ ticker: "X", buyFraction: 0.75 }).signals.allBooleansGood, false);
+  // absent buyFraction → legacy every-flag check (2 of 9 → false)
+  assert.equal(
+    gate({ ticker: "X", isInBssRange: true, isAboveMinPsWordPerc: true }).signals.allBooleansGood,
+    false,
+  );
+});
+
+test("margin seeding uses feed thesisCount >= 4 when present, legacy merged count otherwise", () => {
+  const p = (extra: Partial<SecretSourcePosition>) =>
+    ({ ticker: "X", ...extra }) as SecretSourcePosition;
+
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4 })), true);
+  assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 3 })), false);
+  // thesisCount absent -> legacy merged path (4 legacy signals = 4 merged points)
+  assert.equal(
+    shouldSeedMarginFromBooleans(
+      p({ isQualityToBuy: true, isAboveMinSin: true, isAboveMinStab: true, isClearedToBuy: true }),
+    ),
+    true,
+  );
+  assert.equal(shouldSeedMarginFromBooleans(undefined), false);
 });

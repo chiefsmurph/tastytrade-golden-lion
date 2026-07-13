@@ -14,6 +14,14 @@ export interface SecretSourcePosition {
   isInBssRange?: boolean | string | number;
   isAboveMinPsWordPerc?: boolean | string | number;
   isInZScoreRange?: boolean | string | number;
+  // Feed-consolidated thesis (2026-07-12): the feed computes its own thesis and
+  // exposes the rollup on every position. When present these supersede the
+  // individual legacy flags above (still emitted during the transition).
+  buyFraction?: number; // 0→1.25; exceeds 1.0 only when willBuy on top of all flags
+  thesisCount?: number; // feed-side thesis flags passing
+  thesisMax?: number; // feed-side flag count (currently 4)
+  isGateMultFavorable?: boolean | string | number; // collapses isAboveMinSis/Sin/Stab
+  isHighConviction?: boolean | string | number; // supersedes isAboveMinBuyWeight (stricter)
   isClearedToBuy?: boolean | string | number;
   isAboveMinBuyWeight?: boolean | string | number;
   willBuy?: boolean | string | number;
