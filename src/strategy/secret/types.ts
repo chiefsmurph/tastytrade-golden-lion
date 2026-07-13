@@ -20,6 +20,8 @@ export interface SecretSourcePosition {
   buyFraction?: number; // 0→1.25; exceeds 1.0 only when willBuy on top of all flags
   thesisCount?: number; // feed-side thesis flags passing
   thesisMax?: number; // feed-side flag count (currently 4)
+  manualThesisCount?: number; // second, manually-curated thesis — flags passing; preferred score source
+  manualThesisMax?: number; // always 10
   isGateMultFavorable?: boolean | string | number; // collapses isAboveMinSis/Sin/Stab
   isHighConviction?: boolean | string | number; // supersedes isAboveMinBuyWeight (stricter)
   isClearedToBuy?: boolean | string | number;

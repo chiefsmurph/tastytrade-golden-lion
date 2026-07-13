@@ -205,6 +205,20 @@ function getFeedBuyFraction(position: SecretSourcePosition | undefined): number 
   return Math.min(raw, BUY_FRACTION_ICING_MAX);
 }
 
+// The feed's second, manually-curated thesis (0–manualThesisMax, currently /10)
+// — richer granularity than the 4-flag buyFraction (whose rescale can only land
+// on 0/3/6/8/11), so it is the preferred score source. Normalized onto the
+// legacy 0–THESIS_MAX scale so every downstream bar stays put.
+function getManualThesisScore(position: SecretSourcePosition): number | null {
+  // NaN (missing/garbage fields), Infinity (max 0), and negatives all fail the
+  // finite-and-non-negative check in one expression.
+  const fractionOfMax = Number(position.manualThesisCount) / Number(position.manualThesisMax);
+  if (!Number.isFinite(fractionOfMax) || fractionOfMax < 0) {
+    return null;
+  }
+  return Math.round(Math.min(fractionOfMax, 1) * THESIS_MAX);
+}
+
 function countThesisBooleanScore(
   position: SecretSourcePosition | undefined,
   mergeCleared = false, // true: isClearedToBuy || isAboveMinBuyWeight = 1 slot
@@ -233,16 +247,25 @@ function countThesisBooleanScore(
 export function countGoodBooleans(position: SecretSourcePosition | undefined): number {
   if (!position) return 0;
 
-  // Feed-consolidated path: buyFraction ≤ 1.0 spans the thesis scale (0–THESIS_MAX);
-  // the excess above 1.0 is the willBuy icing (+2) — the feed only pushes past 1.0
-  // when willBuy is true, so the icing semantics carry over exactly. Rescaling onto
-  // the legacy point scale keeps every downstream bar (dip boost ≥4, seed multiplier
-  // 3/5/7, deep-loss ≥6, boost ×0.03/pt) and log denominator working unchanged.
+  // Feed-consolidated paths, in preference order. Both rescale onto the legacy
+  // point scale so every downstream bar (dip boost ≥4, seed multiplier 3/5/7,
+  // deep-loss ≥6, boost ×0.03/pt) and log denominator works unchanged.
+  //
+  // 1. Manual thesis (0–10): the richer, manually-curated score — preferred
+  //    for granularity. willBuy icing (+2) still comes from buyFraction > 1.
+  // 2. buyFraction alone: ≤ 1.0 spans the thesis scale; the excess above 1.0
+  //    is the willBuy icing — the feed only pushes past 1.0 when willBuy is
+  //    true, so the icing semantics carry over exactly.
   const feedFraction = getFeedBuyFraction(position);
+  const feedIcing = feedFraction !== null && feedFraction > 1 ? 2 : 0;
+
+  const manualThesisScore = getManualThesisScore(position);
+  if (manualThesisScore !== null) {
+    return manualThesisScore + feedIcing;
+  }
+
   if (feedFraction !== null) {
-    const thesisPoints = Math.round(Math.min(feedFraction, 1) * THESIS_MAX);
-    const icing = feedFraction > 1 ? 2 : 0;
-    return thesisPoints + icing;
+    return Math.round(Math.min(feedFraction, 1) * THESIS_MAX) + feedIcing;
   }
 
   const buyEligibleExplicitlyFalse =

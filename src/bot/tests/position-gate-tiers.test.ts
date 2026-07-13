@@ -172,3 +172,55 @@ test("margin seeding uses feed thesisCount >= 4 when present, legacy merged coun
   );
   assert.equal(shouldSeedMarginFromBooleans(undefined), false);
 });
+
+// ── Manual thesis (manualThesisCount / manualThesisMax, second feed dataset) ──
+// Richer 0–10 score, preferred over the coarse buyFraction rescale; willBuy
+// icing still comes from buyFraction > 1.
+
+test("manualThesisCount is the preferred score source, normalized onto the legacy scale", () => {
+  // 10/10 → full thesis (11); +buyFraction icing → 13
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: 10, manualThesisMax: 10 }).signals.goodBooleanScore,
+    11,
+  );
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: 10, manualThesisMax: 10, buyFraction: 1.25 })
+      .signals.goodBooleanScore,
+    13,
+  );
+  // mid-scale granularity the 4-flag fraction can't express: 5/10 → 6, 4/10 → 4
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: 5, manualThesisMax: 10 }).signals.goodBooleanScore,
+    6,
+  );
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: 4, manualThesisMax: 10 }).signals.goodBooleanScore,
+    4,
+  );
+});
+
+test("manual thesis supersedes buyFraction for the score when both are present", () => {
+  // buyFraction says full thesis; manual says 3/10 — manual wins (no icing at 1.0)
+  const result = gate({
+    ticker: "X",
+    manualThesisCount: 3,
+    manualThesisMax: 10,
+    buyFraction: 1.0,
+  });
+  assert.equal(result.signals.goodBooleanScore, 3);
+});
+
+test("invalid manual thesis falls through to buyFraction, then legacy flags", () => {
+  // manualThesisMax 0 is unusable → buyFraction path
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: 5, manualThesisMax: 0, buyFraction: 0.75 })
+      .signals.goodBooleanScore,
+    8,
+  );
+  // neither rollup → legacy per-flag count
+  assert.equal(
+    gate({ ticker: "X", manualThesisCount: Number.NaN, isInBssRange: true })
+      .signals.goodBooleanScore,
+    1,
+  );
+});
