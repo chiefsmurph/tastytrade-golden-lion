@@ -10,10 +10,14 @@ data (and watch tomorrow morning) against this doc. Daily mechanics are in
   preferred → `buyFraction` fallback → legacy flags), `thesisCount >= thesisMax` margin-seed
   bar, morning-weighted exposure curves (margin 60% at open → 80% by 9:00 → 100% by 10:30),
   authenticated notifications (`attemptAuth` + queued emits).
-- **Pending server pull (do after close)**: `8ccf13f` — legacy per-flag scoring deleted
-  entirely; missing rollup now scores 0 with a loud tripwire warning
-  (`[secret] N/M positions arrived WITHOUT thesis rollup fields`). Behavior-identical while
-  the feed sends the rollup on every position, which it does.
+- **Pending server pull (do after close)**:
+  - `8ccf13f` — legacy per-flag scoring deleted entirely; missing rollup now scores 0 with a
+    loud tripwire warning (`[secret] N/M positions arrived WITHOUT thesis rollup fields`).
+    Behavior-identical while the feed sends the rollup on every position, which it does.
+  - `6752aaa` — **behavior change**: the seed decision consults BOTH conviction sources at
+    every depth (full automated thesis OR manual score ≥4 early / ≥6 deep). This loosens
+    seeding vs. this morning's build — watch seed frequency + seed-attributed P&L in the
+    ledger this week to confirm the added paths earn their keep.
 
 ## Verification checks (today's pull / tomorrow live)
 
