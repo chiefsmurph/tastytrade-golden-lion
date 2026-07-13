@@ -50,7 +50,7 @@ const LEGACY_HONORED_ENV_VARS: Record<string, string> = {
 };
 
 const CONFIG_PREFIX_PATTERN = /^(CORE_|BOT_|STRATEGY_|SECRET_|TASTYTRADE_)/;
-const SENSITIVE_KEY_PATTERN = /TOKEN|CLIENT_SECRET|SOCKET_URL|POSITIONS_KEY/;
+const SENSITIVE_KEY_PATTERN = /TOKEN|CLIENT_SECRET|SOCKET_URL|POSITIONS_KEY|AUTH_KEY/;
 
 function isSet(value: string | undefined): boolean {
   return value != null && value.trim().length > 0;

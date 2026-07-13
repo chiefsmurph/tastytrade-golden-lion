@@ -186,6 +186,13 @@ export function startSecretSocketConnection(): void {
   secretSocket.on("connect", () => {
     secretSocketIsConnected = true;
     console.log("[secret] socket connected");
+    // The server ignores client:act (log emits, etc.) from unauthenticated
+    // sockets. Auth on every connect so reconnects re-authenticate too.
+    const authKey = process.env.SECRET_SOCKET_AUTH_KEY?.trim();
+    if (authKey && secretSocket) {
+      secretSocket.emit("attemptAuth", authKey);
+      console.log("[secret] attemptAuth sent");
+    }
   });
 
   secretSocket.on("disconnect", (reason) => {

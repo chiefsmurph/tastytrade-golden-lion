@@ -164,6 +164,7 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 If these are omitted or the feed is disconnected, the runtime continues normally and all IPC workflows remain available.
 
 - `SECRET_SOCKET_URL` — Private feed socket URL.
+- `SECRET_SOCKET_AUTH_KEY` — Auth secret emitted via `attemptAuth` on every connect/reconnect. Required for outbound notifications (`client:act` log emits) — the server ignores them from unauthenticated sockets. Unset skips the auth attempt; inbound data updates still flow.
 - `SECRET_SOCKET_TIMEOUT_MS` — Timeout for feed requests in milliseconds. Defaults to `5000`.
 - `SECRET_DATA_UPDATE_POSITIONS_KEY` — Positions key inside the secret feed payload.
 - `SECRET_AUTO_SEED_ON_POSITIONS_UPDATE` — Set to `true` to allow auto-seeding when position updates arrive. Defaults to `false`.

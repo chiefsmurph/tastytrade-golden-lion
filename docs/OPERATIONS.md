@@ -9,7 +9,7 @@ Ordered by "if this is wrong, stop and fix before reading further" — same phil
 ### 1. Did anything break? (2 min)
 
 - **Secret-server log stream**: any `tastytrade-golden-lion ERROR [...]` lines? (`cycle-exception`, `cancel-orders-failed`.) Each one is a real incident — investigate before anything else. INFO lines (`hard-risk-close`, `position-closed`, `position-built`) are normal activity.
-  - **Zero lines all day is itself a finding** (as of 07-06 the emit path is UNVALIDATED end-to-end): the client emits a `client:act` event and logs a local breadcrumb on every `notifyEvent`. Breadcrumbs in pm2 out-log but nothing on the secret server = event-name/handler mismatch server-side; no breadcrumbs either = the events never fired (fine on a quiet day) or the socket was down.
+  - **Zero lines all day is itself a finding**: the client emits a `client:act` event and logs a local breadcrumb on every `notifyEvent`. Breadcrumbs in pm2 out-log but nothing on the secret server = auth or handler problem server-side — first check `SECRET_SOCKET_AUTH_KEY` is set and the boot log shows `[secret] attemptAuth sent` (the server silently ignores `client:act` from unauthenticated sockets; root cause of the 07-06→07-12 silence). No breadcrumbs either = the events never fired (fine on a quiet day) or the socket was down.
 - **Error-typed run-history entries**: `node run bot:getRecentRunHistory 60` — any entries with an `error` field mean a cycle exploded mid-execution; orders may have been placed before the throw.
 - **Restart count**: `grep -c 'Exiting for PM2 restart' <pm2 error log>` — expect ~0–3. A spike means the crash-loop is back and every downstream signal that day is suspect.
 
