@@ -1,13 +1,43 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { emitSecretLog } from "~/strategy/secret";
+import {
+  emitSecretLog,
+  flushPendingSecretLogs,
+  getSecretSocketStatus,
+} from "~/strategy/secret";
 
-// The socket sink no-ops when the secret socket isn't connected. In the test
-// process it never connects, so emitSecretLog must be safe and silent — this
-// guards the "logging never throws / never touches the trading path" contract.
-test("emitSecretLog is a safe no-op when the secret socket is disconnected", () => {
-  assert.doesNotThrow(() => emitSecretLog("[cycle-exception] ACC-1: boom"));
+// The socket never connects in the test process, so every emit takes the
+// queue path — the server drops client:act from unauthenticated sockets, so
+// messages must be held for the attemptAuth ack rather than fired blind.
+test("emitSecretLog queues (never throws) when the socket is down, and reports it", () => {
+  const before = getSecretSocketStatus().pendingLogEmits;
+  let outcome: "sent" | "queued" | undefined;
+  assert.doesNotThrow(() => {
+    outcome = emitSecretLog("[cycle-exception] ACC-1: boom");
+  });
+  assert.equal(outcome, "queued");
+  assert.equal(getSecretSocketStatus().pendingLogEmits, Math.min(before + 1, 50));
+});
+
+test("the pending queue is bounded at 50 — oldest dropped, no unbounded growth", () => {
+  for (let i = 0; i < 60; i++) {
+    emitSecretLog(`overflow test ${i}`);
+  }
+  assert.equal(getSecretSocketStatus().pendingLogEmits, 50);
+});
+
+test("flushPendingSecretLogs is a safe no-op while disconnected/unauthed", () => {
+  const before = getSecretSocketStatus().pendingLogEmits;
+  assert.doesNotThrow(() => flushPendingSecretLogs());
+  // Nothing sent, nothing lost — the queue waits for a real auth ack.
+  assert.equal(getSecretSocketStatus().pendingLogEmits, before);
+});
+
+test("socket status exposes auth state for the ops checks", () => {
+  const status = getSecretSocketStatus();
+  assert.equal(typeof status.authed, "boolean");
+  assert.equal(typeof status.pendingLogEmits, "number");
 });
 
 test("notifyEvent does not throw for any event type regardless of connection state", async () => {
@@ -21,7 +51,7 @@ test("notifyEvent does not throw for any event type regardless of connection sta
 
 // The whole point of item #8: every emit must leave a local breadcrumb in the
 // process log so EOD verification doesn't depend on the secret server's stream.
-test("notifyEvent writes a local [notify] breadcrumb carrying the type and message", async () => {
+test("notifyEvent writes a local [notify] breadcrumb carrying the type, message, and real sink outcome", async () => {
   const { notifyEvent } = await import("../notify");
 
   const lines: string[] = [];
@@ -39,7 +69,7 @@ test("notifyEvent writes a local [notify] breadcrumb carrying the type and messa
   assert.ok(breadcrumb, "expected a [notify] breadcrumb line");
   assert.match(breadcrumb!, /\bhard-risk-close\b/, "breadcrumb includes the event type");
   assert.match(breadcrumb!, /ACC-1 WEN: urgent EOD close/, "breadcrumb includes the message");
-  // Socket never connects in the test process, so the emit was not delivered —
-  // the breadcrumb must record that rather than implying a successful send.
-  assert.match(breadcrumb!, /\(no-socket\)/, "breadcrumb records the un-connected sink");
+  // Socket never connects in the test process, so the emit was queued for the
+  // auth ack — the breadcrumb must record the real outcome, not imply a send.
+  assert.match(breadcrumb!, /\(queued\)/, "breadcrumb records the queued sink outcome");
 });

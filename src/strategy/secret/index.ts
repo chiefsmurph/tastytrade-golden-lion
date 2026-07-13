@@ -4,6 +4,7 @@ export {
 	startSecretSocketConnection,
 	getSecretPositionsSourceKey,
 	emitSecretLog,
+	flushPendingSecretLogs,
 } from "./secret-socket-state";
 export {
 	getSecretBuyWeightForSymbol,

@@ -90,8 +90,15 @@ let cachedSourcePositions: SecretSourcePosition[] = [];
 let cachedTickerRecsPicks: SecretTickerRecPick[] = [];
 let hasConnectedSecretSocket = false;
 let secretSocketIsConnected = false;
+let secretSocketIsAuthed = false;
 let lastSecretPositionsUpdateAt: Date | null = null;
 let lastSecretTickerRecsUpdateAt: Date | null = null;
+
+// Log emits attempted before the server acks attemptAuth queue here and flush
+// on the ack — the server drops client:act from unauthenticated sockets, so
+// sending early loses the message. Bounded: notifications are best-effort.
+const MAX_PENDING_SECRET_LOGS = 50;
+const pendingSecretLogs: string[] = [];
 
 export function getSecretPositionsSourceKey(): string | null {
   const configured = process.env.SECRET_DATA_UPDATE_POSITIONS_KEY?.trim();
@@ -185,23 +192,34 @@ export function startSecretSocketConnection(): void {
 
   secretSocket.on("connect", () => {
     secretSocketIsConnected = true;
+    secretSocketIsAuthed = false;
     console.log("[secret] socket connected");
-    // The server ignores client:act (log emits, etc.) from unauthenticated
-    // sockets. Auth on every connect so reconnects re-authenticate too.
+    // The server drops client:act (log emits, etc.) from unauthenticated
+    // sockets, so emits must wait for the attemptAuth ack — auth on every
+    // connect so reconnects re-authenticate too.
     const authKey = process.env.SECRET_SOCKET_AUTH_KEY?.trim();
     if (authKey && secretSocket) {
-      secretSocket.emit("attemptAuth", authKey);
-      console.log("[secret] attemptAuth sent");
+      secretSocket.emit("attemptAuth", authKey, (result: unknown) => {
+        if (result === false) {
+          console.warn("[secret] attemptAuth rejected — check SECRET_SOCKET_AUTH_KEY");
+          return;
+        }
+        secretSocketIsAuthed = true;
+        console.log("[secret] attemptAuth acked — flushing queued log emits:", pendingSecretLogs.length);
+        flushPendingSecretLogs();
+      });
     }
   });
 
   secretSocket.on("disconnect", (reason) => {
     secretSocketIsConnected = false;
+    secretSocketIsAuthed = false;
     console.warn(`[secret] socket disconnected: ${reason}`);
   });
 
   secretSocket.on("connect_error", (error) => {
     secretSocketIsConnected = false;
+    secretSocketIsAuthed = false;
     console.warn("[secret] socket connect_error", error?.message ?? error);
   });
 
@@ -213,21 +231,58 @@ export function startSecretSocketConnection(): void {
 }
 
 // Push an operational log line back to the secret server over the live socket.
-// Bare-string "log" event, prefixed with the app name. No-ops silently if the
-// socket isn't connected, and never throws — logging must not touch the
-// trading path.
+// Never throws — logging must not touch the trading path. Messages sent before
+// the attemptAuth ack are queued (bounded) and flushed on the ack; with no
+// auth key configured, sends immediately as before.
 const SECRET_LOG_PREFIX = "tastytrade-golden-lion";
 
-export function emitSecretLog(message: string): void {
-  if (!secretSocket || !secretSocketIsConnected) {
-    return;
-  }
+function isSecretAuthConfigured(): boolean {
+  return Boolean(process.env.SECRET_SOCKET_AUTH_KEY?.trim());
+}
 
+// Emits are deliverable only on a connected socket that has either been acked
+// by attemptAuth or needs no auth (no key configured) — the server drops
+// client:act from unauthenticated sockets.
+function isReadyToEmitSecretLog(): boolean {
+  return Boolean(
+    secretSocket &&
+      secretSocketIsConnected &&
+      (secretSocketIsAuthed || !isSecretAuthConfigured()),
+  );
+}
+
+function sendSecretLogFrame(message: string): void {
   try {
-    secretSocket.emit("client:act", "log", `${SECRET_LOG_PREFIX} ${message}`);
+    secretSocket?.emit("client:act", "log", message);
   } catch {
     // best-effort; swallow any transport error
   }
+}
+
+// Exported for tests; called from the attemptAuth ack in production.
+export function flushPendingSecretLogs(): void {
+  while (pendingSecretLogs.length > 0 && isReadyToEmitSecretLog()) {
+    sendSecretLogFrame(pendingSecretLogs.shift()!);
+  }
+}
+
+// Returns the actual outcome so callers (notify breadcrumbs) report truthfully:
+// "sent" = emitted on an authed (or auth-less) connected socket; "queued" =
+// held for the attemptAuth ack or reconnect.
+export function emitSecretLog(message: string): "sent" | "queued" {
+  const fullMessage = `${SECRET_LOG_PREFIX} ${message}`;
+
+  if (!isReadyToEmitSecretLog()) {
+    // Queue until the auth ack (or reconnect) — drop oldest past the cap.
+    pendingSecretLogs.push(fullMessage);
+    if (pendingSecretLogs.length > MAX_PENDING_SECRET_LOGS) {
+      pendingSecretLogs.shift();
+    }
+    return "queued";
+  }
+
+  sendSecretLogFrame(fullMessage);
+  return "sent";
 }
 
 export function getCachedSecretSourcePositions(): SecretSourcePosition[] {
@@ -239,10 +294,12 @@ export function getCachedSecretSourcePositions(): SecretSourcePosition[] {
 }
 
 export interface SecretSocketStatus {
+  authed: boolean;
   cachedPositionsCount: number;
   cachedTickerRecsPicksCount: number;
   connected: boolean;
   hasConnected: boolean;
+  pendingLogEmits: number;
   lastPositionsUpdateAt: string | null;
   lastTickerRecsUpdateAt: string | null;
   secondsSinceLastPositionsUpdate: number | null;
@@ -261,10 +318,12 @@ export function getSecretSocketStatus(): SecretSocketStatus {
   const moduleEnabled = isSecretModuleConfigured();
 
   return {
+    authed: moduleEnabled ? secretSocketIsAuthed : false,
     cachedPositionsCount: moduleEnabled ? cachedSourcePositions.length : 0,
     cachedTickerRecsPicksCount: moduleEnabled ? cachedTickerRecsPicks.length : 0,
     connected: moduleEnabled ? secretSocketIsConnected : false,
     hasConnected: hasConnectedSecretSocket,
+    pendingLogEmits: pendingSecretLogs.length,
     lastPositionsUpdateAt:
       moduleEnabled ? lastSecretPositionsUpdateAt?.toISOString() ?? null : null,
     lastTickerRecsUpdateAt:
