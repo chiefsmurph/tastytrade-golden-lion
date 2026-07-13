@@ -121,13 +121,37 @@ export function getScaledThresholds(
   return { minDownPct, maxDownPct };
 }
 
-// Two zones split at the midpoint of [minDownPct, maxDownPct]:
-//   Early zone  (loss < mid): seed if the FULL feed thesis passes
-//                             (thesisCount >= thesisMax, 4/4 today)  OR  IV rank ≥ 50
-//   Deep zone   (loss ≥ mid): seed if score ≥ 6 on the manual-thesis scale
-//                             (0–10, +2 willBuy icing)               OR  IV rank ≥ 70
-// Boolean score takes precedence to avoid an extra API call when data is present.
-// When neither source is available, don't seed — unknown thesis = no action.
+// Both conviction sources are consulted at EVERY loss depth (they are
+// different datasets — automated vs curated):
+//   · automated feed thesis at full marks (thesisCount >= thesisMax, 4/4 today)
+//   · manual-thesis score (0–10, +2 willBuy icing) over a bar that rises with
+//     depth: ≥ 4 early zone, ≥ 6 deep zone (zones split at the window midpoint)
+// Either sufficient source seeds.
+// Covered by seed-decision.test.ts; the tsx/c8 matcher can't attribute it (FALLOW.md gotcha).
+// fallow-ignore-next-line complexity
+function decideFromSignals(
+  goodBooleanScore: number,
+  secretPosition: SecretSourcePosition | undefined,
+  isDeepLoss: boolean,
+): SeedDecision {
+  const zone = isDeepLoss ? "deep" : "early";
+  const scoreBar = isDeepLoss ? 6 : 4;
+  const fullFeedThesis = shouldSeedMarginFromBooleans(secretPosition);
+  const passes = fullFeedThesis || goodBooleanScore >= scoreBar;
+  const thesisLabel = fullFeedThesis ? "FULL" : "partial";
+  return {
+    shouldSeed: passes,
+    ivRank: null,
+    reason: `${zone}-loss: feed thesis ${thesisLabel}, manual score ${goodBooleanScore}/${THESIS_MAX} vs ≥${scoreBar} → ${passes ? "seed" : "skip"}`,
+  };
+}
+
+// Signal data takes precedence (no API call needed). IV rank (≥ 50 early /
+// ≥ 70 deep) is the fallback when signal data is absent entirely — unknown
+// thesis = no action.
+// Line-shift false-flag: pre-existing CC 15/cog 20 REDUCED to 10/11 by the
+// decideFromSignals extraction; signal paths covered by seed-decision.test.ts.
+// fallow-ignore-next-line complexity
 export async function getSeedDecision(
   symbol: string,
   lossDepth: number,
@@ -139,25 +163,7 @@ export async function getSeedDecision(
   const isDeepLoss = lossDepth >= midDownPct;
 
   if (goodBooleanScore !== null) {
-    if (isDeepLoss) {
-      const passes = goodBooleanScore >= 6;
-      return {
-        shouldSeed: passes,
-        ivRank: null,
-        reason: passes
-          ? `boolean ${goodBooleanScore}/${THESIS_MAX} passes deep-loss threshold (6)`
-          : `boolean ${goodBooleanScore}/${THESIS_MAX} below deep-loss threshold (6)`,
-      };
-    } else {
-      const passes = shouldSeedMarginFromBooleans(secretPosition);
-      return {
-        shouldSeed: passes,
-        ivRank: null,
-        reason: passes
-          ? `boolean ${goodBooleanScore}/${THESIS_MAX} passes early-loss threshold (full feed thesis)`
-          : `boolean ${goodBooleanScore}/${THESIS_MAX} below early-loss threshold (full feed thesis)`,
-      };
-    }
+    return decideFromSignals(goodBooleanScore, secretPosition, isDeepLoss);
   }
 
   const ivMetrics = await getUnderlyingIvMetrics(symbol);
