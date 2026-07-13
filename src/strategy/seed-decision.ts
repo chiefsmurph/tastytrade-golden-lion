@@ -89,8 +89,8 @@ export function getPositionFillSeedMultiplier(fillRatio: number | null): number 
 }
 
 // Boolean multiplier: good signals lower thresholds so seeding fires on smaller losses.
-// Score = thesis 0–9 + willBuy icing (+2): <3=neutral (1.0×), 3-4=slight boost (0.95×),
-// 5-6=good (0.85×), 7+=great (0.7×). Every tier is reachable by thesis alone.
+// Score = manual thesis 0–10 + willBuy icing (+2): <3=neutral (1.0×), 3-4=slight boost
+// (0.95×), 5-6=good (0.85×), 7+=great (0.7×). Every tier is reachable by thesis alone.
 export function getBooleanSeedMultiplier(goodBooleanScore: number | null): number {
   if (goodBooleanScore === null) return 1.0;
   if (goodBooleanScore >= 7) return 0.7;
@@ -122,8 +122,10 @@ export function getScaledThresholds(
 }
 
 // Two zones split at the midpoint of [minDownPct, maxDownPct]:
-//   Early zone  (loss < mid): seed if booleans ≥ 4/5  OR  IV rank ≥ 50
-//   Deep zone   (loss ≥ mid): seed if booleans ≥ 6/THESIS_MAX OR IV rank ≥ 70 (willBuy icing can exceed the scale)
+//   Early zone  (loss < mid): seed if the FULL feed thesis passes
+//                             (thesisCount >= thesisMax, 4/4 today)  OR  IV rank ≥ 50
+//   Deep zone   (loss ≥ mid): seed if score ≥ 6 on the manual-thesis scale
+//                             (0–10, +2 willBuy icing)               OR  IV rank ≥ 70
 // Boolean score takes precedence to avoid an extra API call when data is present.
 // When neither source is available, don't seed — unknown thesis = no action.
 export async function getSeedDecision(
@@ -152,8 +154,8 @@ export async function getSeedDecision(
         shouldSeed: passes,
         ivRank: null,
         reason: passes
-          ? `boolean ${goodBooleanScore}/${THESIS_MAX} passes early-loss threshold (merged ≥ 4)`
-          : `boolean ${goodBooleanScore}/${THESIS_MAX} below early-loss threshold (merged ≥ 4)`,
+          ? `boolean ${goodBooleanScore}/${THESIS_MAX} passes early-loss threshold (full feed thesis)`
+          : `boolean ${goodBooleanScore}/${THESIS_MAX} below early-loss threshold (full feed thesis)`,
       };
     }
   }
