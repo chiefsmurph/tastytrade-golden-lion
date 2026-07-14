@@ -27,6 +27,8 @@ export type {
 } from "./debug-secret-execution-target";
 export type {
 	SecretDataUpdatePayload,
+	// fallow-ignore-next-line unused-type
+	SecretRegime,
 	SecretSourcePosition,
 	SecretTickerRecPick,
 	SecretTickerRecsUpdate,

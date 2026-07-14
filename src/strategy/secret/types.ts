@@ -34,6 +34,21 @@ export interface SecretSourcePosition {
   // percToSell) are deliberately NOT consumed. Our selling is feed-independent
   // by design — stops, take-profit, EOD, and overnight age-reduction own it.
   // The feed drives buying only.
+  // Hold signal — cash account gate (wired 2026-07-13; use for cash per-account gate):
+  holdScore?: number; // 0–1.3 overnight conviction; cash hard gate ≥ 0.45
+  holdTier?: number; // 1–4 projected EOD tier
+  isOvernightEligible?: boolean; // price≥5.35 & liquid & marginable
+  // Buy signal extras — margin account sizing (wired 2026-07-13):
+  buyMult?: number; // base rec strength, pre-concentration crush
+  gateMult?: number; // gate favorability (full = 2.0)
+  failsDayHighGate?: boolean; // true = blocked by extended-pump guard
+  // Scan-computed — strike anchors + entry quality (wired 2026-07-13, OBSERVE-ONLY):
+  trueLow?: number; // liquid-bar intraday low — ITM strike floor
+  trueHigh?: number; // liquid-bar intraday high — OTM strike cap
+  rangePos?: number; // 0=at low, 100=at high (unvalidated — tiebreaker weight only)
+  tsc?: number; // % vs prev close
+  highToBid?: number; // % from intraday high to current bid
+  fiveMinuteRSI?: number; // momo overbought guard
   // Price/quality context:
   currentPrice?: number;
   avgEntry?: number;
@@ -58,10 +73,19 @@ export interface SecretTickerRecsUpdate {
   [key: string]: unknown;
 }
 
+// Top-level regime context added 2026-07-13 — one per server:data-update tick, NOT per-position.
+export interface SecretRegime {
+  min?: number; // minutes from 9:30am ET open (0=open, 390=close)
+  scannedTotalZ?: number; // market-down breadth z-score (restart-persisted)
+  crashRegime?: boolean; // sustained-decline guard
+  currentMinBuyWeight?: number; // live buy-gate threshold
+}
+
 export interface SecretDataUpdatePayload {
   positions?: {
     [key: string]: SecretSourcePosition[] | unknown;
   };
   tickerRecs?: SecretTickerRecsUpdate | unknown;
+  regime?: SecretRegime; // wired 2026-07-13
   [key: string]: unknown;
 }

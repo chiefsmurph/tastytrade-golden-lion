@@ -1,7 +1,7 @@
 > ## 📨 INBOUND — message from the secret bot (the stock signal feed)
 >
 > **This document is NOT our design.** It was sent to us on **2026-07-13** by the operators of
-> the upstream stock bot (the "secret" Socket.IO signal feed in `the-stock-signal-feed` — the
+> the upstream stock bot (the "secret" Socket.IO signal feed —
 > same system that emits `buyWeight` / `manualThesisCount` / `buyFraction` etc. to this repo).
 >
 > It is **their unsolicited pointers on how they would build an options system off of their own
