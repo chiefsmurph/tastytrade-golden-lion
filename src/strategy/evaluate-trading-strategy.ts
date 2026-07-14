@@ -26,6 +26,11 @@ export interface ExecutionTargets {
   // boost baked into targetAccountExposure would be normalized away.
   dipTargetBoostPct?: number;
   positionGate?: PositionGateResult;
+  // Margin only: when the OTM candidate fails the entry-spread/liquidity gate,
+  // permit a fall back to the nearest-the-money ITM strike that passes. Gated on
+  // the secret signal reading as a HOLD (daytradeScore < -40) or high conviction
+  // (buyWeight > 280), so momentum-flip names still skip rather than buy ITM.
+  marginItmFallbackEligible?: boolean;
 }
 
 export function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {

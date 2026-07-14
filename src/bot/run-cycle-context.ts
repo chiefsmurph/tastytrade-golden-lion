@@ -495,6 +495,16 @@ export async function buildRunCycleContext(
         ? Math.max(0.5, Math.min(1.0, (marginBuyMult * marginGateMult) / 4.0))
         : 1.0;
       const marginMaxTargetPct = willBuyBlocked ? 0 : gate.maxTargetPct * multiplier * marginQualityFactor;
+      // ITM fallback eligibility: on low-priced/illiquid names the OTM strikes are
+      // dead-quoted (100% spreads) while the ATM/ITM strike is tradeable. Permit
+      // margin to fall back to ITM only when the signal reads as a HOLD
+      // (daytradeScore < -40) or high conviction (buyWeight > 280) — momentum
+      // flips keep skipping rather than tying up capital in an ITM contract.
+      const marginDaytradeScore = typeof secretPosition?.daytradeScore === "number" ? secretPosition.daytradeScore : null;
+      const marginBuyWeight = typeof secretPosition?.buyWeight === "number" ? secretPosition.buyWeight : null;
+      const marginItmFallbackEligible =
+        (marginDaytradeScore !== null && marginDaytradeScore < -40) ||
+        (marginBuyWeight !== null && marginBuyWeight > 280);
       // Dip boost triggers on MID return (not ask) so it can see bid-side spread
       // pain, with optional wide-spread suppression (off by default). See v8 #3.
       const dipTargetBoostPct = getMarginDipTargetBoostPct(
@@ -515,6 +525,9 @@ export async function buildRunCycleContext(
           marginBuyMult,
           marginGateMult,
           marginQualityFactor,
+          marginDaytradeScore,
+          marginBuyWeight,
+          marginItmFallbackEligible,
           crossAccountAskReturnFraction,
           signals: gate.signals,
           cashMaxTargetPct: gate.maxTargetPct,
@@ -540,6 +553,7 @@ export async function buildRunCycleContext(
           booleanSurplusPct,
           dipTargetBoostPct,
           positionGate: gate,
+          marginItmFallbackEligible,
         },
       };
     }

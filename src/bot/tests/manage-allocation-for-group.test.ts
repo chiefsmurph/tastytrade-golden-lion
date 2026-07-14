@@ -208,6 +208,68 @@ test("manageAllocationForGroup skips when there is no candidate and no held fall
   assert.equal(result.skippedReason, "no option candidate found");
 });
 
+// Margin ITM fallback: OTM pick fails on spread → retry with ITM selector.
+// A stateful getTopCandidate returns the failed OTM on the first call and a
+// tradeable ITM strike on the second (strikeTarget: "itm").
+function itmFallbackDeps(
+  itmCandidate: unknown,
+  overrides: Partial<ManageAllocationDependencies> = {},
+): ManageAllocationDependencies {
+  let call = 0;
+  return candidateDeps({
+    getAccountType: (async () => "margin") as never,
+    getTopCandidate: (async (
+      _sym: string,
+      _side: string,
+      _dte: number,
+      opts?: { strikeTarget?: string },
+    ) => {
+      call += 1;
+      if (opts?.strikeTarget === "itm") return itmCandidate;
+      // OTM first pass: dead-quoted, fails the spread gate.
+      return {
+        symbol: undefined,
+        skippedByIvGate: false,
+        skippedReason: "all candidate spreads exceeded max allowed spread (10.00%)",
+      };
+    }) as never,
+    ...overrides,
+  });
+}
+
+test("margin ITM fallback: retries ITM and buys when eligible + OTM fails on spread", async () => {
+  const result = await manageAllocationForGroup(
+    "ACC-1",
+    buildEvaluation({ ...baseTargets, marginItmFallbackEligible: true }),
+    bigBudget,
+    1,
+    { accountMarginOrCash: "margin" },
+    itmFallbackDeps({
+      symbol: "ERIC  260717C00008000",
+      quoteSymbol: ".ERIC260717C8",
+      dte: 3,
+      spreadPct: 0.07,
+      usedDteFallback: true,
+    }),
+  );
+  assert.equal(result.placedOrder, true);
+  assert.equal(result.candidateSymbol, "ERIC  260717C00008000");
+});
+
+test("margin ITM fallback: does NOT retry when marginItmFallbackEligible is not set", async () => {
+  const result = await manageAllocationForGroup(
+    "ACC-1",
+    buildEvaluation(baseTargets),
+    bigBudget,
+    1,
+    { accountMarginOrCash: "margin" },
+    itmFallbackDeps({ symbol: "ERIC  260717C00008000", dte: 3 }),
+  );
+  // No ITM retry → the ITM candidate is never selected (falls through to the
+  // held-contract fallback / skip instead).
+  assert.notEqual(result.candidateSymbol, "ERIC  260717C00008000");
+});
+
 // Helper: build a Date at a specific HH:MM in local time (matches how
 // getTimeInMinutes interprets currentTime throughout the strategy engine).
 function localTimeAt(hours: number, minutes: number, seconds = 0): Date {

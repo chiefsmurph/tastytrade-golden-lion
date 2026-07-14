@@ -872,6 +872,42 @@ export async function manageAllocationForGroup(
       : { accountType: accountMarginOrCash },
   );
   let usedHeldContractFallback = false;
+  let usedMarginItmFallback = false;
+
+  // Margin ITM fallback: on low-priced/illiquid names the OTM strikes are
+  // dead-quoted (wide spreads) while the ATM/ITM strike is tradeable. When the
+  // OTM pick fails the entry-spread/liquidity gate (not the IV gate), and the
+  // signal reads as a HOLD / high conviction (marginItmFallbackEligible, set in
+  // run-cycle-context), retry with the ITM selector — nearest-the-money strike
+  // that passes the margin gate.
+  if (
+    accountMarginOrCash === "margin" &&
+    targets.marginItmFallbackEligible === true &&
+    !candidate?.symbol &&
+    !candidate?.skippedByIvGate
+  ) {
+    const itmCandidate = await getTopCandidate(
+      evaluation.underlyingSymbol,
+      optionSide,
+      targets.targetDTE,
+      { accountType: "margin", strikeTarget: "itm" },
+    );
+    console.log(
+      JSON.stringify({
+        scope: "manage-allocation-margin-itm-fallback",
+        underlyingSymbol: evaluation.underlyingSymbol,
+        targetDTE: targets.targetDTE,
+        otmSkippedReason: candidate?.skippedReason ?? "no candidate",
+        itmSymbol: itmCandidate?.symbol ?? null,
+        itmSpreadPct: itmCandidate?.spreadPct ?? null,
+        itmSkippedReason: itmCandidate?.skippedReason ?? null,
+      }),
+    );
+    if (itmCandidate?.symbol) {
+      candidate = itmCandidate;
+      usedMarginItmFallback = true;
+    }
+  }
 
   // Fallback only — the chain pick stays authoritative. IV-gate skips are an
   // intentional entry filter, so they do not fall back.
@@ -910,6 +946,7 @@ export async function manageAllocationForGroup(
       maxDTE: candidate?.maxDTE,
       preferredDTE: candidate?.preferredDTE,
       usedDteFallback: candidate?.usedDteFallback ?? false,
+      usedMarginItmFallback,
       symbol: candidate?.symbol ?? null,
       // Liquidity distribution collection (IMPROVEMENTS.v4 strategy #4 step 1)
       dayVolume: candidate?.dayVolume ?? null,
