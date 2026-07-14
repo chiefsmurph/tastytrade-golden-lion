@@ -15,6 +15,7 @@ function buildEvaluation(
     bid: number;
     ask: number;
     quantityWeight?: number;
+    waf?: number;
   }>,
 ): PositionGroupEvaluation {
   return {
@@ -39,7 +40,7 @@ function buildEvaluation(
         symbol: snapshot.symbol,
       },
       quantityWeight: snapshot.quantityWeight ?? 1,
-      weightedAverageFill: 1,
+      weightedAverageFill: snapshot.waf ?? 1,
     })),
     positions: snapshots.map((snapshot) => ({
       "account-number": "ACC-1",
@@ -124,6 +125,39 @@ test("margin entry-spread override tightens the held-contract fallback too", () 
       delete process.env.STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT;
     }
   }
+});
+
+test("margin held add blocked when ask is above our weighted-average fill (average down only)", () => {
+  // Tight 4.3% spread so the liquidity gate passes; ask 0.48 sits above our 0.40
+  // average, so margin must not average up into it.
+  const evaluation = buildEvaluation([
+    { symbol: occSymbol("LCID", "260717", "00006000"), bid: 0.46, ask: 0.48, waf: 0.4 },
+  ]);
+
+  const result = getHeldContractFallbackCandidate(evaluation, "margin", at1030);
+
+  assert.equal(result.symbol, undefined);
+  assert.match(result.skippedReason ?? "", /above our avg .*average down only/);
+});
+
+test("margin held add allowed when ask is at or below our average; cash is never guarded", () => {
+  // Ask 0.46 sits below our 0.60 average → margin may keep averaging down.
+  const evaluation = buildEvaluation([
+    { symbol: occSymbol("LCID", "260717", "00006000"), bid: 0.44, ask: 0.46, waf: 0.6 },
+  ]);
+
+  const marginResult = getHeldContractFallbackCandidate(evaluation, "margin", at1030);
+  assert.equal(marginResult.symbol, occSymbol("LCID", "260717", "00006000"));
+  assert.equal(marginResult.skippedReason, undefined);
+
+  // Same contract priced above a low 0.20 average: cash keeps adding (unguarded),
+  // margin would be blocked — proving the guard is margin-only.
+  const aboveAvg = buildEvaluation([
+    { symbol: occSymbol("LCID", "260717", "00006000"), bid: 0.44, ask: 0.46, waf: 0.2 },
+  ]);
+  const cashResult = getHeldContractFallbackCandidate(aboveAvg, "cash", at1030);
+  assert.equal(cashResult.symbol, occSymbol("LCID", "260717", "00006000"));
+  assert.equal(cashResult.skippedReason, undefined);
 });
 
 test("picks the dominant holding when the group spans multiple contracts", () => {

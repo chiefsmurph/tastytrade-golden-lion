@@ -618,6 +618,26 @@ export function getHeldContractFallbackCandidate(
     };
   }
 
+  // Margin average-down guard: keep adding to a held contract only while its ask
+  // is at or below our weighted-average fill — i.e. average down, never up. This
+  // is what governs continued scale-in on the illiquid ITM names the OTM pick
+  // can't reach (the held-contract fallback is the only path that re-buys them).
+  // Cash keeps its overnight-hold accumulation behavior.
+  const heldWeightedAverageFill = snapshot.weightedAverageFill;
+  if (
+    accountMarginOrCash === "margin" &&
+    heldWeightedAverageFill > 0 &&
+    ask > heldWeightedAverageFill
+  ) {
+    return {
+      askPrice: ask,
+      bidPrice: bid,
+      dte,
+      spreadPct,
+      skippedReason: `margin held add blocked: ask $${ask.toFixed(2)} above our avg $${heldWeightedAverageFill.toFixed(2)} (average down only)`,
+    };
+  }
+
   return {
     askPrice: ask,
     bidPrice: bid,
