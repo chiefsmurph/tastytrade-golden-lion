@@ -204,36 +204,26 @@ Most of these small-caps have brutal chains (wide spreads, ~0 OI). The underlyin
    current validation status, and do you have a read on whether it carries edge yet? Several strike
    and gate decisions here hinge on it.
 
-6. **The hold-tier EXIT** — do you intend us to consume tier transitions as a signal you emit
-   (you flag the name, we react), or to reimplement `eod-hold-tiers` on our side? Strong preference
-   for the former so exits stay in lockstep with you.
+6. **The hold-tier EXIT** — moot for our existing accounts: we've decided our selling stays
+   feed-independent (we don't mirror your sells). Only relevant if the separate options-mirror
+   *cash* bot below ever gets built, in which case: would you emit tier transitions for it to
+   consume, or expect it to reimplement `eod-hold-tiers`?
 
 7. **Contract multiplier / liquidity reality** — you call chain liquidity the dominant risk. Do you
    already track per-underlying option OI / daily option volume anywhere we could ingest, or is that
    entirely ours to source (we have chain snapshots + the step-1 liquidity logging already)?
 
-### Exits — mostly NOT adopted (decision 2026-07-13)
+### Exits — NOT adopted (decision 2026-07-13)
 
 Their exit framework (margin flat by ~380; cash exit on `holdScore` dropping below T3, DTE<3,
-`crashRegime`) is built around **their model, where they sell stock positions in the morning**.
-Our selling stays as-is — dynamic take-profit (40%→7%), bid-based stop (-30% intraday / -10%
-post-cutoff), 12:50 EOD urgent-chase liquidation for margin, and age-floor overnight reduction
-for cash. Their morning-sell timing and holdScore-tier exits do not map onto our overnight-hold
-+ gradual-reduction model, so we keep ours.
+`crashRegime`; and generally reacting to *when they sell*) is built around **their model, where
+they sell stock positions in the morning**. We are **not** coupling our selling to theirs.
 
-**The one mergeable idea: signal-DEPARTURE as an exit/reduce trigger.** Today we only ever use
-the feed's *presence* to act — size up, and pause overnight reduction while `crossAccountYes`
-holds. We never use its *absence*. But their whole design implies the inverse is a real signal:
-"the stock bot flattened the name" is an explicit exit condition in their cash-exit list, and
-since **they sell in the morning, their morning exit IS the 'conviction gone' event we currently
-ignore.** Concretely worth prototyping (log-only first, same discipline as everything else):
-- **Cash overnight holds**: when the feed drops the underlying (no longer in the positions array)
-  or `holdScore`/thesis collapses, *accelerate* the overnight reduction floor toward 0 rather than
-  waiting out the age schedule. The signal that made us carry it overnight is gone.
-- **Margin intraday**: a `daytradeScore` collapse could arm an earlier-than-EOD exit — lower value
-  (margin is already stop-gated and flat by 12:55), so second priority.
-
-This ties to the **staleness-gate** backlog item (the 07-13 feed outage): "signal absent" and
-"signal departed" are the same fail-safe direction — treat missing conviction as a reason to stop
-carrying risk, not just as a reason to stop adding. **Depends on Q1/Q2/Q6** — we'd need the feed
-to keep emitting the name's `holdScore`/tier (or a clean "flattened" event) for this to fire.
+**Firm invariant: the feed drives BUYING only. Our selling is feed-independent** — dynamic
+take-profit (40%→7%), bid-based stop (-30% intraday / -10% post-cutoff), 12:50 EOD urgent-chase
+liquidation for margin, and age-floor overnight reduction for cash own the sell side entirely.
+Their morning-sell timing does not map onto our overnight-hold + gradual-reduction model, and
+coupling exits to an external actor's timing adds fragility we don't want. Signal-departure
+(`isSelling`/`currentAction`) is therefore deliberately unread on our side — see the note in
+`src/strategy/secret/types.ts`. (The staleness-gate backlog item stands on its own as a
+data-integrity guard, unrelated to mirroring their sells.)

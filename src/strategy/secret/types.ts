@@ -30,12 +30,10 @@ export interface SecretSourcePosition {
   // Buy state — upstream computes willBuy = isBuyEligible && …, always concrete:
   isBuyEligible?: boolean;
   willBuy?: boolean;
-  // Departure/selling signals — the feed flattening a name is a real exit
-  // signal for our cash overnight holds (see docs/secret-bot-options-mirror-proposal.md):
-  isSelling?: boolean;
-  currentAction?: "buying" | "selling";
-  percToSell?: number;
-  recommendation?: string;
+  // NOTE: the feed's selling/departure signals (isSelling, currentAction,
+  // percToSell) are deliberately NOT consumed. Our selling is feed-independent
+  // by design — stops, take-profit, EOD, and overnight age-reduction own it.
+  // The feed drives buying only.
   // Price/quality context:
   currentPrice?: number;
   avgEntry?: number;
