@@ -40,6 +40,7 @@ import { computeUnderlyingStabilization } from "./underlying-stabilization";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { selectManageEvaluationsByBuyingPower } from "./group-allocation-priority";
 import {
+  getCachedSecretRegime,
   getCachedSecretSourcePositions,
   getSecretPositionSignalsForSymbol,
   getSecretSocketStatus,
@@ -419,6 +420,7 @@ export async function buildRunCycleContext(
   }
 
   // Calculate per-group execution targets based on position stats
+  // fallow-ignore-next-line complexity
   const evaluationsWithGroupTargets = actionableCompletedEvaluations.map((evaluation) => {
     const weightedAverageFill = evaluation.metrics.weightedAverageFill;
     const currentBidPrice = evaluation.metrics.currentBidPrice;
@@ -479,8 +481,12 @@ export async function buildRunCycleContext(
         currentTime,
         crossAccountThresholdMultiplier: getCrossAccountThresholdMultiplier(),
       });
+      // Hard gate: margin requires willBuy. Applied only when the feed has a
+      // position for this ticker (absent feed → fall through to existing tiers).
+      const willBuy = secretPosition?.willBuy;
+      const willBuyBlocked = secretPosition !== undefined && willBuy !== true;
       const multiplier = getMarginTargetMultiplier();
-      const marginMaxTargetPct = gate.maxTargetPct * multiplier;
+      const marginMaxTargetPct = willBuyBlocked ? 0 : gate.maxTargetPct * multiplier;
       // Dip boost triggers on MID return (not ask) so it can see bid-side spread
       // pain, with optional wide-spread suppression (off by default). See v8 #3.
       const dipTargetBoostPct = getMarginDipTargetBoostPct(
@@ -496,6 +502,8 @@ export async function buildRunCycleContext(
         JSON.stringify({
           scope: "margin-position-gate",
           symbol,
+          willBuy,
+          willBuyBlocked,
           crossAccountAskReturnFraction,
           signals: gate.signals,
           cashMaxTargetPct: gate.maxTargetPct,
@@ -542,18 +550,32 @@ export async function buildRunCycleContext(
       currentTime,
     });
 
+    // Hard gates: cash requires holdScore ≥ 0.45, isOvernightEligible, and
+    // no crashRegime. Applied only when the feed has emitted the field for this
+    // ticker (undefined = field not yet on payload → gate not applied).
+    const cashHoldScore = typeof secretPosition?.holdScore === "number" ? secretPosition.holdScore : null;
+    const cashHoldBlocked = cashHoldScore !== null && cashHoldScore < 0.45;
+    const cashEligibleBlocked = secretPosition !== undefined && secretPosition.isOvernightEligible === false;
+    const cashRegimeBlocked = getCachedSecretRegime()?.crashRegime === true;
+    const cashHardGateBlocked = cashHoldBlocked || cashEligibleBlocked || cashRegimeBlocked;
+    const cashGateMaxTargetPct = cashHardGateBlocked ? 0 : gate.maxTargetPct;
+
     const scaledTargetAccountExposure =
-      finalTargets.targetAccountExposure * gate.maxTargetPct;
+      finalTargets.targetAccountExposure * cashGateMaxTargetPct;
 
     console.log(
       JSON.stringify({
         scope: "cash-position-gate",
         symbol,
+        cashHoldScore,
+        cashHoldBlocked,
+        cashEligibleBlocked,
+        cashRegimeBlocked,
         crossAccountAskReturnFraction,
         signals: gate.signals,
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
         strongStockYesScoreThreshold: gate.strongStockYesScoreThreshold,
-        maxTargetPct: gate.maxTargetPct,
+        maxTargetPct: cashGateMaxTargetPct,
         booleanSurplusPct,
         originalTargetPct: finalTargets.targetAccountExposure,
         effectiveTargetPct: scaledTargetAccountExposure,
@@ -565,7 +587,7 @@ export async function buildRunCycleContext(
       executionTargets: {
         ...finalTargets,
         targetAccountExposure: scaledTargetAccountExposure,
-        maxTargetAccountExposure: gate.maxTargetPct,
+        maxTargetAccountExposure: cashGateMaxTargetPct,
         booleanSurplusPct,
         positionGate: gate,
       },

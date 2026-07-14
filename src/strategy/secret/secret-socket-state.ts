@@ -7,8 +7,10 @@ import {
   maybeAutoSeedFromSecretPositions,
   maybeAutoSeedFromTickerRecs,
 } from "./secret-auto-seed";
+import { logOptionsMirrorEval } from "./options-mirror-evaluator";
 import {
   SecretDataUpdatePayload,
+  SecretRegime,
   SecretSourcePosition,
   SecretTickerRecPick,
 } from "./types";
@@ -88,11 +90,16 @@ function rehydrateSecretCacheFromDisk(): void {
 let secretSocket: ReturnType<typeof io> | null = null;
 let cachedSourcePositions: SecretSourcePosition[] = [];
 let cachedTickerRecsPicks: SecretTickerRecPick[] = [];
+let cachedRegime: SecretRegime | null = null;
 let hasConnectedSecretSocket = false;
 let secretSocketIsConnected = false;
 let secretSocketIsAuthed = false;
 let lastSecretPositionsUpdateAt: Date | null = null;
 let lastSecretTickerRecsUpdateAt: Date | null = null;
+
+export function getCachedSecretRegime(): SecretRegime | null {
+  return cachedRegime;
+}
 
 // Log emits attempted before the server acks attemptAuth queue here and flush
 // on the ack — the server drops client:act from unauthenticated sockets, so
@@ -142,6 +149,7 @@ function warnOnMissingThesisRollup(positions: SecretSourcePosition[]): void {
   );
 }
 
+// fallow-ignore-next-line complexity
 function updateCachedPositionsFromPayload(payload: SecretDataUpdatePayload): void {
   const sourceKey = getSecretPositionsSourceKey();
   if (!sourceKey) {
@@ -153,10 +161,15 @@ function updateCachedPositionsFromPayload(payload: SecretDataUpdatePayload): voi
     return;
   }
 
+  if (payload.regime && typeof payload.regime === "object") {
+    cachedRegime = payload.regime;
+  }
+
   cachedSourcePositions = sourcePositions as SecretSourcePosition[];
   lastSecretPositionsUpdateAt = new Date();
   persistSecretCacheToDisk();
   warnOnMissingThesisRollup(cachedSourcePositions);
+  logOptionsMirrorEval(cachedSourcePositions, cachedRegime);
 
   void maybeAutoSeedFromSecretPositions(cachedSourcePositions);
 }

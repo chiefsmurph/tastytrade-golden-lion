@@ -1,5 +1,6 @@
 export {
 	getCachedSecretSourcePositions,
+	getCachedSecretRegime,
 	getSecretSocketStatus,
 	startSecretSocketConnection,
 	getSecretPositionsSourceKey,
