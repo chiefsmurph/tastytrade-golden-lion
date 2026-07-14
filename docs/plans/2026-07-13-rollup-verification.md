@@ -4,6 +4,18 @@ Written 2026-07-13. Today was the first session on the consolidated feed thesis.
 data (and watch tomorrow morning) against this doc. Daily mechanics are in
 [../OPERATIONS.md](../OPERATIONS.md); this is the one-time verification layered on top.
 
+> **⚠️ 07-13 IS A CONTAMINATED SAMPLE.** The feed bot was down (bug, no buying) for roughly
+> the first 3 hours of the session. The morning-margin decision tree and the gate-zeros
+> comparison CANNOT be judged from 07-13 — a quiet morning today proves nothing about the
+> curves or the gate fix. Treat 07-14 onward as the real verification window and collect a
+> few clean days before tuning anything. Still valid from 07-13's afternoon: notification
+> delivery, tripwire silence, score scale (`/10`), seed reason strings.
+>
+> **Incident lesson**: with the feed down, the bot ran on the last cached signals — the
+> known "staleness never gates" gap (v2/v4 backlog). `secondsSinceLastPositionsUpdate` is
+> tracked and gates nothing, so a 3-hour-dead feed looks identical to a live one downstream.
+> This outage is the concrete case for promoting the staleness gate up the backlog.
+
 ## What went live, in what order
 
 - **This morning's deploy**: feed signal renames, rollup scoring (`manualThesisCount` 0–10
