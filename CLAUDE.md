@@ -22,6 +22,8 @@ node --import tsx --test src/bot/tests/evaluate-trading-strategy.test.ts
 
 Production options execution engine for Tastytrade. Runs automated, risk-gated trading cycles. Bot is controlled externally via a Unix socket IPC server (40+ JSON commands). External signal feed is optional — the bot is fully functional without it.
 
+> **Deep strategy reference:** [`docs/STRATEGY.v2.md`](docs/STRATEGY.v2.md) is the authoritative, top-to-bottom description of the trading logic — exact thresholds, schedules, circuit breakers, the signal gate, contract selection, and seeding, all with `file:line` refs. This file is the quick map; STRATEGY.v2.md is the territory. When strategy mechanics and hard numbers matter, read it there (and keep it, not this file, current).
+
 ### Cycle Flow
 
 Each `runCycle` call (every N minutes during market hours):
@@ -34,7 +36,7 @@ Each `runCycle` call (every N minutes during market hours):
 
 ### Key Subsystems
 
-**`src/bot/evaluate-trading-strategy.ts`** — Core strategy state machine. Blends DTE and exposure targets by time of day. Hard circuit breakers: dynamic profit target (40% → 7%), -30% bid stop loss before cutoff, -10% after cutoff, EOD liquidation for margin.
+**`src/strategy/evaluate-trading-strategy.ts`** — Core strategy state machine. Blends DTE and exposure targets by time of day. Hard circuit breakers: dynamic profit target (40% → 7%), -30% bid stop loss before cutoff, -10% after cutoff, EOD liquidation for margin. Full schedules and ordering in STRATEGY.v2.md §4 & §6.
 
 **`src/bot/run-cycle-context.ts`** — Builds the full snapshot before execution: pulls position evaluations, applies secret signals and buy weights, sorts groups by priority.
 
@@ -44,7 +46,7 @@ Each `runCycle` call (every N minutes during market hours):
 - `manage-allocation.ts` — buys via strike selection (delta-targeted for margin, ITM for cash), quantity sizing, tick-chasing
 - `close-position.ts` — sells with mid→ask aggressiveness, up to 10 tick-chase steps every 30s
 
-**`src/strategy/position-gate.ts`** — Cross-account signal gating. Computes `PositionGateResult` from secret position booleans (`isAboveMinSin`, `isAboveMinSis`, `isAboveMinStab`, `isInBssRange`, `isAboveMinPsWordPerc`, `isInZScoreRange`, `isClearedToBuy`, `isAboveMinBuyWeight`, `isQualityToBuy`, `willBuy`, `daytradeScore`). Thesis score 0–`THESIS_MAX` (11) with `willBuy` as +2 icing on top (never required for full marks). Since 2026-07-12 the feed sends a consolidated rollup — `buyFraction` (0→1.25; >1.0 only with willBuy), `thesisCount`, `thesisMax` — which supersedes the per-flag count when present (rescaled onto the legacy point scale so downstream bars are unchanged); the data-driven `THESIS_FLAGS` array (9 flags + daytradeScore 0–2) is the fallback for pre-consolidation payloads. Margin seeding: feed `thesisCount ≥ 4`, legacy merged count ≥ 4 as fallback. Note: `isInZScoreRange` is an upstream hard gate — the feed forces `isBuyEligible`/`willBuy` false when it's false.
+**`src/strategy/position-gate.ts`** — Cross-account signal gating. Computes `PositionGateResult` (a `maxTargetPct` ceiling) from the feed's consolidated thesis rollup. Thesis score 0–`THESIS_MAX` (**10**) with `willBuy` as +2 icing on top (never required for full marks); source is `manualThesisCount/manualThesisMax` (preferred) or `buyFraction` (0→1.25; >1.0 only with willBuy). Margin seeding requires the full feed thesis (`thesisCount ≥ thesisMax`). See STRATEGY.v2.md §7 for the tier table, per-account scaling (margin 1.33×, willBuy hard gate; cash holdScore/overnight/regime gates), and the buyMult×gateMult quality factor.
 
 **`src/bot/run-cycle-seed.ts`** — Cross-account margin seeding. Iterates cash account evaluations; seeds margin when cash `askReturnPct < -minDownPct` AND the cash position's strategy is still `MANAGE_ALLOCATION`.
 
@@ -57,7 +59,7 @@ Each `runCycle` call (every N minutes during market hours):
 ### Account Model
 
 Two account types with distinct behavior:
-- **Margin**: OTM calls targeted to `STRATEGY_MARGIN_TARGET_CALL_DELTA` (default 0.35), closes all positions EOD at 12:55 PM, accumulation cutoff at 12:30 PM
+- **Margin**: OTM calls targeted to `STRATEGY_MARGIN_TARGET_CALL_DELTA` (default 0.35), liquidates all positions EOD (arms 12:50 PM, `EOD_ARMED_MINUTE`), accumulation cutoff at 12:30 PM. When the OTM pick fails the spread gate on illiquid low-priced names, falls back to the nearest-money ITM strike — gated on signal conviction (`daytradeScore < -40 || buyWeight > 280`); see STRATEGY.v2.md §8a
 - **Cash**: ITM calls for overnight delta hold, accumulation cutoff at 1:00 PM, can seed margin when underwater
 
 Cross-account logic: the cash account evaluation drives margin seeding via `run-cycle-seed.ts` and position gate signals in `cash-position-gate.ts`.
