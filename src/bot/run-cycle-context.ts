@@ -486,7 +486,15 @@ export async function buildRunCycleContext(
       const willBuy = secretPosition?.willBuy;
       const willBuyBlocked = secretPosition !== undefined && willBuy !== true;
       const multiplier = getMarginTargetMultiplier();
-      const marginMaxTargetPct = willBuyBlocked ? 0 : gate.maxTargetPct * multiplier;
+      // Signal quality: buyMult (pre-crush rec strength) × gateMult (gate favorability, full = 2.0).
+      // Product normalized onto 0–4 → 0–1, floored at 0.5 so cleared-gate positions aren't crushed.
+      // Falls through at 1.0 when either field is absent (field not yet on payload).
+      const marginBuyMult = typeof secretPosition?.buyMult === "number" ? secretPosition.buyMult : null;
+      const marginGateMult = typeof secretPosition?.gateMult === "number" ? secretPosition.gateMult : null;
+      const marginQualityFactor = marginBuyMult !== null && marginGateMult !== null
+        ? Math.max(0.5, Math.min(1.0, (marginBuyMult * marginGateMult) / 4.0))
+        : 1.0;
+      const marginMaxTargetPct = willBuyBlocked ? 0 : gate.maxTargetPct * multiplier * marginQualityFactor;
       // Dip boost triggers on MID return (not ask) so it can see bid-side spread
       // pain, with optional wide-spread suppression (off by default). See v8 #3.
       const dipTargetBoostPct = getMarginDipTargetBoostPct(
@@ -504,6 +512,9 @@ export async function buildRunCycleContext(
           symbol,
           willBuy,
           willBuyBlocked,
+          marginBuyMult,
+          marginGateMult,
+          marginQualityFactor,
           crossAccountAskReturnFraction,
           signals: gate.signals,
           cashMaxTargetPct: gate.maxTargetPct,
@@ -558,7 +569,14 @@ export async function buildRunCycleContext(
     const cashEligibleBlocked = secretPosition !== undefined && secretPosition.isOvernightEligible === false;
     const cashRegimeBlocked = getCachedSecretRegime()?.crashRegime === true;
     const cashHardGateBlocked = cashHoldBlocked || cashEligibleBlocked || cashRegimeBlocked;
-    const cashGateMaxTargetPct = cashHardGateBlocked ? 0 : gate.maxTargetPct;
+    // Signal quality factor: same formula as margin — buyMult × gateMult is still
+    // meaningful for ITM entry timing even when the hold signal drives the hard gate.
+    const cashBuyMult = typeof secretPosition?.buyMult === "number" ? secretPosition.buyMult : null;
+    const cashGateMult = typeof secretPosition?.gateMult === "number" ? secretPosition.gateMult : null;
+    const cashQualityFactor = cashBuyMult !== null && cashGateMult !== null
+      ? Math.max(0.5, Math.min(1.0, (cashBuyMult * cashGateMult) / 4.0))
+      : 1.0;
+    const cashGateMaxTargetPct = cashHardGateBlocked ? 0 : gate.maxTargetPct * cashQualityFactor;
 
     const scaledTargetAccountExposure =
       finalTargets.targetAccountExposure * cashGateMaxTargetPct;
@@ -571,6 +589,9 @@ export async function buildRunCycleContext(
         cashHoldBlocked,
         cashEligibleBlocked,
         cashRegimeBlocked,
+        cashBuyMult,
+        cashGateMult,
+        cashQualityFactor,
         crossAccountAskReturnFraction,
         signals: gate.signals,
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
