@@ -4,6 +4,7 @@ import { closePosition, ClosePositionResult } from "./actions/close-position";
 import { isOvernightPosition, getPositionAgeDays } from "./position-registry";
 import { computeOvernightReductionTargetPct } from "~/strategy/overnight-reduction";
 import { OVERNIGHT_REDUCTION_ORDER_SOURCE } from "./order-sources";
+import { getDoNotTouchGroupKeys, isEvaluationDoNotTouch } from "./do-not-touch-groups";
 
 // Cash accumulation cutoff: 1:00 PM PT (same as getNoBuyCutoffMinute("cash")).
 // Overnight reductions placed after this time serve no purpose — the window
@@ -28,6 +29,7 @@ export interface OvernightReductionOrder extends ClosePositionResult {
   reductionContractsToClose: number;
 }
 
+// fallow-ignore-next-line complexity
 export async function executeOvernightReductions(
   accountNumber: string,
   evaluations: readonly PositionGroupEvaluation[],
@@ -46,10 +48,13 @@ export async function executeOvernightReductions(
   }
 
   const results: OvernightReductionOrder[] = [];
+  const doNotTouchGroupKeys = getDoNotTouchGroupKeys();
 
   for (const evaluation of evaluations) {
     const symbol = String(evaluation.underlyingSymbol ?? "").toUpperCase();
     if (!symbol) continue;
+
+    if (isEvaluationDoNotTouch(evaluation, doNotTouchGroupKeys)) continue;
 
     if (alreadyClosingSymbols.has(symbol)) continue;
 
