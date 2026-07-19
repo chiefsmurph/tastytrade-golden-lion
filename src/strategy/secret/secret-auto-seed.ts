@@ -4,6 +4,10 @@ import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretRegime, SecretSourcePosition, SecretTickerRecPick } from "./types";
 import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
+import {
+  CASH_ACCOUNT_SEED_MIN_DTE,
+  CASH_ACCOUNT_SEED_MAX_DTE,
+} from "~/strategy/option-candidate";
 import { recordPositionOpened } from "~/bot/position-registry";
 import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
@@ -15,10 +19,11 @@ const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 // buying-power skip blocked retries for 10 min, while optionless names got a
 // fresh chain walk every 10 min forever. Split by outcome instead:
 //   placed       → the existing per-path cooldown map (10 min default).
-//   no-candidate → long, symbol-keyed (no chain/candidate exists — that is
-//                  account-independent and rarely changes intraday).
-//   retry        → short, account+symbol-keyed (buying power, DTE, dry-run…
-//                  are transient and account-specific).
+//   no-candidate → long, symbol-keyed (no chain/candidate exists — including
+//                  DTE-window misses — account-independent and rarely
+//                  changing intraday).
+//   retry        → short, account+symbol-keyed (buying power, dry-run… are
+//                  transient and account-specific).
 const noCandidateSeedAtBySymbol = new Map<string, number>();
 const retrySeedAtByAccountSymbol = new Map<string, number>();
 
@@ -26,11 +31,19 @@ export type SeedOutcomeCooldownKind = "placed" | "no-candidate" | "retry";
 
 // Skip reasons from seed-symbol.ts meaning the underlying has no usable chain
 // or candidate at all. These strings are matched verbatim.
+//
+// The two DTE-window reasons are here (long cooldown) rather than retry: since
+// the DTE fallback shipped, a DTE miss means the widened 7-60 window ALSO
+// failed — expirations don't appear intraday, so a 3-min retry just burns
+// selection API calls. Built from the same constants seed-symbol interpolates
+// so the verbatim match tracks any window change.
 const NO_CANDIDATE_SKIP_REASONS = new Set([
   "no option candidate found",
   "candidate quote symbol unavailable",
   "candidate ask quote unavailable",
   "candidate mid quote unavailable",
+  `no candidate found in cash seed DTE window ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
+  `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
 ]);
 
 // Pure classification of a seed attempt into which cooldown applies.
@@ -194,7 +207,7 @@ function getNoCandidateCooldownMs(): number {
   return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 2 * 60 * 60 * 1000);
 }
 
-// Transient failures (buying power, DTE, closing-only, dry-run rejection).
+// Transient failures (buying power, closing-only, dry-run rejection).
 function getRetryCooldownMs(): number {
   return readCooldownMs("SECRET_AUTO_SEED_RETRY_COOLDOWN_MS", 3 * 60 * 1000);
 }

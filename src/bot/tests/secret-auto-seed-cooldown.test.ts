@@ -40,12 +40,30 @@ test("no-chain/no-candidate skips get the long cooldown", () => {
   );
 });
 
+test("DTE-window misses get the long cooldown, not the 3-min retry", () => {
+  // Since the DTE fallback shipped, a DTE miss means the widened 7-60 window
+  // ALSO failed — expirations don't appear intraday, so retrying every 3 min
+  // just burns selection API calls.
+  assert.equal(
+    classifySeedOutcomeCooldown({
+      placedOrder: false,
+      skippedReason: "no candidate found in cash seed DTE window 14-30",
+    }),
+    "no-candidate",
+  );
+  assert.equal(
+    classifySeedOutcomeCooldown({
+      placedOrder: false,
+      skippedReason: "cash seed candidate DTE must be within 14-30",
+    }),
+    "no-candidate",
+  );
+});
+
 test("transient failures get the short retry cooldown", () => {
   const transientReasons = [
     "insufficient effective buying power for seed order — capped at 98.80 by per-action max buy pct, order cost 183.00",
     "seed order cost 600.00 exceeds BOT_MAX_SEED_ORDER_COST 500.00",
-    "no candidate found in cash seed DTE window 14-30",
-    "cash seed candidate DTE must be within 14-30",
     "underlying set to closing-only by broker; retrying after 2026-07-17T20:00:00.000Z",
     "underlying already has an open position",
     "time-of-day strategy is not allowing new accumulation",
