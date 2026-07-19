@@ -5,7 +5,7 @@ import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-acc
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
 import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened } from "~/bot/position-registry";
-import { toBooleanFlag } from "~/core/env-utils";
+import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
@@ -199,6 +199,14 @@ function getRetryCooldownMs(): number {
   return readCooldownMs("SECRET_AUTO_SEED_RETRY_COOLDOWN_MS", 3 * 60 * 1000);
 }
 
+// Thesis floor for cash auto-seeds: isQualityToBuy alone fires on hundreds of
+// feed ticks/day, so once seeding economics actually place orders that volume
+// is real money. Require a minimum countGoodBooleans score on top — the scale
+// is 0-10 manual thesis + 2 willBuy icing (see ~/strategy/position-gate).
+function getCashSeedMinScore(): number {
+  return readEnvPct("STRATEGY_CASH_SEED_MIN_SCORE", 3);
+}
+
 async function maybeAutoSeedSymbol(options: {
   symbol: string;
   side: "call" | "put";
@@ -293,7 +301,8 @@ export async function maybeAutoSeedFromSecretPositions(
     const goodBooleanScore = countGoodBooleans(position);
     const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
 
-    if (toBooleanFlag(position.isQualityToBuy)) {
+    // Below-floor scores skip silently — this fires hundreds of times a day.
+    if (toBooleanFlag(position.isQualityToBuy) && goodBooleanScore >= getCashSeedMinScore()) {
       await maybeAutoSeedSymbol({
         symbol,
         side,
