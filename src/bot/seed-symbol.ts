@@ -10,6 +10,7 @@ import {
   getTopOptionCandidateForSymbol,
   CASH_ACCOUNT_SEED_MIN_DTE,
   CASH_ACCOUNT_SEED_MAX_DTE,
+  getCashSeedDteFallbackWindow,
   getSeedSelectionOptionsForAccountType,
   type TopOptionCandidateForSymbolResult,
 } from "~/strategy/option-candidate";
@@ -63,6 +64,7 @@ export interface SeedSymbolResult {
   skippedReason?: string;
   strategy?: ProgrammaticAction | null;
   symbol: string;
+  usedCashDteWindowFallback?: boolean;
   usedDteFallback?: boolean;
   usedHeldContractFallback?: boolean;
   usedItmFallback?: boolean;
@@ -84,6 +86,28 @@ export function shouldRetrySeedWithItm(
     !candidate?.symbol &&
     !candidate?.skippedByIvGate
   );
+}
+
+// Cash DTE-window fallback mirrors the margin ITM fallback above: small caps
+// often carry only monthly expirations, so whole calendar stretches have no
+// candidate inside the primary cash window (14-30) and the seed skips for
+// weeks. Retry once with the wider env-tunable window; the retry only replaces
+// the primary candidate when it lands genuinely inside the widened window, so
+// the strict (load-bearing) skip strings stay intact otherwise. IV-gate skips
+// are an intentional entry filter, so they do not retry.
+export function shouldRetryCashSeedWithFallbackDteWindow(
+  accountType: "margin" | "cash" | "unknown",
+  candidate: TopOptionCandidateForSymbolResult | null | undefined,
+  hasExplicitContract: boolean,
+): boolean {
+  if (hasExplicitContract || accountType !== "cash") {
+    return false;
+  }
+  if (candidate?.skippedByIvGate) {
+    return false;
+  }
+  const dte = candidate?.dte != null ? Number(candidate.dte) : undefined;
+  return candidate?.usedDteFallback === true || !isWithinCashAccountSeedDteRange(dte);
 }
 
 function getMaxSeedOrderCost(): number {
@@ -235,6 +259,11 @@ export function checkCashSeedDte(
   if (!(resolvedAccountType === "cash" && !explicitContract)) {
     return null;
   }
+  // The widened-window retry (scope seed-cash-dte-fallback) already validated
+  // this candidate against the fallback DTE window — flagged results pass.
+  if (baseResult.usedCashDteWindowFallback) {
+    return null;
+  }
   if (candidate?.usedDteFallback) {
     return {
       ...baseResult,
@@ -351,6 +380,55 @@ export async function seedSymbol(
     }
   }
 
+  let usedCashDteWindowFallback = false;
+  if (
+    shouldRetryCashSeedWithFallbackDteWindow(
+      resolvedAccountType,
+      candidate,
+      Boolean(explicitContract),
+    )
+  ) {
+    const fallbackWindow = getCashSeedDteFallbackWindow();
+    const primarySkipReason = candidate?.usedDteFallback
+      ? `no candidate found in cash seed DTE window ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`
+      : `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`;
+    const fallbackCandidate = await getTopOptionCandidateForSymbol(symbol, side, undefined, {
+      ...getSeedSelectionOptionsForAccountType(resolvedAccountType),
+      minDTE: fallbackWindow.minDTE,
+      maxDTE: fallbackWindow.maxDTE,
+    });
+    const fallbackDte =
+      fallbackCandidate?.dte != null ? Number(fallbackCandidate.dte) : undefined;
+    // Only a candidate genuinely inside the widened window counts — a
+    // nearest-expiration fallback (usedDteFallback) or an out-of-window DTE
+    // keeps the primary candidate so the strict skip reason is emitted.
+    const fallbackUsable =
+      Boolean(fallbackCandidate?.symbol) &&
+      fallbackCandidate?.usedDteFallback !== true &&
+      typeof fallbackDte === "number" &&
+      Number.isFinite(fallbackDte) &&
+      fallbackDte >= fallbackWindow.minDTE &&
+      fallbackDte <= fallbackWindow.maxDTE;
+    console.log(
+      JSON.stringify({
+        scope: "seed-cash-dte-fallback",
+        symbol: normalizedSymbol,
+        side,
+        primarySkipReason,
+        fallbackMinDte: fallbackWindow.minDTE,
+        fallbackMaxDte: fallbackWindow.maxDTE,
+        fallbackDte: fallbackDte ?? null,
+        fallbackCandidateSymbol: fallbackCandidate?.symbol ?? null,
+        fallbackSkippedReason: fallbackCandidate?.skippedReason ?? null,
+        accepted: fallbackUsable,
+      }),
+    );
+    if (fallbackUsable) {
+      candidate = fallbackCandidate;
+      usedCashDteWindowFallback = true;
+    }
+  }
+
   const strategy = candidate?.strategy;
   const candidateDte = candidate?.dte != null ? Number(candidate.dte) : undefined;
   const minDTE = candidate?.minDTE;
@@ -373,6 +451,7 @@ export async function seedSymbol(
     side,
     strategy,
     symbol: normalizedSymbol,
+    usedCashDteWindowFallback,
     usedDteFallback,
     usedItmFallback,
   };
@@ -404,6 +483,7 @@ export async function seedSymbol(
         minDTE,
         maxDTE,
         preferredDTE,
+        usedCashDteWindowFallback,
         usedDteFallback: usedDteFallback ?? false,
         usedItmFallback,
         candidateSymbol: candidate?.symbol ?? candidate?.call ?? candidate?.put ?? null,

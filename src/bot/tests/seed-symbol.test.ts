@@ -8,6 +8,7 @@ import {
   checkCashSeedDte,
   checkSeedAffordability,
   extractDryRunSkipReason,
+  shouldRetryCashSeedWithFallbackDteWindow,
   shouldRetrySeedWithItm,
   type SeedSymbolResult,
 } from "../seed-symbol";
@@ -154,6 +155,51 @@ test("checkCashSeedDte skips when cash candidate DTE is out of range", () => {
 
 test("checkCashSeedDte passes when cash candidate DTE is in range", () => {
   assert.equal(checkCashSeedDte("cash", undefined, cand({}), 21, baseResult), null);
+});
+
+test("checkCashSeedDte accepts an out-of-window DTE from the flagged widened-window fallback", () => {
+  const fallbackResult: SeedSymbolResult = {
+    ...baseResult,
+    usedCashDteWindowFallback: true,
+  };
+  // DTE 45 is outside 14-30 but inside the widened window the retry validated.
+  assert.equal(checkCashSeedDte("cash", undefined, cand({}), 45, fallbackResult), null);
+  // Without the flag the same DTE keeps skipping with the strict reason.
+  const strict = checkCashSeedDte("cash", undefined, cand({}), 45, baseResult);
+  assert.equal(
+    strict?.skippedReason,
+    `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
+  );
+});
+
+test("shouldRetryCashSeedWithFallbackDteWindow fires only for cash DTE misses", () => {
+  // Primary window missed entirely → nearest-expiration fallback was used.
+  assert.equal(
+    shouldRetryCashSeedWithFallbackDteWindow("cash", cand({ usedDteFallback: true, dte: 45 }), false),
+    true,
+  );
+  // Candidate DTE out of range without the fallback marker (e.g. no candidate at all).
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("cash", cand({}), false), true);
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("cash", null, false), true);
+
+  // In-window cash candidate → no retry.
+  assert.equal(
+    shouldRetryCashSeedWithFallbackDteWindow("cash", cand({ symbol: "X", dte: 21 }), false),
+    false,
+  );
+  // IV-gate skip is an intentional entry filter → no retry.
+  assert.equal(
+    shouldRetryCashSeedWithFallbackDteWindow(
+      "cash",
+      cand({ skippedByIvGate: true, skippedReason: "IV rank 12.0 below minimum 30" }),
+      false,
+    ),
+    false,
+  );
+  // Margin/unknown accounts and explicit contracts never retry.
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("margin", null, false), false);
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("unknown", null, false), false);
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("cash", null, true), false);
 });
 
 const costResult: SeedSymbolResult = {
