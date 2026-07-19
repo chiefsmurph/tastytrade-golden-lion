@@ -9,7 +9,12 @@ export interface SecretSourcePosition {
   // ── READ ──────────────────────────────────────────────────────────────────
   ticker?: string;
   buyWeight?: number;
-  daytradeScore?: number; // drives basic/strong stock-yes tiers + aggressiveness boost
+  // Intraday PAIN score (negative = down hard). TELEMETRY-ONLY: removed from
+  // every decision path 2026-07-19 after a forward-return backtest (n=2242)
+  // showed a valley, not a line — dt -70..-150 is catastrophic (win 16-29%),
+  // dt <= -200 has a fat left tail, and only dt > 40 is positive-avg. Still
+  // recorded (run history, gate logs, SecretPositionSignals) for re-evaluation.
+  daytradeScore?: number;
   isQualityToBuy?: boolean | string | number; // drives basic/strong stock-yes tiers
   returnPerc?: number;
   superRecScore?: number;

@@ -17,9 +17,7 @@ export interface PositionGateResult {
   signals: PositionGateSignals;
   maxTargetPct: number;
   strongStockYesPctThreshold: number;
-  strongStockYesScoreThreshold: number;
   basicStockYesPctThreshold: number;
-  basicStockYesScoreThreshold: number;
 }
 
 // STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT is the late-day (lenient) threshold for the cross-account YES signal.
@@ -45,10 +43,16 @@ function readEnvPctWithLegacy(key: string, legacyKey: string, fallback: number):
   return readEnvPct(legacyKey, fallback);
 }
 
-// The four stock-yes thresholds form two basic/strong pairs. Both legs are
-// time-scaled from half the base at window start to the full base at 1pm
-// (percentOfBalance and daytradeScore magnitude build through the session),
-// and each basic bar must sit below its strong counterpart.
+// The stock-yes thresholds form a basic/strong pair. Both are time-scaled from
+// half the base at window start to the full base at 1pm (percentOfBalance
+// builds through the session), and the basic bar must sit below its strong
+// counterpart.
+//
+// daytradeScore legs REMOVED 2026-07-19: a forward-return backtest (n=2242
+// fills, intraday horizon) showed the score's relationship to forward return
+// is a valley, not a line — dt -70..-150 is catastrophic (win rate 16-29%,
+// avg -5 to -7%). The dt<-100 strong leg granted the strongest sizing tier
+// INSIDE that death valley (win 16%). daytradeScore is telemetry-only now.
 
 // percentOfBalance above this qualifies as a basic stock YES on its own.
 function getBasicPercentOfBalanceThreshold(): number {
@@ -61,24 +65,6 @@ function getStrongPercentOfBalanceThreshold(): number {
     "STRATEGY_GATE_STRONG_PERCENT_OF_BALANCE_THRESHOLD",
     "STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT",
     30,
-  );
-}
-
-// daytradeScore below this (more negative) qualifies as a basic stock YES on its own.
-function getBasicDaytradeScoreThreshold(): number {
-  return readEnvPct("STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD", -40);
-}
-
-// daytradeScore below this (more negative) qualifies (with isQualityToBuy) as a
-// strong stock YES. Legacy name expressed this as a positive magnitude, so the
-// value is normalized to negative either way.
-function getStrongDaytradeScoreThreshold(): number {
-  return -Math.abs(
-    readEnvPctWithLegacy(
-      "STRATEGY_GATE_STRONG_DAYTRADE_SCORE_THRESHOLD",
-      "STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX",
-      -100,
-    ),
   );
 }
 
@@ -123,37 +109,12 @@ function getGateWindowProgress(currentTime: Date): number {
     : 1;
 }
 
-// percentOfBalance: base/2 at window start → base at window end
-// daytradeScore:   -base/2 at window start → -base at window end
-function getStrongStockYesThresholds(currentTime: Date): {
-  pct: number;
-  daytradeScore: number;
-} {
+// percentOfBalance: base/2 at window start → base at window end. Basic and
+// strong scale over the same window with the same shape — both tighten
+// through the day because percentOfBalance builds through the session.
+function getTimeScaledPctThreshold(basePct: number, currentTime: Date): number {
   const t = getGateWindowProgress(currentTime);
-  const basePct = getStrongPercentOfBalanceThreshold();
-  const baseScoreMagnitude = Math.abs(getStrongDaytradeScoreThreshold());
-
-  const pct = (basePct / 2) * (1 + t);
-  const daytradeScore = -(baseScoreMagnitude / 2) * (1 + t);
-
-  return { pct, daytradeScore };
-}
-
-// Basic thresholds scale over the same window with the same shapes as the
-// strong ones — both legs tighten through the day for the same reason:
-// percentOfBalance base/2 → base, daytradeScore -base/2 → -base.
-function getBasicStockYesThresholds(currentTime: Date): {
-  pct: number;
-  daytradeScore: number;
-} {
-  const t = getGateWindowProgress(currentTime);
-  const basePct = getBasicPercentOfBalanceThreshold();
-  const baseScoreMagnitude = Math.abs(getBasicDaytradeScoreThreshold());
-
-  return {
-    pct: (basePct / 2) * (1 + t),
-    daytradeScore: -(baseScoreMagnitude / 2) * (1 + t),
-  };
+  return (basePct / 2) * (1 + t);
 }
 
 // The thesis scale is the feed's manually-curated thesis: manualThesisMax is
@@ -252,13 +213,11 @@ export function computePositionGate(options: {
 
   const qualityToBuy = isQualityToBuy(options.secretPosition);
   const percentOfBalance = Number(options.secretPosition?.percentOfBalance ?? 0);
-  const rawDaytradeScore = options.secretPosition?.daytradeScore;
-  const daytradeScore =
-    rawDaytradeScore != null && Number.isFinite(Number(rawDaytradeScore))
-      ? Number(rawDaytradeScore)
-      : null;
 
-  const thresholds = getStrongStockYesThresholds(options.currentTime);
+  const strongPctThreshold = getTimeScaledPctThreshold(
+    getStrongPercentOfBalanceThreshold(),
+    options.currentTime,
+  );
 
   const goodBooleanScore = countGoodBooleans(options.secretPosition);
   // Full thesis = buyFraction >= 1.0 (only willBuy can push past it). No
@@ -266,19 +225,19 @@ export function computePositionGate(options: {
   const gateFeedFraction = getFeedBuyFraction(options.secretPosition);
   const allBooleansGood = gateFeedFraction !== null && gateFeedFraction >= 1.0;
 
-  // basic: isQualityToBuy, a bullish daytradeScore below the basic threshold,
-  // or percentOfBalance above the basic threshold (both time-scaled)
-  const basicThresholds = getBasicStockYesThresholds(options.currentTime);
-  const basicStockYes =
-    qualityToBuy ||
-    (daytradeScore !== null && daytradeScore < basicThresholds.daytradeScore) ||
-    percentOfBalance > basicThresholds.pct;
+  // daytradeScore legs removed 2026-07-19: dip polarity ("bullish" = down
+  // hard) GRANTED tiers inside the backtested -70..-150 death valley — the
+  // dt<-100 strong leg awarded the strongest tier at a 16% win rate.
 
-  // strong: isQualityToBuy + pct or daytradeScore crosses time-scaled threshold
-  const strongStockYes =
-    qualityToBuy &&
-    (percentOfBalance > thresholds.pct ||
-      (daytradeScore !== null && daytradeScore < thresholds.daytradeScore));
+  // basic: isQualityToBuy, or percentOfBalance above the time-scaled threshold
+  const basicPctThreshold = getTimeScaledPctThreshold(
+    getBasicPercentOfBalanceThreshold(),
+    options.currentTime,
+  );
+  const basicStockYes = qualityToBuy || percentOfBalance > basicPctThreshold;
+
+  // strong: isQualityToBuy + percentOfBalance above the time-scaled threshold
+  const strongStockYes = qualityToBuy && percentOfBalance > strongPctThreshold;
 
   const signals: PositionGateSignals = {
     crossAccountYes,
@@ -307,9 +266,7 @@ export function computePositionGate(options: {
   return {
     signals,
     maxTargetPct,
-    strongStockYesPctThreshold: thresholds.pct,
-    strongStockYesScoreThreshold: thresholds.daytradeScore,
-    basicStockYesPctThreshold: basicThresholds.pct,
-    basicStockYesScoreThreshold: basicThresholds.daytradeScore,
+    strongStockYesPctThreshold: strongPctThreshold,
+    basicStockYesPctThreshold: basicPctThreshold,
   };
 }

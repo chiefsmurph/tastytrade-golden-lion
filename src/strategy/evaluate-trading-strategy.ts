@@ -28,8 +28,8 @@ export interface ExecutionTargets {
   positionGate?: PositionGateResult;
   // Margin only: when the OTM candidate fails the entry-spread/liquidity gate,
   // permit a fall back to the nearest-the-money ITM strike that passes. Gated on
-  // the secret signal reading as a HOLD (daytradeScore < -40) or high conviction
-  // (buyWeight > 280), so momentum-flip names still skip rather than buy ITM.
+  // high conviction (buyWeight > 280) so momentum-flip names still skip rather
+  // than buy ITM. (daytradeScore leg removed 2026-07-19 — telemetry-only now.)
   marginItmFallbackEligible?: boolean;
 }
 

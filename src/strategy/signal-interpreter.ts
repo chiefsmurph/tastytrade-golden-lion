@@ -18,31 +18,24 @@ export function normalizeBuyWeight(buyWeight: number): number {
   return clamp(buyWeight / 400, 0, 1);
 }
 
-// Returns a raw buy-weight boost (0-400 scale) based on the max aggressiveness
-// level signalled by daytradeScore, returnPerc, and superRecScore.
+// Returns a raw buy-weight boost (0-400 scale) based on the aggressiveness
+// level signalled by the feed's validated thesis rollup (buyFraction).
 // Level 1 (aggressive): +100. Level 2 (very aggressive): +200.
 //
-// Thresholds below (≤ −100/−200 for daytradeScore; < −2%/−5% for returnPerc;
-// > 80 for superRecScore) are UNVALIDATED DEFAULTS chosen at implementation
-// time without backtesting. Tune from live distributions before relying on them.
+// Thresholds come from a measured forward-return backtest (2026-07-19,
+// n=2242 fills, intraday horizon): buyFraction > 1.0 (full thesis + willBuy
+// icing) was the best bucket at +0.91% avg / 68% win; buyFraction = 1.0 (4/4
+// thesis alone) +0.72% / 66%. The previous inputs — daytradeScore ≤ −100/−200,
+// returnPerc < −2/−5%, superRecScore > 80 — were unvalidated dip-polarity
+// defaults; the same backtest showed the daytradeScore legs boosted the
+// -70..-150 death valley (win 16-29%), so all three are dropped.
 export function computeAggressivenessBoost(position: SecretSourcePosition): number {
   let level = 0;
 
-  const daytradeScore = Number(position.daytradeScore);
-  if (Number.isFinite(daytradeScore)) {
-    if (daytradeScore <= -200) level = Math.max(level, 2);
-    else if (daytradeScore <= -100) level = Math.max(level, 1);
-  }
-
-  const returnPerc = Number(position.returnPerc);
-  if (Number.isFinite(returnPerc)) {
-    if (returnPerc < -5) level = Math.max(level, 2);
-    else if (returnPerc < -2) level = Math.max(level, 1);
-  }
-
-  const superRecScore = Number(position.superRecScore);
-  if (Number.isFinite(superRecScore) && superRecScore > 80) {
-    level = Math.max(level, 1);
+  const buyFraction = Number(position.buyFraction);
+  if (Number.isFinite(buyFraction)) {
+    if (buyFraction > 1.0) level = 2;
+    else if (buyFraction >= 1.0) level = 1;
   }
 
   return level * 100;

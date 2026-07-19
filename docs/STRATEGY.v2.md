@@ -210,8 +210,11 @@ Two orthogonal confirmations:
 - **crossAccountYes** — the *other* account's position is down past a
   time-scaled dip threshold (`STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT`, 2× strict at
   open → 1× lenient by 1pm).
-- **basicStockYes / strongStockYes** — from `isQualityToBuy`, `percentOfBalance`,
-  and `daytradeScore` crossing time-scaled bars.
+- **basicStockYes / strongStockYes** — from `isQualityToBuy` and
+  `percentOfBalance` crossing time-scaled bars. (`daytradeScore` legs removed
+  2026-07-19: the forward-return backtest showed dt −70..−150 is a death
+  valley — win 16–29% — and the dt<−100 leg granted the strongest tier inside
+  it. daytradeScore is telemetry-only now.)
 
 | Condition | base maxTargetPct |
 |---|---|
@@ -295,11 +298,14 @@ The tradeable liquidity lives ATM/ITM. Margin structurally never gets in.
 **Fix** ([manage-allocation.ts:883-910](../src/bot/actions/manage-allocation.ts#L883-L910)):
 when margin's OTM pick fails the spread/liquidity gate (**not** the IV gate),
 retry with the ITM selector — nearest-money strike that passes the (still 10%)
-margin ceiling. Gated on the signal reading as a **HOLD or high conviction**:
+margin ceiling. Gated on the signal reading as **high conviction**:
 
 ```
-marginItmFallbackEligible = daytradeScore < -40  OR  buyWeight > 280
+marginItmFallbackEligible = buyWeight > 280
 ```
+
+(The `daytradeScore < -40` "HOLD" leg was removed 2026-07-19 — dip pain is
+telemetry-only after the forward-return backtest.)
 
 Momentum-flip names (weak on both axes) keep skipping rather than tying up
 capital in an ITM contract they can't exit. Logged under scope
@@ -438,6 +444,7 @@ The July-1 refactor renamed ~30 vars; the boot log warns on obsolete names
 - **Signal quality factor** — `buyMult × gateMult` scales the gate ceiling on
   both accounts (§7d).
 - **Margin ITM fallback** — margin can reach tradeable ITM strikes on illiquid
-  low-priced names, gated on `daytradeScore < −40 || buyWeight > 280` (§8a).
+  low-priced names, gated on `buyWeight > 280` (§8a; daytradeScore leg removed
+  2026-07-19).
 - **Average-down guard** — margin held-contract adds only fill while ask ≤ our
   average (§8b).

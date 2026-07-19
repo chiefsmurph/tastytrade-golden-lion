@@ -30,33 +30,27 @@ test("normalizeBuyWeight clamps out-of-range inputs", () => {
   assert.equal(normalizeBuyWeight(-100), 0);
 });
 
-test("computeAggressivenessBoost: daytradeScore tiers", () => {
-  assert.equal(computeAggressivenessBoost({ daytradeScore: -250 }), 200);
-  assert.equal(computeAggressivenessBoost({ daytradeScore: -150 }), 100);
-  assert.equal(computeAggressivenessBoost({ daytradeScore: -50 }), 0);
+test("computeAggressivenessBoost: buyFraction tiers (backtested 2026-07-19)", () => {
+  // > 1.0 = full thesis + willBuy icing — the best backtested bucket.
+  assert.equal(computeAggressivenessBoost({ buyFraction: 1.25 }), 200);
+  // exactly 1.0 = full thesis alone.
+  assert.equal(computeAggressivenessBoost({ buyFraction: 1.0 }), 100);
+  assert.equal(computeAggressivenessBoost({ buyFraction: 0.75 }), 0);
+  assert.equal(computeAggressivenessBoost({ buyFraction: 0 }), 0);
 });
 
-test("computeAggressivenessBoost: returnPerc tiers", () => {
-  assert.equal(computeAggressivenessBoost({ returnPerc: -6 }), 200);
-  assert.equal(computeAggressivenessBoost({ returnPerc: -3 }), 100);
-  assert.equal(computeAggressivenessBoost({ returnPerc: -1 }), 0);
-});
-
-test("computeAggressivenessBoost: superRecScore over 80 lifts to level 1", () => {
-  assert.equal(computeAggressivenessBoost({ superRecScore: 90 }), 100);
-  assert.equal(computeAggressivenessBoost({ superRecScore: 80 }), 0);
-});
-
-test("computeAggressivenessBoost takes the max level across signals", () => {
-  // daytradeScore is level 1, returnPerc is level 2 → level 2 wins
+test("computeAggressivenessBoost: the dropped pain signals no longer boost", () => {
+  // daytradeScore/returnPerc/superRecScore granted boosts inside the
+  // backtested death valley — now telemetry-only.
   assert.equal(
-    computeAggressivenessBoost({ daytradeScore: -150, returnPerc: -6 }),
-    200,
+    computeAggressivenessBoost({ daytradeScore: -250, returnPerc: -6, superRecScore: 90 }),
+    0,
   );
 });
 
-test("computeAggressivenessBoost: no signals → 0", () => {
+test("computeAggressivenessBoost: missing or non-finite buyFraction → 0", () => {
   assert.equal(computeAggressivenessBoost({}), 0);
+  assert.equal(computeAggressivenessBoost({ buyFraction: Number.NaN }), 0);
 });
 
 test("toSecretExecutionTargets: zero buy weight yields the conservative baseline", () => {
@@ -99,7 +93,7 @@ test("toSecretExecutionTargets: mid buy weight interpolates and still sums to 1"
 
 test("getBuyWeightsFromPositions adds the aggressiveness boost to matching tickers", () => {
   const positions: SecretSourcePosition[] = [
-    { ticker: "RUM", buyWeight: 100, daytradeScore: -250 }, // 100 + 200
+    { ticker: "RUM", buyWeight: 100, buyFraction: 1.25 }, // 100 + 200
     { ticker: "TSLA", buyWeight: 50 }, // 50 + 0
     { ticker: "NVDA", buyWeight: 300 }, // filtered out (not requested)
   ];
@@ -119,7 +113,7 @@ test("getBuyWeightsFromPositions drops non-finite buy weights", () => {
 
 test("getBuyWeightForSymbol returns weight+boost, or null when absent", () => {
   const positions: SecretSourcePosition[] = [
-    { ticker: "RUM", buyWeight: 120, returnPerc: -3 }, // 120 + 100
+    { ticker: "RUM", buyWeight: 120, buyFraction: 1.0 }, // 120 + 100
   ];
 
   assert.equal(getBuyWeightForSymbol(positions, "rum"), 220);
