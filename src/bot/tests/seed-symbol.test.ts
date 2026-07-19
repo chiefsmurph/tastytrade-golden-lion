@@ -8,6 +8,7 @@ import {
   checkCashSeedDte,
   checkSeedAffordability,
   extractDryRunSkipReason,
+  shouldRetrySeedWithItm,
   type SeedSymbolResult,
 } from "../seed-symbol";
 import {
@@ -251,4 +252,27 @@ test("extractDryRunSkipReason unwraps broker error shapes", () => {
     extractDryRunSkipReason(withMixedErrors),
     "One or more preflight checks failed: first problem; [second_code]",
   );
+});
+
+test("shouldRetrySeedWithItm retries margin only when OTM found nothing for a non-IV reason", () => {
+  // The target case: margin OTM selection came back empty (dead-quoted strikes).
+  assert.equal(shouldRetrySeedWithItm("margin", cand({ skippedReason: "no candidate found for target" }), false), true);
+  assert.equal(shouldRetrySeedWithItm("margin", null, false), true);
+  assert.equal(shouldRetrySeedWithItm("margin", undefined, false), true);
+
+  // OTM succeeded — no retry.
+  assert.equal(shouldRetrySeedWithItm("margin", cand({ symbol: "SPY  240119C500" }), false), false);
+
+  // IV-gate skip is an intentional entry filter — no retry.
+  assert.equal(
+    shouldRetrySeedWithItm("margin", cand({ skippedByIvGate: true, skippedReason: "IV rank 12.0 below minimum 30" }), false),
+    false,
+  );
+
+  // Cash/unknown accounts never retry ITM.
+  assert.equal(shouldRetrySeedWithItm("cash", cand({ skippedReason: "no candidate found for target" }), false), false);
+  assert.equal(shouldRetrySeedWithItm("unknown", null, false), false);
+
+  // Explicit contracts bypass chain selection entirely — no retry.
+  assert.equal(shouldRetrySeedWithItm("margin", null, true), false);
 });

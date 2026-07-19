@@ -65,6 +65,25 @@ export interface SeedSymbolResult {
   symbol: string;
   usedDteFallback?: boolean;
   usedHeldContractFallback?: boolean;
+  usedItmFallback?: boolean;
+}
+
+// Margin ITM seed fallback mirrors manage-allocation's: on low-priced/illiquid
+// names the OTM strikes are dead-quoted (wide spreads) while the ATM/ITM strike
+// is tradeable. Unlike run-cycle there is no extra eligibility condition —
+// margin auto-seeds already passed the full-thesis gate upstream. IV-gate skips
+// are an intentional entry filter, so they do not fall back.
+export function shouldRetrySeedWithItm(
+  accountType: "margin" | "cash" | "unknown",
+  candidate: TopOptionCandidateForSymbolResult | null | undefined,
+  hasExplicitContract: boolean,
+): boolean {
+  return (
+    !hasExplicitContract &&
+    accountType === "margin" &&
+    !candidate?.symbol &&
+    !candidate?.skippedByIvGate
+  );
 }
 
 function getMaxSeedOrderCost(): number {
@@ -296,7 +315,7 @@ export async function seedSymbol(
   }
 
   const explicitContract = options.explicitContract;
-  const candidate: TopOptionCandidateForSymbolResult | null | undefined = explicitContract
+  let candidate: TopOptionCandidateForSymbolResult | null | undefined = explicitContract
     ? {
         symbol: explicitContract.symbol,
         streamerSymbol: explicitContract.quoteSymbol ?? explicitContract.symbol,
@@ -309,6 +328,29 @@ export async function seedSymbol(
         undefined,
         getSeedSelectionOptionsForAccountType(resolvedAccountType),
       );
+
+  let usedItmFallback = false;
+  if (shouldRetrySeedWithItm(resolvedAccountType, candidate, Boolean(explicitContract))) {
+    const itmCandidate = await getTopOptionCandidateForSymbol(symbol, side, undefined, {
+      accountType: "margin",
+      strikeTarget: "itm",
+    });
+    console.log(
+      JSON.stringify({
+        scope: "seed-margin-itm-fallback",
+        symbol: normalizedSymbol,
+        otmSkippedReason: candidate?.skippedReason ?? "no candidate",
+        itmSymbol: itmCandidate?.symbol ?? null,
+        itmSpreadPct: itmCandidate?.spreadPct ?? null,
+        itmSkippedReason: itmCandidate?.skippedReason ?? null,
+      }),
+    );
+    if (itmCandidate?.symbol) {
+      candidate = itmCandidate;
+      usedItmFallback = true;
+    }
+  }
+
   const strategy = candidate?.strategy;
   const candidateDte = candidate?.dte != null ? Number(candidate.dte) : undefined;
   const minDTE = candidate?.minDTE;
@@ -332,6 +374,7 @@ export async function seedSymbol(
     strategy,
     symbol: normalizedSymbol,
     usedDteFallback,
+    usedItmFallback,
   };
 
   const cashDteSkip = checkCashSeedDte(
@@ -362,6 +405,7 @@ export async function seedSymbol(
         maxDTE,
         preferredDTE,
         usedDteFallback: usedDteFallback ?? false,
+        usedItmFallback,
         candidateSymbol: candidate?.symbol ?? candidate?.call ?? candidate?.put ?? null,
       },
       null,

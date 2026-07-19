@@ -97,6 +97,7 @@ async function maybeAutoSeedSymbol(options: {
         placedOrder: result.placedOrder,
         skippedReason: result.skippedReason ?? null,
         candidateSymbol: result.candidateSymbol ?? null,
+        usedItmFallback: result.usedItmFallback ?? false,
         limitPrice: result.limitPrice ?? null,
         estimatedOrderCost: result.estimatedOrderCost ?? null,
         timestamp: new Date(now).toISOString(),
