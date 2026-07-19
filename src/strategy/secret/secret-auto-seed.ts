@@ -10,6 +10,80 @@ import { toBooleanFlag } from "~/core/env-utils";
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 
+// ── Outcome-aware cooldowns ─────────────────────────────────────────────────
+// One flat post-attempt cooldown treated every outcome the same: a transient
+// buying-power skip blocked retries for 10 min, while optionless names got a
+// fresh chain walk every 10 min forever. Split by outcome instead:
+//   placed       → the existing per-path cooldown map (10 min default).
+//   no-candidate → long, symbol-keyed (no chain/candidate exists — that is
+//                  account-independent and rarely changes intraday).
+//   retry        → short, account+symbol-keyed (buying power, DTE, dry-run…
+//                  are transient and account-specific).
+const noCandidateSeedAtBySymbol = new Map<string, number>();
+const retrySeedAtByAccountSymbol = new Map<string, number>();
+
+export type SeedOutcomeCooldownKind = "placed" | "no-candidate" | "retry";
+
+// Skip reasons from seed-symbol.ts meaning the underlying has no usable chain
+// or candidate at all. These strings are matched verbatim.
+const NO_CANDIDATE_SKIP_REASONS = new Set([
+  "no option candidate found",
+  "candidate quote symbol unavailable",
+  "candidate ask quote unavailable",
+  "candidate mid quote unavailable",
+]);
+
+// Pure classification of a seed attempt into which cooldown applies.
+export function classifySeedOutcomeCooldown(result: {
+  placedOrder: boolean;
+  skippedReason?: string | null;
+}): SeedOutcomeCooldownKind {
+  if (result.placedOrder) {
+    return "placed";
+  }
+  if (NO_CANDIDATE_SKIP_REASONS.has(result.skippedReason ?? "")) {
+    return "no-candidate";
+  }
+  return "retry";
+}
+
+// Exported for tests: true while ANY of the three cooldowns (placed /
+// no-candidate / retry) is still active for this symbol+account.
+export function isAutoSeedCooldownActive(
+  cooldownMap: Map<string, number>,
+  symbol: string,
+  accountNumber: string,
+  now: number,
+): boolean {
+  const lastSeedAt = cooldownMap.get(symbol) ?? 0;
+  if (now - lastSeedAt < getAutoSeedCooldownMs()) {
+    return true;
+  }
+  const lastNoCandidateAt = noCandidateSeedAtBySymbol.get(symbol) ?? 0;
+  if (now - lastNoCandidateAt < getNoCandidateCooldownMs()) {
+    return true;
+  }
+  const lastRetryAt = retrySeedAtByAccountSymbol.get(`${accountNumber}:${symbol}`) ?? 0;
+  return now - lastRetryAt < getRetryCooldownMs();
+}
+
+// Exported for tests: stamps the map matching the classified outcome.
+export function recordSeedOutcomeCooldown(
+  kind: SeedOutcomeCooldownKind,
+  cooldownMap: Map<string, number>,
+  symbol: string,
+  accountNumber: string,
+  now: number,
+): void {
+  if (kind === "placed") {
+    cooldownMap.set(symbol, now);
+  } else if (kind === "no-candidate") {
+    noCandidateSeedAtBySymbol.set(symbol, now);
+  } else {
+    retrySeedAtByAccountSymbol.set(`${accountNumber}:${symbol}`, now);
+  }
+}
+
 // ── Sticky "full thesis observed today" memory ──────────────────────────────
 // The feed's thesis flags flicker tick-to-tick, so requiring full thesis at
 // the exact tick the margin branch runs almost never fires (~1×/day) even
@@ -94,18 +168,35 @@ export function isAnySecretAutoSeedEnabled(): boolean {
   );
 }
 
-function getAutoSeedCooldownMs(): number {
-  const raw = process.env.SECRET_AUTO_SEED_COOLDOWN_MS?.trim();
+function readCooldownMs(key: string, fallbackMs: number): number {
+  const raw = process.env[key]?.trim();
   if (!raw) {
-    return 10 * 60 * 1000;
+    return fallbackMs;
   }
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    return 10 * 60 * 1000;
+    return fallbackMs;
   }
 
   return parsed;
+}
+
+function getAutoSeedCooldownMs(): number {
+  return readCooldownMs("SECRET_AUTO_SEED_COOLDOWN_MS", 10 * 60 * 1000);
+}
+
+// No chain/candidate on the underlying. Default 2h, not all-day: the seeding
+// window is only 6:30am-1pm PT and small-cap option spreads/liquidity tighten
+// as the session builds, so a morning "no candidate" deserves ~3 retries
+// within the window rather than 1.
+function getNoCandidateCooldownMs(): number {
+  return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 2 * 60 * 60 * 1000);
+}
+
+// Transient failures (buying power, DTE, closing-only, dry-run rejection).
+function getRetryCooldownMs(): number {
+  return readCooldownMs("SECRET_AUTO_SEED_RETRY_COOLDOWN_MS", 3 * 60 * 1000);
 }
 
 async function maybeAutoSeedSymbol(options: {
@@ -118,10 +209,8 @@ async function maybeAutoSeedSymbol(options: {
   goodBooleanScore?: number;
   booleanSurplusPct?: number;
 }): Promise<void> {
-  const cooldownMs = getAutoSeedCooldownMs();
   const now = Date.now();
-  const lastSeedAt = options.cooldownMap.get(options.symbol) ?? 0;
-  if (now - lastSeedAt < cooldownMs) {
+  if (isAutoSeedCooldownActive(options.cooldownMap, options.symbol, options.accountNumber, now)) {
     return;
   }
 
@@ -130,8 +219,15 @@ async function maybeAutoSeedSymbol(options: {
       orderSource: SECRET_AUTO_SEED_ORDER_SOURCE,
       priceMode: "mid",
     });
-    options.cooldownMap.set(options.symbol, now);
-    if (result.placedOrder) {
+    const cooldownKind = classifySeedOutcomeCooldown(result);
+    recordSeedOutcomeCooldown(
+      cooldownKind,
+      options.cooldownMap,
+      options.symbol,
+      options.accountNumber,
+      now,
+    );
+    if (cooldownKind === "placed") {
       await recordPositionOpened(options.accountNumber, options.symbol, options.side);
     }
     console.log(
@@ -145,6 +241,7 @@ async function maybeAutoSeedSymbol(options: {
         booleanSurplusPct: options.booleanSurplusPct ?? null,
         placedOrder: result.placedOrder,
         skippedReason: result.skippedReason ?? null,
+        cooldownKind,
         candidateSymbol: result.candidateSymbol ?? null,
         usedItmFallback: result.usedItmFallback ?? false,
         limitPrice: result.limitPrice ?? null,
