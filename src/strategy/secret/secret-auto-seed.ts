@@ -207,6 +207,26 @@ function getCashSeedMinScore(): number {
   return readEnvPct("STRATEGY_CASH_SEED_MIN_SCORE", 3);
 }
 
+// Plateau entry gate for margin auto-seeds: plateauScore is the feed's 0-100
+// "how flat" entry-quality metric, and the feed gates its own STOCK buys at
+// >= 35 — buying calls into a vertical spike is strictly worse than buying
+// stock into one.
+function getMinPlateauScore(): number {
+  return readEnvPct("SECRET_SEED_MIN_PLATEAU", 35);
+}
+
+// Missing/non-numeric plateauScore is allowed — the field is not on every
+// position the feed emits. (NaN also passes: NaN < threshold is false.)
+export function isMarginSeedBlockedByPlateau(
+  position: Pick<SecretSourcePosition, "plateauScore">,
+  minPlateauScore: number = getMinPlateauScore(),
+): boolean {
+  return (
+    typeof position.plateauScore === "number" &&
+    position.plateauScore < minPlateauScore
+  );
+}
+
 async function maybeAutoSeedSymbol(options: {
   symbol: string;
   side: "call" | "put";
@@ -263,6 +283,43 @@ async function maybeAutoSeedSymbol(options: {
   }
 }
 
+// Margin-side seed attempt for one position: sticky full-thesis trigger, then
+// the plateau entry gate, then the seed itself.
+async function maybeAutoSeedMarginForPosition(options: {
+  position: SecretSourcePosition;
+  symbol: string;
+  side: "call" | "put";
+  marginAccountNumber: string;
+  observationDateStr: string;
+  goodBooleanScore: number;
+  booleanSurplusPct: number;
+}): Promise<void> {
+  if (!shouldSeedMarginSticky(options.position, options.observationDateStr)) {
+    return;
+  }
+  if (isMarginSeedBlockedByPlateau(options.position)) {
+    console.log(
+      JSON.stringify({
+        scope: "secret-auto-seed-margin-plateau-block",
+        symbol: options.symbol,
+        plateauScore: options.position.plateauScore,
+        minPlateauScore: getMinPlateauScore(),
+      }),
+    );
+    return;
+  }
+  await maybeAutoSeedSymbol({
+    symbol: options.symbol,
+    side: options.side,
+    scope: "secret-auto-seed-margin-all-signals",
+    accountNumber: options.marginAccountNumber,
+    cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
+    triggerReason: "secret-positions-update: full thesis observed today + willBuy",
+    goodBooleanScore: options.goodBooleanScore,
+    booleanSurplusPct: options.booleanSurplusPct,
+  });
+}
+
 export async function maybeAutoSeedFromSecretPositions(
   sourcePositions: SecretSourcePosition[],
 ): Promise<void> {
@@ -316,15 +373,15 @@ export async function maybeAutoSeedFromSecretPositions(
     }
 
     // Margin path is evaluated for every position (not gated on
-    // isQualityToBuy): sticky full-thesis observation + current willBuy.
-    if (hasSeparateMarginAccount && shouldSeedMarginSticky(position, observationDateStr)) {
-      await maybeAutoSeedSymbol({
+    // isQualityToBuy): sticky full-thesis observation + current willBuy,
+    // then the plateau entry gate.
+    if (hasSeparateMarginAccount) {
+      await maybeAutoSeedMarginForPosition({
+        position,
         symbol,
         side,
-        scope: "secret-auto-seed-margin-all-signals",
-        accountNumber: marginAccountNumber,
-        cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
-        triggerReason: "secret-positions-update: full thesis observed today + willBuy",
+        marginAccountNumber,
+        observationDateStr,
         goodBooleanScore,
         booleanSurplusPct,
       });
