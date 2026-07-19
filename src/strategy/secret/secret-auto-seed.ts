@@ -108,22 +108,6 @@ function getAutoSeedCooldownMs(): number {
   return parsed;
 }
 
-function normalizeSideForSeed(
-  position: SecretSourcePosition,
-): "call" | "put" | null {
-  const raw = String(position.side ?? "")
-    .trim()
-    .toLowerCase();
-  if (raw === "call" || raw === "c") {
-    return "call";
-  }
-  if (raw === "put" || raw === "p") {
-    return "put";
-  }
-
-  return null;
-}
-
 async function maybeAutoSeedSymbol(options: {
   symbol: string;
   side: "call" | "put";
@@ -205,7 +189,10 @@ export async function maybeAutoSeedFromSecretPositions(
       continue;
     }
 
-    const side = normalizeSideForSeed(position) ?? "call";
+    // The feed's `side` field is its broker's EQUITY side ("long"/"short"),
+    // never "call"/"put" — the old normalizeSideForSeed read of it could not
+    // match, so calls are what this path has always seeded.
+    const side = "call" as const;
     const goodBooleanScore = countGoodBooleans(position);
     const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
 
