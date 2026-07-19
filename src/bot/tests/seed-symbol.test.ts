@@ -8,6 +8,7 @@ import {
   checkCashSeedDte,
   checkSeedAffordability,
   extractDryRunSkipReason,
+  getAffordabilityRetryCap,
   shouldRetryCashSeedWithFallbackDteWindow,
   shouldRetrySeedWithItm,
   type SeedSymbolResult,
@@ -239,6 +240,24 @@ test("checkSeedAffordability skips when cost exceeds buying power", () => {
 
 test("checkSeedAffordability passes when affordable", () => {
   assert.equal(checkSeedAffordability(200, 500, 100000, bpSummary, costResult), null);
+});
+
+test("getAffordabilityRetryCap returns the binding cap for a cheaper-strike retry", () => {
+  // Buying power is the binding cap.
+  assert.equal(getAffordabilityRetryCap(300, 500, 250, false, false), 250);
+  // BOT_MAX_SEED_ORDER_COST is the binding cap.
+  assert.equal(getAffordabilityRetryCap(600, 500, 100000, false, false), 500);
+
+  // Already the retry pass, or an explicit contract → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 500, 250, true, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 500, 250, false, true), null);
+  // Nonsensical caps → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 500, 0, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 500, -20, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 500, Number.NaN, false, false), null);
+  // Cap not actually below the cost (shouldn't happen after an affordability
+  // skip, but the helper is pure) → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 500, 400, false, false), null);
 });
 
 test("extractDryRunSkipReason unwraps broker error shapes", () => {

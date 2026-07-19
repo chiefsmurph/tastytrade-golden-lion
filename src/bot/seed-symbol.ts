@@ -32,6 +32,12 @@ export interface SeedSymbolOptions {
   // Reject the seed if the computed limit price exceeds this value.
   // Used to gate averaging-down seeds to entries cheaper than the cash fill.
   maxLimitPrice?: number;
+  // Selection-level cost cap in dollars (ask × 100), passed through to
+  // candidate selection so the chain walk skips contracts quoting above it.
+  // Set internally by the affordability retry (one retry with the binding cap
+  // as the filter); its presence also marks the retry pass, so recursion
+  // cannot go more than one level deep.
+  maxAskPrice?: number;
   // Skip chain candidate search and seed this exact contract instead.
   // Used by the cash-from-margin held-contract fallback when no candidate
   // fits the cash seed DTE window. Caller is responsible for DTE/spread gating.
@@ -64,6 +70,7 @@ export interface SeedSymbolResult {
   skippedReason?: string;
   strategy?: ProgrammaticAction | null;
   symbol: string;
+  usedAffordabilityFallback?: boolean;
   usedCashDteWindowFallback?: boolean;
   usedDteFallback?: boolean;
   usedHeldContractFallback?: boolean;
@@ -86,6 +93,32 @@ export function shouldRetrySeedWithItm(
     !candidate?.symbol &&
     !candidate?.skippedByIvGate
   );
+}
+
+// Affordability retry: seed-symbol picks a candidate FIRST, then the
+// affordability check skips if its cost blows a cap — so a near-broke account
+// skips forever even when cheaper strikes exist in the same chain. Returns the
+// binding cap (in order-cost dollars) to re-run selection with as maxAskPrice,
+// or null when no retry should happen: already the retry pass, an explicit
+// contract (nothing cheaper to hunt for), or a nonsensical cap.
+export function getAffordabilityRetryCap(
+  estimatedOrderCost: number,
+  maxSeedOrderCost: number,
+  buyingPowerAvailable: number,
+  alreadyRetried: boolean,
+  hasExplicitContract: boolean,
+): number | null {
+  if (alreadyRetried || hasExplicitContract) {
+    return null;
+  }
+  const bindingCap = Math.min(maxSeedOrderCost, buyingPowerAvailable);
+  if (!Number.isFinite(bindingCap) || bindingCap <= 0) {
+    return null;
+  }
+  if (bindingCap >= estimatedOrderCost) {
+    return null;
+  }
+  return bindingCap;
 }
 
 // Cash DTE-window fallback mirrors the margin ITM fallback above: small caps
@@ -351,17 +384,16 @@ export async function seedSymbol(
         dte: explicitContract.dte,
         strategy: "MANAGE_ALLOCATION",
       }
-    : await getTopOptionCandidateForSymbol(
-        symbol,
-        side,
-        undefined,
-        getSeedSelectionOptionsForAccountType(resolvedAccountType),
-      );
+    : await getTopOptionCandidateForSymbol(symbol, side, undefined, {
+        ...getSeedSelectionOptionsForAccountType(resolvedAccountType),
+        maxAskPrice: options.maxAskPrice,
+      });
 
   let usedItmFallback = false;
   if (shouldRetrySeedWithItm(resolvedAccountType, candidate, Boolean(explicitContract))) {
     const itmCandidate = await getTopOptionCandidateForSymbol(symbol, side, undefined, {
       accountType: "margin",
+      maxAskPrice: options.maxAskPrice,
       strikeTarget: "itm",
     });
     console.log(
@@ -394,6 +426,7 @@ export async function seedSymbol(
       : `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`;
     const fallbackCandidate = await getTopOptionCandidateForSymbol(symbol, side, undefined, {
       ...getSeedSelectionOptionsForAccountType(resolvedAccountType),
+      maxAskPrice: options.maxAskPrice,
       minDTE: fallbackWindow.minDTE,
       maxDTE: fallbackWindow.maxDTE,
     });
@@ -602,6 +635,39 @@ export async function seedSymbol(
     costResult,
   );
   if (affordabilitySkip) {
+    // The primary pick blew a cost cap, but a cheaper strike may exist in the
+    // same chain. Re-run the whole seed once with the binding cap as a
+    // selection-level ask filter. If the retry cannot place, return the
+    // ORIGINAL skip — its reason string is load-bearing (run-cycle-seed's
+    // held-contract fallback matches it verbatim).
+    const retryCap = getAffordabilityRetryCap(
+      estimatedOrderCost,
+      maxSeedOrderCost,
+      buyingPowerAvailable,
+      options.maxAskPrice !== undefined,
+      Boolean(explicitContract),
+    );
+    if (retryCap === null) {
+      return affordabilitySkip;
+    }
+    console.log(
+      JSON.stringify({
+        scope: "seed-affordability-fallback",
+        symbol: normalizedSymbol,
+        side,
+        primarySkipReason: affordabilitySkip.skippedReason,
+        primaryCandidateSymbol: candidateSymbol,
+        primaryEstimatedOrderCost: estimatedOrderCost,
+        maxAskPrice: retryCap,
+      }),
+    );
+    const retryResult = await seedSymbol(symbol, side, resolvedAccountNumber, {
+      ...options,
+      maxAskPrice: retryCap,
+    });
+    if (retryResult.placedOrder) {
+      return { ...retryResult, usedAffordabilityFallback: true };
+    }
     return affordabilitySkip;
   }
 
