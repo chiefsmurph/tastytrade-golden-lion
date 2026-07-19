@@ -171,7 +171,7 @@ function updateCachedPositionsFromPayload(payload: SecretDataUpdatePayload): voi
   warnOnMissingThesisRollup(cachedSourcePositions);
   logOptionsMirrorEval(cachedSourcePositions, cachedRegime);
 
-  void maybeAutoSeedFromSecretPositions(cachedSourcePositions);
+  void maybeAutoSeedFromSecretPositions(cachedSourcePositions, cachedRegime);
 }
 
 function updateTickerRecsFromPayload(payload: SecretDataUpdatePayload): void {

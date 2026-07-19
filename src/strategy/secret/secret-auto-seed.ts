@@ -2,7 +2,7 @@ import seedSymbol from "~/bot/seed-symbol";
 import { SECRET_AUTO_SEED_ORDER_SOURCE } from "~/bot/order-sources";
 import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
-import { SecretSourcePosition, SecretTickerRecPick } from "./types";
+import { SecretRegime, SecretSourcePosition, SecretTickerRecPick } from "./types";
 import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened } from "~/bot/position-registry";
 import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
@@ -207,6 +207,39 @@ function getCashSeedMinScore(): number {
   return readEnvPct("STRATEGY_CASH_SEED_MIN_SCORE", 3);
 }
 
+// Hold-conviction floor for cash auto-seeds: the cash account is the
+// hold-conviction account — it owns names worth holding overnight (the feed
+// itself goes flat at close; cash harvests the overnight edge the feed gave
+// up). The run-cycle already hard-gates cash GROWTH on holdScore >= 0.45 +
+// isOvernightEligible + no crashRegime, but seeds only checked isQualityToBuy
+// + the thesis floor — a low-hold-conviction name could be seeded and then
+// never grown (orphaned seed).
+function getCashSeedMinHoldScore(): number {
+  return readEnvPct("STRATEGY_CASH_SEED_MIN_HOLD_SCORE", 0.45);
+}
+
+// UNLIKE run-cycle's permissive-when-missing growth gate, a missing or
+// non-numeric holdScore BLOCKS the seed — seeds are new money, and unknown
+// hold conviction shouldn't tie up overnight capital (the feed emits holdScore
+// on all positions, including stubs). isOvernightEligible blocks only when
+// explicitly false; crashRegime blocks when explicitly true. The regime is
+// passed in by the caller (secret-socket-state) rather than imported from it —
+// that import would be a cycle (secret-socket-state already imports this file).
+export function isCashSeedBlockedByHoldGate(
+  position: Pick<SecretSourcePosition, "holdScore" | "isOvernightEligible">,
+  regime: SecretRegime | null,
+  minHoldScore: number = getCashSeedMinHoldScore(),
+): boolean {
+  const holdScore = position.holdScore;
+  if (typeof holdScore !== "number" || !Number.isFinite(holdScore) || holdScore < minHoldScore) {
+    return true;
+  }
+  if (position.isOvernightEligible === false) {
+    return true;
+  }
+  return regime?.crashRegime === true;
+}
+
 // Plateau entry gate for margin auto-seeds: plateauScore is the feed's 0-100
 // "how flat" entry-quality metric, and the feed gates its own STOCK buys at
 // >= 35 — buying calls into a vertical spike is strictly worse than buying
@@ -322,6 +355,7 @@ async function maybeAutoSeedMarginForPosition(options: {
 
 export async function maybeAutoSeedFromSecretPositions(
   sourcePositions: SecretSourcePosition[],
+  regime: SecretRegime | null,
 ): Promise<void> {
   if (!shouldAutoSeedOnSecretPositionsUpdate()) {
     return;
@@ -358,8 +392,13 @@ export async function maybeAutoSeedFromSecretPositions(
     const goodBooleanScore = countGoodBooleans(position);
     const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
 
-    // Below-floor scores skip silently — this fires hundreds of times a day.
-    if (toBooleanFlag(position.isQualityToBuy) && goodBooleanScore >= getCashSeedMinScore()) {
+    // Below-floor scores and hold-gate blocks skip silently — this fires
+    // hundreds of times a day.
+    if (
+      toBooleanFlag(position.isQualityToBuy) &&
+      goodBooleanScore >= getCashSeedMinScore() &&
+      !isCashSeedBlockedByHoldGate(position, regime)
+    ) {
       await maybeAutoSeedSymbol({
         symbol,
         side,
