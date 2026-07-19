@@ -20,6 +20,10 @@ export interface SecretSourcePosition {
   thesisMax?: number; // feed-side flag count (currently 4)
   manualThesisCount?: number; // manually-curated thesis — the preferred score source
   manualThesisMax?: number; // always 10
+  // Upstream computes willBuy = isBuyEligible && …, always concrete. Read by
+  // the sticky margin trigger (full thesis observed today + willBuy now) and
+  // the margin willBuy hard gate.
+  willBuy?: boolean;
 
   // ── AVAILABLE (not read yet) ──────────────────────────────────────────────
   // The automated thesis composition — these four ARE the thesisCount flags:
@@ -27,9 +31,11 @@ export interface SecretSourcePosition {
   isWordEdgePositive?: boolean;
   isGateMultFavorable?: boolean;
   isInBssRange?: boolean;
-  // Buy state — upstream computes willBuy = isBuyEligible && …, always concrete:
+  // Buy state (willBuy itself is READ above):
   isBuyEligible?: boolean;
-  willBuy?: boolean;
+  observedAboveMinToday?: boolean; // buyWeight cleared today's benchmark at some point today — sticky
+  isClearedToBuy?: boolean; // willBuy || observedAboveMinToday
+  shouldNotify?: boolean; // feed's conviction-alert boolean
   // NOTE: the feed's selling/departure signals (isSelling, currentAction,
   // percToSell) are deliberately NOT consumed. Our selling is feed-independent
   // by design — stops, take-profit, EOD, and overnight age-reduction own it.
@@ -39,9 +45,10 @@ export interface SecretSourcePosition {
   holdTier?: number; // 1–4 projected EOD tier
   isOvernightEligible?: boolean; // price≥5.35 & liquid & marginable
   // Buy signal extras — margin account sizing (wired 2026-07-13):
-  buyMult?: number; // base rec strength, pre-concentration crush
+  buyMult?: number; // base rec strength, pre-concentration crush; reliably emitted top-level as of the feed's matching branch
   gateMult?: number; // gate favorability (full = 2.0)
   failsDayHighGate?: boolean; // true = blocked by extended-pump guard
+  plateauScore?: number; // 0-100 "how flat", entry-quality; feed gates its own buys at >= 35
   // Scan-computed — strike anchors + entry quality (wired 2026-07-13, OBSERVE-ONLY):
   trueLow?: number; // liquid-bar intraday low — ITM strike floor
   trueHigh?: number; // liquid-bar intraday high — OTM strike cap
@@ -53,6 +60,7 @@ export interface SecretSourcePosition {
   currentPrice?: number;
   avgEntry?: number;
   returnBidPerc?: number; // realizable (bid-side) return vs returnPerc's mid
+  bidDaytradeScore?: number; // bid-side conservative daytradeScore
   wideSpread?: boolean;
   bounceStabilizationScore?: number;
   minOld?: number; // minutes since the position was picked
@@ -79,6 +87,8 @@ export interface SecretRegime {
   scannedTotalZ?: number; // market-down breadth z-score (restart-persisted)
   crashRegime?: boolean; // sustained-decline guard
   currentMinBuyWeight?: number; // live buy-gate threshold
+  buyPressure?: number; // feed's book-level deployment pressure
+  marketReturnPerc?: number; // market return vs prev close, negative = down
 }
 
 export interface SecretDataUpdatePayload {
