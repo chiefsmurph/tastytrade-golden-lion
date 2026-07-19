@@ -3,12 +3,77 @@ import { SECRET_AUTO_SEED_ORDER_SOURCE } from "~/bot/order-sources";
 import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct, THESIS_MAX } from "~/strategy/position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened } from "~/bot/position-registry";
 import { toBooleanFlag } from "~/core/env-utils";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
 const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
+
+// ── Sticky "full thesis observed today" memory ──────────────────────────────
+// The feed's thesis flags flicker tick-to-tick, so requiring full thesis at
+// the exact tick the margin branch runs almost never fires (~1×/day) even
+// though several tickers reach full thesis at SOME point each day. Instead:
+// remember every ticker that hit full thesis at any point today, and seed
+// margin when the feed is actively buying (willBuy) a remembered name. The
+// quality bar is unchanged — full thesis must still have been genuinely
+// observed today. Rolls over on calendar-date change (stored date string, no
+// timers).
+const fullThesisObservedTickers = new Set<string>();
+let fullThesisObservedDateStr: string | null = null;
+
+function normalizeTicker(ticker: unknown): string {
+  return String(ticker ?? "")
+    .trim()
+    .toUpperCase();
+}
+
+// Records every position currently at full thesis (thesisCount/thesisMax >= 1,
+// same bar as shouldSeedMarginFromBooleans). Clears the memory first when
+// dateStr differs from the stored day — yesterday's conviction doesn't carry.
+export function recordFullThesisObservations(
+  positions: SecretSourcePosition[],
+  dateStr: string,
+): void {
+  if (fullThesisObservedDateStr !== dateStr) {
+    fullThesisObservedTickers.clear();
+    fullThesisObservedDateStr = dateStr;
+  }
+
+  for (const position of positions) {
+    if (!shouldSeedMarginFromBooleans(position)) {
+      continue;
+    }
+    const symbol = normalizeTicker(position.ticker);
+    if (symbol) {
+      fullThesisObservedTickers.add(symbol);
+    }
+  }
+}
+
+// Read-only query: true only when the memory is for the same day AND the
+// ticker was recorded at full thesis.
+export function wasFullThesisObservedToday(
+  ticker: string,
+  dateStr: string,
+): boolean {
+  return (
+    fullThesisObservedDateStr === dateStr &&
+    fullThesisObservedTickers.has(normalizeTicker(ticker))
+  );
+}
+
+// The margin seed condition: full thesis observed today (sticky) AND the feed
+// is actively buying this name right now (willBuy at the current tick).
+export function shouldSeedMarginSticky(
+  position: SecretSourcePosition,
+  dateStr: string,
+): boolean {
+  return (
+    position.willBuy === true &&
+    wasFullThesisObservedToday(normalizeTicker(position.ticker), dateStr)
+  );
+}
 
 function shouldAutoSeedOnSecretPositionsUpdate(): boolean {
   const raw =
@@ -116,6 +181,12 @@ export async function maybeAutoSeedFromSecretPositions(
     return;
   }
 
+  // Record full-thesis observations on EVERY update tick, before any
+  // filtering (including the seed window) — a flicker outside the window
+  // still counts as "observed today" once the window opens.
+  const observationDateStr = new Date().toDateString();
+  recordFullThesisObservations(sourcePositions, observationDateStr);
+
   if (!isWithinSecretAutoSeedWindow(new Date())) {
     return;
   }
@@ -134,33 +205,33 @@ export async function maybeAutoSeedFromSecretPositions(
       continue;
     }
 
-    if (!toBooleanFlag(position.isQualityToBuy)) {
-      continue;
-    }
-
     const side = normalizeSideForSeed(position) ?? "call";
     const goodBooleanScore = countGoodBooleans(position);
     const booleanSurplusPct = getBooleanSurplusPct(goodBooleanScore);
 
-    await maybeAutoSeedSymbol({
-      symbol,
-      side,
-      scope: "secret-auto-seed-cash",
-      accountNumber: cashAccountNumber,
-      cooldownMap: lastCashAutoSeedAtBySymbol,
-      triggerReason: "secret-positions-update: isQualityToBuy",
-      goodBooleanScore,
-      booleanSurplusPct,
-    });
+    if (toBooleanFlag(position.isQualityToBuy)) {
+      await maybeAutoSeedSymbol({
+        symbol,
+        side,
+        scope: "secret-auto-seed-cash",
+        accountNumber: cashAccountNumber,
+        cooldownMap: lastCashAutoSeedAtBySymbol,
+        triggerReason: "secret-positions-update: isQualityToBuy",
+        goodBooleanScore,
+        booleanSurplusPct,
+      });
+    }
 
-    if (hasSeparateMarginAccount && shouldSeedMarginFromBooleans(position)) {
+    // Margin path is evaluated for every position (not gated on
+    // isQualityToBuy): sticky full-thesis observation + current willBuy.
+    if (hasSeparateMarginAccount && shouldSeedMarginSticky(position, observationDateStr)) {
       await maybeAutoSeedSymbol({
         symbol,
         side,
         scope: "secret-auto-seed-margin-all-signals",
         accountNumber: marginAccountNumber,
         cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
-        triggerReason: `secret-positions-update: booleans ${goodBooleanScore}/${THESIS_MAX} good`,
+        triggerReason: "secret-positions-update: full thesis observed today + willBuy",
         goodBooleanScore,
         booleanSurplusPct,
       });
