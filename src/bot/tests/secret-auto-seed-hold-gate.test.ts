@@ -8,53 +8,53 @@ const calmRegime: SecretRegime = { crashRegime: false };
 const crashRegime: SecretRegime = { crashRegime: true };
 
 test("missing or non-numeric holdScore BLOCKS the seed (unlike run-cycle's permissive growth gate)", () => {
-  assert.equal(isCashSeedBlockedByHoldGate({}, calmRegime, 0.45), true);
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: undefined }, calmRegime, 0.45), true);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1 }, calmRegime, 0.45), true);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: undefined }, calmRegime, 0.45), true);
   // The feed's index signature means junk can ride along — only real numbers pass.
   assert.equal(
-    isCashSeedBlockedByHoldGate({ holdScore: "0.6" as unknown as number }, calmRegime, 0.45),
+    isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: "0.6" as unknown as number }, calmRegime, 0.45),
     true,
   );
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: Number.NaN }, calmRegime, 0.45), true);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: Number.NaN }, calmRegime, 0.45), true);
 });
 
 test("holdScore below the floor blocks; at or above passes", () => {
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.44 }, calmRegime, 0.45), true);
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.45 }, calmRegime, 0.45), false);
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 1.0 }, calmRegime, 0.45), false);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.44 }, calmRegime, 0.45), true);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.45 }, calmRegime, 0.45), false);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 1.0 }, calmRegime, 0.45), false);
 });
 
 test("isOvernightEligible false blocks; undefined is allowed", () => {
   assert.equal(
-    isCashSeedBlockedByHoldGate({ holdScore: 0.6, isOvernightEligible: false }, calmRegime, 0.45),
+    isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6, isOvernightEligible: false }, calmRegime, 0.45),
     true,
   );
   assert.equal(
-    isCashSeedBlockedByHoldGate({ holdScore: 0.6, isOvernightEligible: undefined }, calmRegime, 0.45),
+    isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6, isOvernightEligible: undefined }, calmRegime, 0.45),
     false,
   );
   assert.equal(
-    isCashSeedBlockedByHoldGate({ holdScore: 0.6, isOvernightEligible: true }, calmRegime, 0.45),
+    isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6, isOvernightEligible: true }, calmRegime, 0.45),
     false,
   );
 });
 
 test("crashRegime blocks; calm, missing-flag, and null regimes pass", () => {
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.6 }, crashRegime, 0.45), true);
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.6 }, calmRegime, 0.45), false);
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.6 }, {}, 0.45), false);
-  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.6 }, null, 0.45), false);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6 }, crashRegime, 0.45), true);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6 }, calmRegime, 0.45), false);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6 }, {}, 0.45), false);
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.6 }, null, 0.45), false);
 });
 
 test("default floor comes from STRATEGY_CASH_SEED_MIN_HOLD_SCORE (0.45 when unset)", () => {
   const original = process.env.STRATEGY_CASH_SEED_MIN_HOLD_SCORE;
   delete process.env.STRATEGY_CASH_SEED_MIN_HOLD_SCORE;
   try {
-    assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.44 }, calmRegime), true);
-    assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.45 }, calmRegime), false);
+    assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.44 }, calmRegime), true);
+    assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.45 }, calmRegime), false);
 
     process.env.STRATEGY_CASH_SEED_MIN_HOLD_SCORE = "0.6";
-    assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.5 }, calmRegime), true);
+    assert.equal(isCashSeedBlockedByHoldGate({ quantity: 1, holdScore: 0.5 }, calmRegime), true);
   } finally {
     if (original !== undefined) {
       process.env.STRATEGY_CASH_SEED_MIN_HOLD_SCORE = original;
@@ -62,4 +62,20 @@ test("default floor comes from STRATEGY_CASH_SEED_MIN_HOLD_SCORE (0.45 when unse
       delete process.env.STRATEGY_CASH_SEED_MIN_HOLD_SCORE;
     }
   }
+});
+
+test("zero-quantity candidate stubs block cash seeding regardless of holdScore", () => {
+  // The feed's list contains zero-qty CANDIDATE stubs (watched, never bought).
+  // A stub's holdScore is hypothetical — cash only mirrors real holdings.
+  assert.equal(isCashSeedBlockedByHoldGate({ quantity: 0, holdScore: 0.9 }, calmRegime, 0.45), true);
+  assert.equal(isCashSeedBlockedByHoldGate({ holdScore: 0.9 }, calmRegime, 0.45), true); // missing qty
+  assert.equal(
+    isCashSeedBlockedByHoldGate({ quantity: "0" as unknown as number, holdScore: 0.9 }, calmRegime, 0.45),
+    true,
+  );
+  // Numeric-string quantities from the feed's broker payloads count as real.
+  assert.equal(
+    isCashSeedBlockedByHoldGate({ quantity: "3" as unknown as number, holdScore: 0.9 }, calmRegime, 0.45),
+    false,
+  );
 });

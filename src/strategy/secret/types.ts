@@ -8,6 +8,9 @@
 export interface SecretSourcePosition {
   // ── READ ──────────────────────────────────────────────────────────────────
   ticker?: string;
+  // shares the feed holds; 0 = candidate STUB (watched, never bought) — cash
+  // seeding requires > 0 (wired 2026-07-19), margin relies on willBuy instead
+  quantity?: number | string;
   buyWeight?: number;
   // Intraday PAIN score (negative = down hard). TELEMETRY-ONLY: removed from
   // every decision path 2026-07-19 after a forward-return backtest (n=2242)

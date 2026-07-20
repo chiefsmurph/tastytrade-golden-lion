@@ -239,10 +239,18 @@ function getCashSeedMinHoldScore(): number {
 // passed in by the caller (secret-socket-state) rather than imported from it —
 // that import would be a cycle (secret-socket-state already imports this file).
 export function isCashSeedBlockedByHoldGate(
-  position: Pick<SecretSourcePosition, "holdScore" | "isOvernightEligible">,
+  position: Pick<SecretSourcePosition, "holdScore" | "isOvernightEligible" | "quantity">,
   regime: SecretRegime | null,
   minHoldScore: number = getCashSeedMinHoldScore(),
 ): boolean {
+  // The feed's positions list includes zero-quantity CANDIDATE stubs (names it
+  // is merely watching, and may never buy). Cash = "own what the feed actually
+  // holds overnight" — a stub's holdScore is hypothetical, so cash requires the
+  // feed to have real skin (quantity > 0). Margin deliberately does NOT require
+  // this: its willBuy condition means the feed is buying the name this instant.
+  if (!(Number(position.quantity) > 0)) {
+    return true;
+  }
   const holdScore = position.holdScore;
   if (typeof holdScore !== "number" || !Number.isFinite(holdScore) || holdScore < minHoldScore) {
     return true;
