@@ -4,6 +4,8 @@
 
 > **Static-analysis (fallow) findings live in their own tracker: [FALLOW.md](FALLOW.md)** — complexity/dead-code/duplication/circular-dep work, plus the gate's gotchas. Start there for "let's address fallow findings."
 
+> **Newer discovery logs not yet folded into the buckets below:** [v9](IMPROVEMENTS.v9-prod-data.md) (2026-07-07 prod pass) and [v10](IMPROVEMENTS.v10-prod-data.md) (2026-07-14 two-week review — entry/exit-liquidity trap, do-not-touch enforcement architecture, and the hazard the margin ITM-entry change introduces). v10's priority items are #1 exit-side spread gate and #6 protection robustness, to land **before** the ITM path sees real production usage.
+
 Three buckets, as requested: **DONE** (shipped this session, under the `monday-2026-07-06` tag) · **BEFORE MONDAY–ELIGIBLE** (safe to land in Monday's deploy — pure cleanup, docs, tests, diagnostics) · **AFTER MONDAY** (needs Monday's data, or behavior-changing enough that it should follow verification).
 
 *(fable)* = use Fable 5 for implementation — safety-critical logic, multi-site correctness bugs where a subtle mistake silently gives wrong answers, or new architectural mechanisms with non-obvious invariants. Everything else is fine on Sonnet/Opus.

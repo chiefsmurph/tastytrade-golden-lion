@@ -10,6 +10,7 @@ import {
   getTopOptionCandidateForAccount,
 } from "./strategy/option-candidate";
 import { getPositionsAndBalances } from "./core/get-positions-and-balances";
+import { getUnderlyingIvMetricsForIpc } from "./core/market-metrics";
 import {
   getTimeOfDayExecutionTargetsForPstTime as getTargetsForPstTime,
 } from "~/strategy/evaluate-trading-strategy";
@@ -182,6 +183,11 @@ const commandHandlers: Record<string, CommandHandler> = {
     const normalizedSide = side === "put" ? "put" : "call";
     return getTopOptionCandidateForAccount(symbol, normalizedSide, accountNumber);
   },
+  // Lightweight, no chain walk: the feed skips getTopOptionCandidateForSymbol
+  // for tickers this bot already holds, so this is its IV source for held
+  // names. Returns { ivRank, impliedVolatility } or a clean null — never throws.
+  "strategy:getUnderlyingIvMetrics": async ([symbol]) =>
+    getUnderlyingIvMetricsForIpc(symbol),
   "strategy:getOptionHealthForSymbol": async ([symbol, side, targetDTE]) => {
     assertArg(symbol, "symbol");
     const normalizedSide = side === "put" ? "put" : "call";

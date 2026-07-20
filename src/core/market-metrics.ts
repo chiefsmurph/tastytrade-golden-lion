@@ -28,6 +28,26 @@ export function parseUnderlyingIvMetricsEntry(entry: unknown): UnderlyingIvMetri
   };
 }
 
+// IPC boundary wrapper for `strategy:getUnderlyingIvMetrics`. The feed process
+// skips the chain-walking candidate command for tickers this bot already holds,
+// so this lightweight call is its only IV source for held names. Contract:
+// unavailable data is a clean `null` — no error may cross the IPC boundary.
+// `fetchMetrics` is injectable for tests only; production uses the cached
+// getUnderlyingIvMetrics below (which itself resolves null on any failure).
+export async function getUnderlyingIvMetricsForIpc(
+  rawSymbol: string | undefined,
+  fetchMetrics: (symbol: string) => Promise<UnderlyingIvMetrics | null> = getUnderlyingIvMetrics,
+): Promise<UnderlyingIvMetrics | null> {
+  const symbol = rawSymbol?.trim().toUpperCase();
+  if (!symbol) return null;
+
+  try {
+    return (await fetchMetrics(symbol)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getUnderlyingIvMetrics(
   symbol: string,
 ): Promise<UnderlyingIvMetrics | null> {
