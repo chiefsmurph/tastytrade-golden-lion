@@ -1,4 +1,4 @@
-import { SecretSourcePosition } from "~/strategy/secret/types";
+import { SecretRegime, SecretSourcePosition } from "~/strategy/secret/types";
 import {
   getCashAccountSeedEndMinute,
   getSecretAutoSeedWindowStartMinute,
@@ -196,6 +196,52 @@ export function getBooleanSurplusPct(goodBooleanScore: number): number {
 
 function isQualityToBuy(position: SecretSourcePosition | undefined): boolean {
   return position != null && toBooleanFlag(position.isQualityToBuy);
+}
+
+// ── Regime posture multiplier (wired 2026-07-19) ────────────────────────────
+// The feed's envelope-level market-posture multipliers, combined into one
+// factor for the MARGIN account (the account that rides the feed's buy signal
+// intraday). The feed is the single source of truth — we obey, not re-derive.
+// Backdrop: market-return is the feed's dominant deploy signal (down days
+// +1.46% forward vs -0.33% on up-big days).
+//
+// Out-of-contract values (negative, NaN, Infinity) are treated as ABSENT
+// (factor 1) rather than clamped, so a feed glitch can't silently zero or
+// crush the margin book.
+
+// Lean-in band for dipBuyDeployMult. The >1 side is capped (default 1.5)
+// because on the days the lean-in fires, IV is elevated — options pay more
+// for the same signal, so the stock-side lean is attenuated, not compounded.
+function getRegimeDipMultMin(): number {
+  return readEnvPct("STRATEGY_REGIME_DIP_MULT_MIN", 0.5);
+}
+
+function getRegimeDipMultMax(): number {
+  return readEnvPct("STRATEGY_REGIME_DIP_MULT_MAX", 1.5);
+}
+
+// Combined market-posture factor for margin sizing:
+//   clampedThrottle — regimeMarginMult clamped to [0, 1] (down-only by contract)
+//   clampedLean     — dipBuyDeployMult clamped to the env-tunable band above
+// Kill switch STRATEGY_REGIME_POSTURE_MULT_DISABLED (truthy → always 1).
+export function getRegimePostureMult(regime: SecretRegime | null | undefined): number {
+  if (toBooleanFlag(process.env.STRATEGY_REGIME_POSTURE_MULT_DISABLED)) {
+    return 1;
+  }
+
+  const throttleRaw = regime?.regimeMarginMult;
+  const clampedThrottle =
+    typeof throttleRaw === "number" && Number.isFinite(throttleRaw) && throttleRaw >= 0
+      ? Math.min(throttleRaw, 1)
+      : 1;
+
+  const leanRaw = regime?.dipBuyDeployMult;
+  const clampedLean =
+    typeof leanRaw === "number" && Number.isFinite(leanRaw) && leanRaw >= 0
+      ? Math.min(Math.max(leanRaw, getRegimeDipMultMin()), getRegimeDipMultMax())
+      : 1;
+
+  return clampedThrottle * clampedLean;
 }
 
 // fallow-ignore-next-line complexity

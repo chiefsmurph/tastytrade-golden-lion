@@ -94,6 +94,10 @@ export interface SecretRegime {
   currentMinBuyWeight?: number; // live buy-gate threshold
   buyPressure?: number; // feed's book-level deployment pressure
   marketReturnPerc?: number; // market return vs prev close, negative = down
+  // Feed-computed market-posture multipliers (single source of truth; we obey
+  // rather than re-derive). Wired 2026-07-19:
+  regimeMarginMult?: number; // down-only ≤1.0 leverage/deployment throttle for bad market regimes
+  dipBuyDeployMult?: number; // dip lean-in: >1 when market breadth says it's a prime dip day, <1 floor when the feed's crash guard has tripped
 }
 
 export interface SecretDataUpdatePayload {

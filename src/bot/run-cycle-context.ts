@@ -7,7 +7,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "~/strategy/position-gate";
+import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier, getRegimePostureMult } from "~/strategy/position-gate";
 import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
 import {
   getEffectiveTotalCapital,
@@ -494,7 +494,13 @@ export async function buildRunCycleContext(
       const marginQualityFactor = marginBuyMult !== null && marginGateMult !== null
         ? Math.max(0.5, Math.min(1.0, (marginBuyMult * marginGateMult) / 4.0))
         : 1.0;
-      const marginMaxTargetPct = willBuyBlocked ? 0 : gate.maxTargetPct * multiplier * marginQualityFactor;
+      // Market-posture factor (wired 2026-07-19): the feed's envelope-level
+      // regimeMarginMult (down-only throttle) × dipBuyDeployMult (capped dip
+      // lean-in). Margin only — cash has its own hold-side regime gates.
+      const regimePostureMult = getRegimePostureMult(getCachedSecretRegime());
+      const marginMaxTargetPct = willBuyBlocked
+        ? 0
+        : gate.maxTargetPct * multiplier * marginQualityFactor * regimePostureMult;
       // ITM fallback eligibility: on low-priced/illiquid names the OTM strikes are
       // dead-quoted (100% spreads) while the ATM/ITM strike is tradeable. Permit
       // margin to fall back to ITM only on high conviction (buyWeight > 280) —
@@ -532,6 +538,7 @@ export async function buildRunCycleContext(
           signals: gate.signals,
           cashMaxTargetPct: gate.maxTargetPct,
           multiplier,
+          regimePostureMult,
           marginMaxTargetPct,
           booleanSurplusPct,
           dipTargetBoostPct,
