@@ -261,6 +261,17 @@ function getMinPlateauScore(): number {
   return readEnvPct("SECRET_SEED_MIN_PLATEAU", 35);
 }
 
+// Crash-regime coherence for MARGIN auto-seeds (wired 2026-07-19): the cash
+// seed path already blocks on crashRegime (inside isCashSeedBlockedByHoldGate),
+// but margin seeds — new leverage into a sustained decline — had no crash
+// check. Blocks only when the feed explicitly says crashRegime: true;
+// missing/null regime passes.
+export function isMarginSeedBlockedByCrashRegime(
+  regime: SecretRegime | null,
+): boolean {
+  return regime?.crashRegime === true;
+}
+
 // Missing/non-numeric plateauScore is allowed — the field is not on every
 // position the feed emits. (NaN also passes: NaN < threshold is false.)
 export function isMarginSeedBlockedByPlateau(
@@ -389,6 +400,9 @@ export async function maybeAutoSeedFromSecretPositions(
     getMarginAccountNumber(),
   ]);
   const hasSeparateMarginAccount = marginAccountNumber !== cashAccountNumber;
+  // Envelope-level, so computed once. Silent skip — this fires every tick
+  // while the crash guard is up.
+  const marginCrashBlocked = isMarginSeedBlockedByCrashRegime(regime);
 
   for (const position of sourcePositions) {
     const symbol = String(position.ticker ?? "")
@@ -425,9 +439,9 @@ export async function maybeAutoSeedFromSecretPositions(
     }
 
     // Margin path is evaluated for every position (not gated on
-    // isQualityToBuy): sticky full-thesis observation + current willBuy,
-    // then the plateau entry gate.
-    if (hasSeparateMarginAccount) {
+    // isQualityToBuy): crash-regime block first, then sticky full-thesis
+    // observation + current willBuy, then the plateau entry gate.
+    if (hasSeparateMarginAccount && !marginCrashBlocked) {
       await maybeAutoSeedMarginForPosition({
         position,
         symbol,
