@@ -1,6 +1,7 @@
 import { startIpcServer } from "./ipc-server";
 import { startMarketOpenScheduler, stopMarketOpenScheduler, getMarketOpenSchedulerStatus } from "./bot/market-open-scheduler";
 import { startSecretSocketConnection } from "./strategy/secret";
+import { installTastytradeApiCallCounting } from "./core/api-call-count-wiring";
 import { installQuoteStreamerConsoleGuard } from "./core/quote-streamer-recovery";
 import { closeQuoteStreamerSession } from "./core/quote-streamer-session";
 import { logStartupConfig } from "./startup-config";
@@ -9,6 +10,7 @@ import { getManagedAccountNumbers } from "./core/default-account";
 import { notifyEvent } from "./bot/notify";
 
 logStartupConfig();
+installTastytradeApiCallCounting();
 installQuoteStreamerConsoleGuard();
 startSecretSocketConnection();
 startIpcServer();
