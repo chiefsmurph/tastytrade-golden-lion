@@ -1,12 +1,24 @@
 import { getAccountMarginOrCash, getMarginAccountNumber } from "~/core/default-account";
 import { getEffectiveBuyingPowerSummary } from "~/bot/effective-buying-power";
 import { getMarginTargetCallDelta } from "~/strategy/entry-filters";
+import { readEnvInt } from "~/core/env-utils";
 import { getTopOptionCandidateForSymbol } from "./selection";
 import { TopOptionCandidateForAccountResult } from "./types";
 import type { OptionCandidateSelectionOptions } from "~/bot/option-contracts";
 
 export const CASH_ACCOUNT_SEED_MIN_DTE = 14;
 export const CASH_ACCOUNT_SEED_MAX_DTE = 30;
+
+// Widened retry window for cash seeds when nothing lands in the primary
+// 14-30 window. Small caps often carry only monthly expirations, so whole
+// calendar stretches have no candidate in-window; the fallback lets a seed
+// take the nearest monthly instead of skipping for weeks at a time.
+export function getCashSeedDteFallbackWindow(): { minDTE: number; maxDTE: number } {
+  return {
+    minDTE: readEnvInt("STRATEGY_CASH_SEED_DTE_FALLBACK_MIN_DTE", 7, (n) => n >= 0),
+    maxDTE: readEnvInt("STRATEGY_CASH_SEED_DTE_FALLBACK_MAX_DTE", 60, (n) => n > 0),
+  };
+}
 
 export function getSeedSelectionOptionsForAccountType(
   accountType: "margin" | "cash" | "unknown",

@@ -8,8 +8,16 @@
 export interface SecretSourcePosition {
   // ── READ ──────────────────────────────────────────────────────────────────
   ticker?: string;
+  // shares the feed holds; 0 = candidate STUB (watched, never bought) — cash
+  // seeding requires > 0 (wired 2026-07-19), margin relies on willBuy instead
+  quantity?: number | string;
   buyWeight?: number;
-  daytradeScore?: number; // drives basic/strong stock-yes tiers + aggressiveness boost
+  // Intraday PAIN score (negative = down hard). TELEMETRY-ONLY: removed from
+  // every decision path 2026-07-19 after a forward-return backtest (n=2242)
+  // showed a valley, not a line — dt -70..-150 is catastrophic (win 16-29%),
+  // dt <= -200 has a fat left tail, and only dt > 40 is positive-avg. Still
+  // recorded (run history, gate logs, SecretPositionSignals) for re-evaluation.
+  daytradeScore?: number;
   isQualityToBuy?: boolean | string | number; // drives basic/strong stock-yes tiers
   returnPerc?: number;
   superRecScore?: number;
@@ -20,6 +28,10 @@ export interface SecretSourcePosition {
   thesisMax?: number; // feed-side flag count (currently 4)
   manualThesisCount?: number; // manually-curated thesis — the preferred score source
   manualThesisMax?: number; // always 10
+  // Upstream computes willBuy = isBuyEligible && …, always concrete. Read by
+  // the sticky margin trigger (full thesis observed today + willBuy now) and
+  // the margin willBuy hard gate.
+  willBuy?: boolean;
 
   // ── AVAILABLE (not read yet) ──────────────────────────────────────────────
   // The automated thesis composition — these four ARE the thesisCount flags:
@@ -27,9 +39,11 @@ export interface SecretSourcePosition {
   isWordEdgePositive?: boolean;
   isGateMultFavorable?: boolean;
   isInBssRange?: boolean;
-  // Buy state — upstream computes willBuy = isBuyEligible && …, always concrete:
+  // Buy state (willBuy itself is READ above):
   isBuyEligible?: boolean;
-  willBuy?: boolean;
+  observedAboveMinToday?: boolean; // buyWeight cleared today's benchmark at some point today — sticky
+  isClearedToBuy?: boolean; // willBuy || observedAboveMinToday
+  shouldNotify?: boolean; // feed's conviction-alert boolean
   // NOTE: the feed's selling/departure signals (isSelling, currentAction,
   // percToSell) are deliberately NOT consumed. Our selling is feed-independent
   // by design — stops, take-profit, EOD, and overnight age-reduction own it.
@@ -39,9 +53,10 @@ export interface SecretSourcePosition {
   holdTier?: number; // 1–4 projected EOD tier
   isOvernightEligible?: boolean; // price≥5.35 & liquid & marginable
   // Buy signal extras — margin account sizing (wired 2026-07-13):
-  buyMult?: number; // base rec strength, pre-concentration crush
+  buyMult?: number; // base rec strength, pre-concentration crush; reliably emitted top-level as of the feed's matching branch
   gateMult?: number; // gate favorability (full = 2.0)
   failsDayHighGate?: boolean; // true = blocked by extended-pump guard
+  plateauScore?: number; // 0-100 "how flat", entry-quality; feed gates its own buys at >= 35
   // Scan-computed — strike anchors + entry quality (wired 2026-07-13, OBSERVE-ONLY):
   trueLow?: number; // liquid-bar intraday low — ITM strike floor
   trueHigh?: number; // liquid-bar intraday high — OTM strike cap
@@ -53,6 +68,7 @@ export interface SecretSourcePosition {
   currentPrice?: number;
   avgEntry?: number;
   returnBidPerc?: number; // realizable (bid-side) return vs returnPerc's mid
+  bidDaytradeScore?: number; // bid-side conservative daytradeScore
   wideSpread?: boolean;
   bounceStabilizationScore?: number;
   minOld?: number; // minutes since the position was picked
@@ -79,6 +95,12 @@ export interface SecretRegime {
   scannedTotalZ?: number; // market-down breadth z-score (restart-persisted)
   crashRegime?: boolean; // sustained-decline guard
   currentMinBuyWeight?: number; // live buy-gate threshold
+  buyPressure?: number; // feed's book-level deployment pressure
+  marketReturnPerc?: number; // market return vs prev close, negative = down
+  // Feed-computed market-posture multipliers (single source of truth; we obey
+  // rather than re-derive). Wired 2026-07-19:
+  regimeMarginMult?: number; // down-only ≤1.0 leverage/deployment throttle for bad market regimes
+  dipBuyDeployMult?: number; // dip lean-in: >1 when market breadth says it's a prime dip day, <1 floor when the feed's crash guard has tripped
 }
 
 export interface SecretDataUpdatePayload {

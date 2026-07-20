@@ -16,6 +16,11 @@ export interface OptionCandidateSelectionOptions {
   // ~/strategy/liquidity-gate). Not used for strike/expiration selection;
   // omitted/"unknown" uses the shared gate.
   accountType?: "margin" | "cash" | "unknown";
+  // Max estimated one-contract order cost in dollars (ask × 100). Candidates
+  // quoting above it are skipped during the chain walk. Set by the seed
+  // affordability retry to hunt for a cheaper strike after the primary pick
+  // blew the buying-power / max-seed-cost cap.
+  maxAskPrice?: number;
   maxDTE?: number;
   minDTE?: number;
   preferredDTE?: number;

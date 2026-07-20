@@ -10,7 +10,6 @@ const CASH_SCORE_THRESHOLD = 0.55;
 
 export interface MarginOptComponents {
   bwExcess: number;
-  dtQual: number;
   room: number;
   fresh: number;
   momo: number;
@@ -54,8 +53,8 @@ function marginGateFailReason(
   if (min !== null && min >= 300) return `min=${min} (≥300 — past entry window)`;
   const rangePos = typeof position.rangePos === "number" ? position.rangePos : null;
   if (rangePos !== null && rangePos > 65) return `rangePos=${rangePos.toFixed(0)} (>65)`;
-  const daytradeScore = typeof position.daytradeScore === "number" ? position.daytradeScore : null;
-  if (daytradeScore !== null && daytradeScore <= -150) return `daytradeScore=${daytradeScore} (≤-150)`;
+  // daytradeScore ≤ -150 gate removed 2026-07-19 — telemetry-only after the
+  // forward-return backtest (valley at -70..-150, fat left tail below -200).
   return null;
 }
 
@@ -70,9 +69,6 @@ function computeMarginScore(
     ? norm(buyWeight / currentMinBuyWeight, 1.0, 3.0)
     : 0;
 
-  const daytradeScore = typeof position.daytradeScore === "number" ? position.daytradeScore : 0;
-  const dtQual = norm(daytradeScore, -100, 300);
-
   const rangePos = typeof position.rangePos === "number" ? position.rangePos : null;
   const room = rangePos !== null ? 1 - rangePos / 100 : 0.5;
 
@@ -84,7 +80,7 @@ function computeMarginScore(
   const momoMult = fiveMinuteRSI !== null ? (fiveMinuteRSI >= 40 && fiveMinuteRSI <= 68 ? 1 : 0.5) : 1;
   const momo = norm(tsc, -8, 6) * momoMult;
 
-  return { bwExcess, dtQual, room, fresh, momo };
+  return { bwExcess, room, fresh, momo };
 }
 
 // fallow-ignore-next-line complexity
@@ -99,8 +95,11 @@ export function evaluateMarginOpt(
   }
 
   const components = computeMarginScore(position, regime);
-  const { bwExcess, dtQual, room, fresh, momo } = components;
-  const score = 0.35 * bwExcess + 0.25 * dtQual + 0.20 * room + 0.10 * fresh + 0.10 * momo;
+  const { bwExcess, room, fresh, momo } = components;
+  // dtQual (0.25 weight) removed 2026-07-19; the remaining weights are the
+  // original 0.35/0.20/0.10/0.10 rebalanced proportionally (÷0.75) so the
+  // score still spans 0–1 and the 0.45 would-buy threshold keeps its meaning.
+  const score = (0.35 * bwExcess + 0.20 * room + 0.10 * fresh + 0.10 * momo) / 0.75;
 
   const currentPrice = typeof position.currentPrice === "number" ? position.currentPrice : null;
   const trueHigh = typeof position.trueHigh === "number" ? position.trueHigh : null;
@@ -203,7 +202,7 @@ export function logOptionsMirrorEval(
       const c = m.components;
       const strike = m.strikeOtm !== null ? `$${m.strikeOtm.toFixed(2)}` : "strike=?";
       console.log(
-        `[options-mirror] MARGIN_OPT would-buy ${m.ticker.padEnd(6)} score ${fmtNum(m.score)} ${strike} OTM/weekly [bwExc ${fmtNum(c.bwExcess)} dt ${fmtNum(c.dtQual)} room ${fmtNum(c.room)} fresh ${fmtNum(c.fresh)} momo ${fmtNum(c.momo)}]`,
+        `[options-mirror] MARGIN_OPT would-buy ${m.ticker.padEnd(6)} score ${fmtNum(m.score)} ${strike} OTM/weekly [bwExc ${fmtNum(c.bwExcess)} room ${fmtNum(c.room)} fresh ${fmtNum(c.fresh)} momo ${fmtNum(c.momo)}]`,
       );
       marginCandidates++;
     }

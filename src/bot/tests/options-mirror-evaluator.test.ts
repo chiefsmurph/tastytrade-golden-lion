@@ -22,21 +22,27 @@ test("margin: willBuy=false fails gate", () => {
 });
 
 test("margin: min ≥ 300 fails gate", () => {
-  const r = evaluateMarginOpt(pos({ willBuy: true, rangePos: 30, daytradeScore: 50 }), regime({ min: 300 }));
+  const r = evaluateMarginOpt(pos({ willBuy: true, rangePos: 30 }), regime({ min: 300 }));
   assert.equal(r.gatePass, false);
   assert.match(r.gateFailReason!, /min=300/);
 });
 
 test("margin: rangePos > 65 fails gate", () => {
-  const r = evaluateMarginOpt(pos({ willBuy: true, rangePos: 70, daytradeScore: 50 }), regime());
+  const r = evaluateMarginOpt(pos({ willBuy: true, rangePos: 70 }), regime());
   assert.equal(r.gatePass, false);
   assert.match(r.gateFailReason!, /rangePos/);
 });
 
-test("margin: daytradeScore ≤ -150 fails gate", () => {
-  const r = evaluateMarginOpt(pos({ willBuy: true, rangePos: 30, daytradeScore: -150 }), regime());
-  assert.equal(r.gatePass, false);
-  assert.match(r.gateFailReason!, /daytradeScore/);
+test("margin: daytradeScore no longer gates or scores (telemetry-only since 2026-07-19)", () => {
+  // The old ≤ -150 gate-fail and dtQual component are gone: a deep-pain score
+  // neither blocks the gate nor moves the score.
+  const deepPain = evaluateMarginOpt(
+    pos({ willBuy: true, rangePos: 30, daytradeScore: -300 }),
+    regime(),
+  );
+  const noPain = evaluateMarginOpt(pos({ willBuy: true, rangePos: 30 }), regime());
+  assert.equal(deepPain.gatePass, true);
+  assert.equal(deepPain.score, noPain.score);
 });
 
 test("margin: all gates pass → score computed, would-buy when ≥ 0.45", () => {
@@ -44,7 +50,6 @@ test("margin: all gates pass → score computed, would-buy when ≥ 0.45", () =>
     pos({
       willBuy: true,
       rangePos: 20,
-      daytradeScore: 200,
       buyWeight: 250,
       tsc: 3,
       fiveMinuteRSI: 55,
@@ -59,9 +64,41 @@ test("margin: all gates pass → score computed, would-buy when ≥ 0.45", () =>
   assert.ok(r.components !== null);
 });
 
+test("margin: rebalanced weights — components sum to a 0–1 score after dtQual removal", () => {
+  // All four remaining components at max → score exactly 1 (range preserved).
+  const maxed = evaluateMarginOpt(
+    pos({
+      willBuy: true,
+      rangePos: 0, // room = 1
+      buyWeight: 300, // bwExcess = norm(3.0, 1, 3) = 1
+      tsc: 6, // momo = norm(6, -8, 6) = 1
+      fiveMinuteRSI: 55, // momoMult = 1
+      minOld: 0, // fresh = 1
+    }),
+    regime({ min: 60, currentMinBuyWeight: 100 }),
+  );
+  assert.ok(maxed.score !== null && Math.abs(maxed.score - 1) < 1e-9);
+
+  // Mid-range components pin the exact proportional rebalance:
+  // (0.35·bwExcess + 0.20·room + 0.10·fresh + 0.10·momo) / 0.75
+  const mid = evaluateMarginOpt(
+    pos({
+      willBuy: true,
+      rangePos: 40, // room = 0.6
+      buyWeight: 200, // bwExcess = norm(2.0, 1, 3) = 0.5
+      tsc: -1, // momo = norm(-1, -8, 6) = 0.5
+      fiveMinuteRSI: 55, // momoMult = 1
+      minOld: 90, // fresh = 0.5
+    }),
+    regime({ min: 60, currentMinBuyWeight: 100 }),
+  );
+  const expected = (0.35 * 0.5 + 0.20 * 0.6 + 0.10 * 0.5 + 0.10 * 0.5) / 0.75;
+  assert.ok(mid.score !== null && Math.abs(mid.score - expected) < 1e-9);
+});
+
 test("margin: OTM strike capped at trueHigh", () => {
   const r = evaluateMarginOpt(
-    pos({ willBuy: true, rangePos: 10, daytradeScore: 50, currentPrice: 10.0, trueHigh: 10.5 }),
+    pos({ willBuy: true, rangePos: 10, currentPrice: 10.0, trueHigh: 10.5 }),
     regime(),
   );
   assert.equal(r.gatePass, true);
@@ -70,7 +107,7 @@ test("margin: OTM strike capped at trueHigh", () => {
 
 test("margin: missing currentPrice → strikeOtm null", () => {
   const r = evaluateMarginOpt(
-    pos({ willBuy: true, rangePos: 10, daytradeScore: 50 }),
+    pos({ willBuy: true, rangePos: 10 }),
     regime(),
   );
   assert.equal(r.strikeOtm, null);
@@ -78,7 +115,7 @@ test("margin: missing currentPrice → strikeOtm null", () => {
 
 test("margin: null regime → missing bwExcess and time gate skipped", () => {
   const r = evaluateMarginOpt(
-    pos({ willBuy: true, rangePos: 30, daytradeScore: 50 }),
+    pos({ willBuy: true, rangePos: 30 }),
     null,
   );
   assert.equal(r.gatePass, true);

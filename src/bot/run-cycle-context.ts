@@ -7,7 +7,7 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier } from "~/strategy/position-gate";
+import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier, getRegimePostureMult } from "~/strategy/position-gate";
 import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
 import {
   getEffectiveTotalCapital,
@@ -494,17 +494,23 @@ export async function buildRunCycleContext(
       const marginQualityFactor = marginBuyMult !== null && marginGateMult !== null
         ? Math.max(0.5, Math.min(1.0, (marginBuyMult * marginGateMult) / 4.0))
         : 1.0;
-      const marginMaxTargetPct = willBuyBlocked ? 0 : gate.maxTargetPct * multiplier * marginQualityFactor;
+      // Market-posture factor (wired 2026-07-19): the feed's envelope-level
+      // regimeMarginMult (down-only throttle) × dipBuyDeployMult (capped dip
+      // lean-in). Margin only — cash has its own hold-side regime gates.
+      const regimePostureMult = getRegimePostureMult(getCachedSecretRegime());
+      const marginMaxTargetPct = willBuyBlocked
+        ? 0
+        : gate.maxTargetPct * multiplier * marginQualityFactor * regimePostureMult;
       // ITM fallback eligibility: on low-priced/illiquid names the OTM strikes are
       // dead-quoted (100% spreads) while the ATM/ITM strike is tradeable. Permit
-      // margin to fall back to ITM only when the signal reads as a HOLD
-      // (daytradeScore < -40) or high conviction (buyWeight > 280) — momentum
-      // flips keep skipping rather than tying up capital in an ITM contract.
+      // margin to fall back to ITM only on high conviction (buyWeight > 280) —
+      // momentum flips keep skipping rather than tying up capital in an ITM
+      // contract. The daytradeScore < -40 "HOLD" leg was removed 2026-07-19:
+      // the forward-return backtest showed dip pain grants nothing (dt -70..-150
+      // is the death valley). marginDaytradeScore stays as log-only telemetry.
       const marginDaytradeScore = typeof secretPosition?.daytradeScore === "number" ? secretPosition.daytradeScore : null;
       const marginBuyWeight = typeof secretPosition?.buyWeight === "number" ? secretPosition.buyWeight : null;
-      const marginItmFallbackEligible =
-        (marginDaytradeScore !== null && marginDaytradeScore < -40) ||
-        (marginBuyWeight !== null && marginBuyWeight > 280);
+      const marginItmFallbackEligible = marginBuyWeight !== null && marginBuyWeight > 280;
       // Dip boost triggers on MID return (not ask) so it can see bid-side spread
       // pain, with optional wide-spread suppression (off by default). See v8 #3.
       const dipTargetBoostPct = getMarginDipTargetBoostPct(
@@ -532,6 +538,7 @@ export async function buildRunCycleContext(
           signals: gate.signals,
           cashMaxTargetPct: gate.maxTargetPct,
           multiplier,
+          regimePostureMult,
           marginMaxTargetPct,
           booleanSurplusPct,
           dipTargetBoostPct,
@@ -609,7 +616,6 @@ export async function buildRunCycleContext(
         crossAccountAskReturnFraction,
         signals: gate.signals,
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
-        strongStockYesScoreThreshold: gate.strongStockYesScoreThreshold,
         maxTargetPct: cashGateMaxTargetPct,
         booleanSurplusPct,
         originalTargetPct: finalTargets.targetAccountExposure,

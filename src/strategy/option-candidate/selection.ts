@@ -230,6 +230,8 @@ export async function buildTopOptionCandidateResult(
 
   let fallbackBlockedCandidate: TopOptionCandidateForSymbolResult | undefined;
   const blockedCheckKinds = new Set<LiquidityGateCheck>();
+  const maxAskPrice = selectionOptions?.maxAskPrice;
+  let pricedOutCount = 0;
 
   for (const candidate of sortedCandidates) {
     const normalizedCandidate = normalizeCandidateForRequestedSide(candidate, side);
@@ -244,6 +246,13 @@ export async function buildTopOptionCandidateResult(
       2000,
     );
     const spreadStats = getSpreadStats(bidAsk?.bid ?? 0, bidAsk?.ask ?? 0);
+
+    // Cost filter for the affordability retry: a contract quoting above the
+    // caller's cap can never place, so keep walking toward cheaper strikes.
+    if (maxAskPrice != null && spreadStats.askPrice * 100 > maxAskPrice) {
+      pricedOutCount += 1;
+      continue;
+    }
 
     const candidateIvx =
       side === "call" ? (candidate.callIv ?? undefined) : (candidate.putIv ?? undefined);
@@ -318,6 +327,23 @@ export async function buildTopOptionCandidateResult(
         ? `all candidate spreads exceeded max allowed spread (${(maxAllowedSpreadPct * 100).toFixed(2)}%)`
         : `all candidates blocked by the entry liquidity gate (${blockedKinds.join(", ")})`,
     });
+  }
+
+  // Every quoted candidate exceeded the caller's cost cap (affordability
+  // retry). This reason never reaches run-cycle string matching: the seed
+  // retry that sets maxAskPrice returns the ORIGINAL affordability skip when
+  // the retry comes up empty.
+  if (pricedOutCount > 0) {
+    return {
+      maxAllowedSpreadPct,
+      maxDTE: resolvedSelectionOptions?.maxDTE,
+      meetsSpreadRequirement: false,
+      minDTE: resolvedSelectionOptions?.minDTE,
+      preferredDTE,
+      skippedReason: `all candidates exceeded max ask price cap ${(maxAskPrice ?? 0).toFixed(2)}`,
+      strategy: defaultSelection?.strategy?.action,
+      usedDteFallback,
+    };
   }
 
   const topCandidate = sortedCandidates[0];

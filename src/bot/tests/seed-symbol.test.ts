@@ -8,6 +8,9 @@ import {
   checkCashSeedDte,
   checkSeedAffordability,
   extractDryRunSkipReason,
+  getAffordabilityRetryCap,
+  shouldRetryCashSeedWithFallbackDteWindow,
+  shouldRetrySeedWithItm,
   type SeedSymbolResult,
 } from "../seed-symbol";
 import {
@@ -155,6 +158,51 @@ test("checkCashSeedDte passes when cash candidate DTE is in range", () => {
   assert.equal(checkCashSeedDte("cash", undefined, cand({}), 21, baseResult), null);
 });
 
+test("checkCashSeedDte accepts an out-of-window DTE from the flagged widened-window fallback", () => {
+  const fallbackResult: SeedSymbolResult = {
+    ...baseResult,
+    usedCashDteWindowFallback: true,
+  };
+  // DTE 45 is outside 14-30 but inside the widened window the retry validated.
+  assert.equal(checkCashSeedDte("cash", undefined, cand({}), 45, fallbackResult), null);
+  // Without the flag the same DTE keeps skipping with the strict reason.
+  const strict = checkCashSeedDte("cash", undefined, cand({}), 45, baseResult);
+  assert.equal(
+    strict?.skippedReason,
+    `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
+  );
+});
+
+test("shouldRetryCashSeedWithFallbackDteWindow fires only for cash DTE misses", () => {
+  // Primary window missed entirely → nearest-expiration fallback was used.
+  assert.equal(
+    shouldRetryCashSeedWithFallbackDteWindow("cash", cand({ usedDteFallback: true, dte: 45 }), false),
+    true,
+  );
+  // Candidate DTE out of range without the fallback marker (e.g. no candidate at all).
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("cash", cand({}), false), true);
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("cash", null, false), true);
+
+  // In-window cash candidate → no retry.
+  assert.equal(
+    shouldRetryCashSeedWithFallbackDteWindow("cash", cand({ symbol: "X", dte: 21 }), false),
+    false,
+  );
+  // IV-gate skip is an intentional entry filter → no retry.
+  assert.equal(
+    shouldRetryCashSeedWithFallbackDteWindow(
+      "cash",
+      cand({ skippedByIvGate: true, skippedReason: "IV rank 12.0 below minimum 30" }),
+      false,
+    ),
+    false,
+  );
+  // Margin/unknown accounts and explicit contracts never retry.
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("margin", null, false), false);
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("unknown", null, false), false);
+  assert.equal(shouldRetryCashSeedWithFallbackDteWindow("cash", null, true), false);
+});
+
 const costResult: SeedSymbolResult = {
   ...baseResult,
   estimatedOrderCost: 200,
@@ -192,6 +240,24 @@ test("checkSeedAffordability skips when cost exceeds buying power", () => {
 
 test("checkSeedAffordability passes when affordable", () => {
   assert.equal(checkSeedAffordability(200, 500, 100000, bpSummary, costResult), null);
+});
+
+test("getAffordabilityRetryCap returns the binding cap for a cheaper-strike retry", () => {
+  // Buying power is the binding cap.
+  assert.equal(getAffordabilityRetryCap(300, 500, 250, false, false), 250);
+  // BOT_MAX_SEED_ORDER_COST is the binding cap.
+  assert.equal(getAffordabilityRetryCap(600, 500, 100000, false, false), 500);
+
+  // Already the retry pass, or an explicit contract → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 500, 250, true, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 500, 250, false, true), null);
+  // Nonsensical caps → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 500, 0, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 500, -20, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 500, Number.NaN, false, false), null);
+  // Cap not actually below the cost (shouldn't happen after an affordability
+  // skip, but the helper is pure) → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 500, 400, false, false), null);
 });
 
 test("extractDryRunSkipReason unwraps broker error shapes", () => {
@@ -251,4 +317,27 @@ test("extractDryRunSkipReason unwraps broker error shapes", () => {
     extractDryRunSkipReason(withMixedErrors),
     "One or more preflight checks failed: first problem; [second_code]",
   );
+});
+
+test("shouldRetrySeedWithItm retries margin only when OTM found nothing for a non-IV reason", () => {
+  // The target case: margin OTM selection came back empty (dead-quoted strikes).
+  assert.equal(shouldRetrySeedWithItm("margin", cand({ skippedReason: "no candidate found for target" }), false), true);
+  assert.equal(shouldRetrySeedWithItm("margin", null, false), true);
+  assert.equal(shouldRetrySeedWithItm("margin", undefined, false), true);
+
+  // OTM succeeded — no retry.
+  assert.equal(shouldRetrySeedWithItm("margin", cand({ symbol: "SPY  240119C500" }), false), false);
+
+  // IV-gate skip is an intentional entry filter — no retry.
+  assert.equal(
+    shouldRetrySeedWithItm("margin", cand({ skippedByIvGate: true, skippedReason: "IV rank 12.0 below minimum 30" }), false),
+    false,
+  );
+
+  // Cash/unknown accounts never retry ITM.
+  assert.equal(shouldRetrySeedWithItm("cash", cand({ skippedReason: "no candidate found for target" }), false), false);
+  assert.equal(shouldRetrySeedWithItm("unknown", null, false), false);
+
+  // Explicit contracts bypass chain selection entirely — no retry.
+  assert.equal(shouldRetrySeedWithItm("margin", null, true), false);
 });

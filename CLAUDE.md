@@ -59,7 +59,7 @@ Each `runCycle` call (every N minutes during market hours):
 ### Account Model
 
 Two account types with distinct behavior:
-- **Margin**: OTM calls targeted to `STRATEGY_MARGIN_TARGET_CALL_DELTA` (default 0.35), liquidates all positions EOD (arms 12:50 PM, `EOD_ARMED_MINUTE`), accumulation cutoff at 12:30 PM. When the OTM pick fails the spread gate on illiquid low-priced names, falls back to the nearest-money ITM strike — gated on signal conviction (`daytradeScore < -40 || buyWeight > 280`); see STRATEGY.v2.md §8a
+- **Margin**: OTM calls targeted to `STRATEGY_MARGIN_TARGET_CALL_DELTA` (default 0.35), liquidates all positions EOD (arms 12:50 PM, `EOD_ARMED_MINUTE`), accumulation cutoff at 12:30 PM. When the OTM pick fails the spread gate on illiquid low-priced names, falls back to the nearest-money ITM strike — gated on signal conviction (`buyWeight > 280`); see STRATEGY.v2.md §8a
 - **Cash**: ITM calls for overnight delta hold, accumulation cutoff at 1:00 PM, can seed margin when underwater
 
 Cross-account logic: the cash account evaluation drives margin seeding via `run-cycle-seed.ts` and position gate signals in `cash-position-gate.ts`.

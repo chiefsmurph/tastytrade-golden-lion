@@ -24,9 +24,12 @@ const fullBudget: AllocationBudget = {
   totalCapital: 100000,
 };
 
+// Pinned to a weekday morning: the accumulation-cutoff gate reads
+// evaluation.metrics.currentTime (local clock), so defaulting to new Date()
+// made every new-entry test fail when the suite ran after the cutoff (12:30 PT).
 function buildEvaluation(
   targets: ExecutionTargets | undefined,
-  currentTime: Date = new Date(),
+  currentTime: Date = new Date("2026-01-05T09:00:00"),
 ): PositionGroupEvaluation {
   return {
     currentReturn: 0,

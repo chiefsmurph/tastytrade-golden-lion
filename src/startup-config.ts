@@ -38,6 +38,14 @@ const OBSOLETE_ENV_VARS: Record<string, string> = {
   BOT_RUN_HISTORY_DIR: "removed — run history always lives under BOT_DATA_DIR (default ./data)",
   BOT_SEED_ONLY_TO_MARGIN_ACCOUNTS: "removed — no replacement",
   SECRET_AUTO_SEED_END_TIME: "removed — the seed window end is fixed at 13:00 PT",
+  // daytradeScore gate legs removed 2026-07-19 (forward-return backtest:
+  // dip polarity granted tiers inside the -70..-150 death valley).
+  STRATEGY_GATE_BASIC_DAYTRADE_SCORE_THRESHOLD:
+    "removed — daytradeScore dropped from all decision paths 2026-07-19",
+  STRATEGY_GATE_STRONG_DAYTRADE_SCORE_THRESHOLD:
+    "removed — daytradeScore dropped from all decision paths 2026-07-19",
+  STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX:
+    "removed — daytradeScore dropped from all decision paths 2026-07-19",
 };
 
 // Legacy names the code still honors via explicit fallback (readEnvPctWithLegacy).
@@ -45,8 +53,6 @@ const OBSOLETE_ENV_VARS: Record<string, string> = {
 const LEGACY_HONORED_ENV_VARS: Record<string, string> = {
   STRATEGY_GATE_STRONG_STOCK_YES_MAX_PCT:
     "rename to STRATEGY_GATE_STRONG_PERCENT_OF_BALANCE_THRESHOLD",
-  STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX:
-    "rename to STRATEGY_GATE_STRONG_DAYTRADE_SCORE_THRESHOLD",
 };
 
 const CONFIG_PREFIX_PATTERN = /^(CORE_|BOT_|STRATEGY_|SECRET_|TASTYTRADE_)/;

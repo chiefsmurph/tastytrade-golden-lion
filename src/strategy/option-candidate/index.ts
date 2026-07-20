@@ -23,5 +23,6 @@ export { getTopOptionCandidateForAccount } from "./account";
 export {
   CASH_ACCOUNT_SEED_MIN_DTE,
   CASH_ACCOUNT_SEED_MAX_DTE,
+  getCashSeedDteFallbackWindow,
   getSeedSelectionOptionsForAccountType,
 } from "./account";

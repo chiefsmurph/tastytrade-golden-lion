@@ -253,11 +253,12 @@ test("basic stock-yes thresholds scale across the gate window", () => {
     false,
   );
 
-  // daytradeScore -25 vs base -40: beats the relaxed early bar (-20), misses the strict late bar (-40).
+  // daytradeScore leg removed 2026-07-19 — pain grants nothing at ANY point
+  // in the window, even at the once-generous early bar.
   const scorePosition = { ticker: "TEST", daytradeScore: -25 } as never;
   assert.equal(
     computePositionGate({ crossAccountAskReturnFraction: null, secretPosition: scorePosition, currentTime: windowStart }).signals.basicStockYes,
-    true,
+    false,
   );
   assert.equal(
     computePositionGate({ crossAccountAskReturnFraction: null, secretPosition: scorePosition, currentTime: windowEnd }).signals.basicStockYes,

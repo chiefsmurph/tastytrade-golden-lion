@@ -61,6 +61,19 @@ test("cross-account YES + basic stock YES escalates to the both tier", () => {
   assert.ok(Math.abs(result.maxTargetPct - getBothYesMaxTargetPct()) < 1e-9);
 });
 
+test("daytradeScore grants nothing — no basic tier alone, no strong tier with quality", () => {
+  // Removed 2026-07-19: dip polarity granted tiers inside the backtested
+  // -70..-150 death valley. Pain is telemetry, not a signal.
+  const alone = gate({ ticker: "X", daytradeScore: -350 });
+  assert.equal(alone.signals.basicStockYes, false);
+  assert.equal(alone.signals.strongStockYes, false);
+  assert.equal(alone.maxTargetPct, 0);
+
+  const withQuality = gate({ ticker: "X", isQualityToBuy: true, daytradeScore: -350 });
+  assert.equal(withQuality.signals.basicStockYes, true); // from isQualityToBuy
+  assert.equal(withQuality.signals.strongStockYes, false); // pct leg only now
+});
+
 test("each thesis point adds a fixed boost on top of the tier", () => {
   // manual thesis 2/10 → 2 pts; no stock-yes so tier is 0, boost = 2 × 0.03.
   const result = gate({ ticker: "X", manualThesisCount: 2, manualThesisMax: 10 });
