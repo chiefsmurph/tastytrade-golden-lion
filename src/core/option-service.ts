@@ -140,24 +140,111 @@ export function buildMandatoryCandidateSamplingChain(
   };
 }
 
-function mergeVolumeMaps(
-  primary: Record<string, number>,
-  secondary: Record<string, number>,
-) {
-  const merged = { ...primary };
-  for (const [symbol, volume] of Object.entries(secondary)) {
-    const current = merged[symbol];
-    merged[symbol] =
-      current == null ? toNumber(volume) : Math.max(toNumber(current), toNumber(volume));
-  }
-  return merged;
+export interface OptionVolumesSampleOptions {
+  /** Hard cap on the streamer sampling window (ms). */
+  sampleMs?: number;
+  /** Streamer symbols whose greeks must ALL arrive before an early-exit may fire. */
+  requiredSymbols?: readonly string[];
+  /** Minimum time to sample before an early-exit is allowed (ms). */
+  minSettleMs?: number;
+  /** Underlying symbol — logging/telemetry only. */
+  label?: string;
 }
 
-function mergeIvMaps(
-  primary: Record<string, number>,
-  secondary: Record<string, number>,
-): Record<string, number> {
-  return { ...secondary, ...primary }; // primary wins (first sample)
+/** Pure: pull every streamer symbol (`*-streamer-symbol` fields) out of an option chain. */
+export function extractStreamerSymbols(chain: unknown): string[] {
+  const out = new Set<string>();
+  (function collect(obj: any) {
+    if (!obj || typeof obj !== "object") return;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "string" && /streamer-symbol|streamer/.test(k)) out.add(v);
+      else if (typeof v === "object") collect(v);
+    }
+  })(chain);
+  return Array.from(out);
+}
+
+/**
+ * Pure: have ALL required streamer symbols reported greeks yet? An empty required
+ * set returns false so the sampler waits its full budget (no early-exit target).
+ */
+export function allRequiredCovered(
+  required: readonly string[],
+  coveredSymbols: ReadonlySet<string>,
+): boolean {
+  if (required.length === 0) return false;
+  return required.every((s) => coveredSymbols.has(s));
+}
+
+export interface EarlyExitController {
+  /** Resolves when sampling should stop (all required covered past the floor, or the cap). */
+  readonly done: Promise<void>;
+  /** Record that a streamer symbol reported greeks; may trigger an early exit. */
+  markCovered(symbol: string): void;
+  /** Clear any outstanding timers. Idempotent; safe to call after `done`. */
+  cleanup(): void;
+}
+
+/**
+ * Timing core for the D1 early-exit. Kept separate + fully injectable (now/setTimer/
+ * clearTimer) so the exit logic is unit-testable with a fake clock, independent of the
+ * live quote streamer. Resolves `done` when every `requiredSymbols` entry has been
+ * markCovered()'d AND `minSettleMs` has elapsed, or when `sampleMs` caps out first.
+ */
+export function createEarlyExitController(opts: {
+  sampleMs: number;
+  requiredSymbols: readonly string[];
+  minSettleMs?: number;
+  now?: () => number;
+  setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (handle: ReturnType<typeof setTimeout>) => void;
+}): EarlyExitController {
+  const now = opts.now ?? Date.now;
+  const setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h));
+  const { sampleMs, requiredSymbols } = opts;
+  const minSettleMs = Math.min(Math.max(opts.minSettleMs ?? 0, 0), sampleMs);
+
+  const covered = new Set<string>();
+  const startedAt = now();
+  let settled = false;
+  let resolve!: () => void;
+  const done = new Promise<void>((r) => {
+    resolve = r;
+  });
+
+  let capTimer: ReturnType<typeof setTimeout> | undefined;
+  let floorTimer: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = () => {
+    if (capTimer) clearTimer(capTimer);
+    if (floorTimer) clearTimer(floorTimer);
+  };
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolve();
+  };
+  const maybeEarly = () => {
+    if (settled) return;
+    if (now() - startedAt < minSettleMs) return;
+    if (!allRequiredCovered(requiredSymbols, covered)) return;
+    finish();
+  };
+
+  capTimer = setTimer(finish, sampleMs);
+  if (requiredSymbols.length > 0 && minSettleMs > 0) {
+    floorTimer = setTimer(maybeEarly, minSettleMs);
+  }
+
+  return {
+    done,
+    markCovered(symbol: string) {
+      covered.add(symbol);
+      maybeEarly();
+    },
+    cleanup,
+  };
 }
 
 export interface OptionMarketSample {
@@ -171,37 +258,28 @@ export interface OptionMarketSample {
 let streamerMutex = Promise.resolve();
 
 export async function fetchOptionVolumes(
-  optionChain: TastytradeOptionChain,
-  sampleMs = 5000,
+  streamerSymbols: readonly string[],
+  options: OptionVolumesSampleOptions = {},
 ): Promise<OptionMarketSample> {
-  const queued = streamerMutex.then(() => fetchOptionVolumesInner(optionChain, sampleMs));
+  const queued = streamerMutex.then(() => fetchOptionVolumesInner(streamerSymbols, options));
   streamerMutex = queued.then(() => {}, () => {});
   return queued;
 }
 
 async function fetchOptionVolumesInner(
-  optionChain: TastytradeOptionChain,
-  sampleMs = 5000,
+  streamerSymbols: readonly string[],
+  options: OptionVolumesSampleOptions = {},
 ): Promise<OptionMarketSample> {
   try {
-    const streamerSymbols = new Set<string>();
-    function collect(obj: any) {
-      if (!obj || typeof obj !== "object") return;
-      for (const [k, v] of Object.entries(obj)) {
-        if (typeof v === "string" && /streamer-symbol|streamer/.test(k)) {
-          streamerSymbols.add(v);
-        } else if (typeof v === "object") {
-          collect(v);
-        }
-      }
-    }
-    collect(optionChain);
-    const resolvedStreamerSymbols = Array.from(streamerSymbols);
+    const sampleMs = options.sampleMs ?? 5000;
+    const requiredSymbols = options.requiredSymbols ?? [];
+    const minSettleMs = Math.min(Math.max(options.minSettleMs ?? 0, 0), sampleMs);
+    const resolvedStreamerSymbols = Array.from(new Set(streamerSymbols));
 
     if (resolvedStreamerSymbols.length === 0) {
       console.warn(
-        "No streamer symbols found in nested option chain for",
-        optionChain["underlying-symbol"],
+        "No streamer symbols to sample for",
+        options.label ?? "(unknown)",
       );
       return { volumes: {}, openInterestBySymbol: {}, ivBySymbol: {}, deltaBySymbol: {} };
     }
@@ -300,6 +378,11 @@ async function fetchOptionVolumesInner(
       };
     }
 
+    // D1 early-exit: stop as soon as every mandatory candidate strike has reported
+    // greeks (past the settle floor), else wait out the sampleMs cap. The injectable,
+    // unit-tested timing core lives in createEarlyExitController.
+    const exit = createEarlyExitController({ sampleMs, requiredSymbols, minSettleMs });
+
     const removeListener = tastytradeApi.quoteStreamer.addEventListener(
       (events: any[]) => {
         const arr = Array.isArray(events) ? events : [events];
@@ -328,6 +411,7 @@ async function fetchOptionVolumesInner(
               }
               if (greeks.delta != null) {
                 deltaBySymbol[greeks.symbol] = greeks.delta;
+                exit.markCovered(greeks.symbol);
               }
             }
           } catch (e) {}
@@ -337,8 +421,9 @@ async function fetchOptionVolumesInner(
 
     tastytradeApi.quoteStreamer.subscribe(resolvedStreamerSymbols);
 
-    await new Promise((res) => setTimeout(res, sampleMs));
+    await exit.done;
 
+    exit.cleanup();
     tastytradeApi.quoteStreamer.unsubscribe(resolvedStreamerSymbols);
     removeListener();
     // No disconnect here: the SDK's disconnect() only dropped listeners and
@@ -353,7 +438,7 @@ async function fetchOptionVolumesInner(
       triggerQuoteStreamerRestart(
         "quoteStreamer produced zero raw events",
         {
-          symbol: optionChain["underlying-symbol"],
+          symbol: options.label ?? resolvedStreamerSymbols[0],
           streamerSymbolCount: resolvedStreamerSymbols.length,
         },
       );
@@ -515,19 +600,28 @@ export async function fetchOptionChainWithVolume(symbol: string) {
     optionChain,
     resolvedUnderlyingPrice,
   );
-  const optionSample = await fetchOptionVolumes(filteredForVolumeSampling, 5000);
-  const mandatorySample = await fetchOptionVolumes(mandatoryCandidateSamplingChain, 7000);
-  const mergedOptionVolumes = mergeVolumeMaps(optionSample.volumes, mandatorySample.volumes);
-  const mergedOpenInterest = mergeVolumeMaps(
-    optionSample.openInterestBySymbol,
-    mandatorySample.openInterestBySymbol,
+  // D2 (2026-07-20): sample the UNION of the broad volume-sampling set and the
+  // mandatory candidate strikes in ONE streamer window instead of two sequential
+  // windows (was a fixed 5s + 7s = 12s floor). D1: early-exit as soon as every
+  // mandatory candidate strike has reported greeks (capped at 7s), so liquid names
+  // resolve in ~1-2s while illiquid names still fall back to the full window.
+  const filteredStreamerSymbols = extractStreamerSymbols(filteredForVolumeSampling);
+  const mandatoryStreamerSymbols = extractStreamerSymbols(mandatoryCandidateSamplingChain);
+  const unionStreamerSymbols = Array.from(
+    new Set([...filteredStreamerSymbols, ...mandatoryStreamerSymbols]),
   );
-  const mergedIvBySymbol = mergeIvMaps(optionSample.ivBySymbol, mandatorySample.ivBySymbol);
-  const mergedDeltaBySymbol = mergeIvMaps(optionSample.deltaBySymbol, mandatorySample.deltaBySymbol);
+
+  const sample = await fetchOptionVolumes(unionStreamerSymbols, {
+    sampleMs: 7000,
+    requiredSymbols: mandatoryStreamerSymbols,
+    minSettleMs: 1000,
+    label: symbol.toUpperCase(),
+  });
+
   const merged = mergeVolumesIntoChain(
-    mergeVolumesIntoChain(optionChain, mergedOptionVolumes),
-    mergedOpenInterest,
+    mergeVolumesIntoChain(optionChain, sample.volumes),
+    sample.openInterestBySymbol,
     OPEN_INTEREST_FIELD_NAMES,
   );
-  return mergeGreeksIntoChain(merged, mergedIvBySymbol, mergedDeltaBySymbol);
+  return mergeGreeksIntoChain(merged, sample.ivBySymbol, sample.deltaBySymbol);
 }
