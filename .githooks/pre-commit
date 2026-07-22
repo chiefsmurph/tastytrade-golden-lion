@@ -27,13 +27,18 @@ if command -v npm >/dev/null 2>&1 && npm run 2>/dev/null | grep -q '^  test:cove
     || echo "fallow pre-commit: test:coverage failed; auditing with existing coverage. See /tmp/fallow-precommit-coverage.log" >&2
 fi
 
-# 3. Determine base ref: merge-base with upstream, else main.
+# 3. Determine base ref: merge-base with upstream. If no upstream is set, let
+#    fallow auto-detect (it uses origin/HEAD, origin/main, or origin/master).
+#    Passing --base <current-branch> when already on that branch breaks fallow's
+#    incremental attribution and causes all inherited findings to appear as new.
 UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
 if [ -n "$UPSTREAM" ]; then
   BASE="$(git merge-base "$UPSTREAM" HEAD 2>/dev/null || echo "$UPSTREAM")"
+  BASE_ARG="--base $BASE"
 else
-  BASE="main"
+  BASE_ARG=""
 fi
 
 # 4. Gate. A verdict=fail exits non-zero and blocks the commit.
-$FALLOW audit --base "$BASE" --quiet --gate-marker pre-commit
+# shellcheck disable=SC2086
+$FALLOW audit $BASE_ARG --quiet --gate-marker pre-commit

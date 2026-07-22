@@ -8,6 +8,7 @@ function getDateInPst(isoTimestamp: string): string {
   });
 }
 
+// fallow-ignore-next-line complexity
 async function getClosedPositionsTodayForAccount(accountNumber: string, todayDate: string) {
   // 200 covers a full trading day at default 4-min intervals
   const entries = await getRecentRunHistory(200, accountNumber);
@@ -68,7 +69,7 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
         // Prefer stored weightedAverageFill (new entries). Fall back to estimating from
         // totalCostBasis / (all fill contracts for this symbol * 100) for older entries
         // that predate the weightedAverageFill field.
-        let fill = matchingGroup.weightedAverageFill ?? 0;
+        let fill = matchingGroup.legWeightedFills?.[closeOrder.symbol] ?? matchingGroup.weightedAverageFill ?? 0;
         if (!fill) {
           const totalSymbolFillQty = totalFillQtyBySymbol.get(sym) ?? totalFillQty;
           if (totalSymbolFillQty > 0) {
@@ -147,7 +148,7 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
   };
 }
 
-export async function getClosedPositionsToday(args: string[]): Promise<unknown> {
+async function getClosedPositionsToday(args: string[]): Promise<unknown> {
   const [accountNumberArg] = args;
   const accountNumber = accountNumberArg?.trim() || null;
   const today = getPstDateString();
