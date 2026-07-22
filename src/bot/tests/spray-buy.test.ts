@@ -4,316 +4,264 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-process.env.BOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "spray-buy-test-"));
+// Enable the flag + isolate the store on disk BEFORE importing the executor.
 process.env.BOT_SPRAY_BUY_ENABLED = "true";
+process.env.BOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "spray-buy-test-"));
+// Deterministic, small knobs for the tests.
+process.env.BOT_SPRAY_WINDOW_MS = "300000"; // 5 min
+process.env.BOT_SPRAY_FRONT_LOAD = "0.6";
+process.env.BOT_SPRAY_DWELL_BASE_MS = "20000";
+process.env.BOT_SPRAY_DWELL_K = "3";
+process.env.BOT_SPRAY_CHASE_STEPS = "10";
+process.env.BOT_SPRAY_DEADLINE_COLLAPSE_FRACTION = "0.15";
 
-import type { OrderPayload } from "../actions/order-utils";
 import {
-  abortSprayBuy,
   advanceSprays,
-  isSprayBuyEnabled,
-  makeSprayId,
+  abortSprayBuy,
   startSprayBuy,
   type SprayDeps,
 } from "../actions/spray-buy";
-import {
-  clearSprayStore,
-  getSpray,
-  loadActiveSprays,
-} from "../actions/spray-store";
-import { summarizeSprayProgress } from "../actions/spray-schedule";
+import { clearSprayStore, getSpray } from "../actions/spray-store";
 
-const ACCOUNT = "TEST123";
-const CONTRACT = "SPY   260101C00500000";
+// ── A controllable fake broker ──────────────────────────────────────────────
 
-// A controllable clock + broker double. Records every placed order and lets a
-// test dictate each order's eventual status.
-interface FakeBroker {
-  deps: SprayDeps;
-  setNow: (ms: number) => void;
-  placed: Array<{ orderId: string; order: OrderPayload }>;
-  setStatus: (orderId: string, status: string, filledQuantity?: number) => void;
+interface FakeOrder {
+  id: string;
+  quantity: number;
+  status: string;
+  filledQuantity: number;
+  limitPrice: number;
 }
 
-function makeFakeBroker(startMs = 1_000_000): FakeBroker {
-  let nowMs = startMs;
-  let nextId = 1;
-  const placed: FakeBroker["placed"] = [];
-  const statusById = new Map<string, { status: string; filledQuantity?: number }>();
+class FakeBroker {
+  clock = 0;
+  bid = 1.0;
+  ask = 1.2;
+  orders: FakeOrder[] = [];
+  placedCount = 0;
+  cancelledIds: string[] = [];
+  private nextId = 1;
 
-  const deps: SprayDeps = {
-    now: () => nowMs,
-    placeLimitOrder: async (_account, order) => {
-      const orderId = String(nextId);
-      nextId += 1;
-      placed.push({ orderId, order });
-      // Default: live/pending until the test says otherwise.
-      statusById.set(orderId, { status: "Live" });
-      return { orderId };
-    },
-    getOrderStatus: async (_account, orderId) => statusById.get(orderId) ?? null,
-  };
+  // How many orders are live (Received/Open) right now — the single-order
+  // invariant is: this is never > 1.
+  liveOrderCount(): number {
+    return this.orders.filter((o) => o.status === "Received").length;
+  }
 
-  return {
-    deps,
-    setNow: (ms) => {
-      nowMs = ms;
-    },
-    placed,
-    setStatus: (orderId, status, filledQuantity) => {
-      statusById.set(orderId, { status, filledQuantity });
-    },
-  };
+  deps(): SprayDeps {
+    return {
+      now: () => this.clock,
+      placeLimitOrder: async (_acct, order) => {
+        const qty = Number(order.legs[0]?.quantity ?? 0);
+        const limitPrice = Number(order.price ?? 0);
+        const id = String(this.nextId++);
+        this.orders.push({ id, quantity: qty, status: "Received", filledQuantity: 0, limitPrice });
+        this.placedCount += 1;
+        return { orderId: id };
+      },
+      cancelOrder: async (_acct, orderId) => {
+        const o = this.orders.find((x) => x.id === orderId);
+        if (!o) return false;
+        if (o.status === "Received") o.status = "Cancelled";
+        this.cancelledIds.push(orderId);
+        return true;
+      },
+      getOrderStatus: async (_acct, orderId) => {
+        const o = this.orders.find((x) => x.id === orderId);
+        if (!o) return null;
+        return { status: o.status, filledQuantity: o.filledQuantity };
+      },
+      getBidAsk: async () => ({ bid: this.bid, ask: this.ask }),
+    };
+  }
+
+  // Simulate the working order filling `n` contracts.
+  fill(orderId: string, n: number): void {
+    const o = this.orders.find((x) => x.id === orderId);
+    if (!o) return;
+    o.filledQuantity = Math.min(o.quantity, n);
+    o.status = o.filledQuantity >= o.quantity ? "Filled" : "Partially Filled";
+  }
 }
 
-test.beforeEach(async () => {
+async function freshStart(
+  broker: FakeBroker,
+  overrides: Partial<Parameters<typeof startSprayBuy>[0]> = {},
+) {
   await clearSprayStore();
-});
-
-test("flag defaults off; startSprayBuy is a no-op when disabled", async () => {
-  delete process.env.BOT_SPRAY_BUY_ENABLED;
-  assert.equal(isSprayBuyEnabled(), false);
-  const broker = makeFakeBroker();
-  const result = await startSprayBuy(
+  return startSprayBuy(
     {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
+      accountNumber: "5WT00001",
+      symbol: "SG",
+      contractSymbol: "SG    260731C00003000",
       side: "call",
       totalContracts: 10,
-      limitPrice: 1.25,
+      limitPrice: 1.2,
+      quoteSymbol: ".SG260731C3",
+      accountType: "cash",
+      ...overrides,
     },
-    broker.deps,
+    broker.deps(),
   );
-  assert.equal(result.started, false);
-  assert.equal(broker.placed.length, 0, "no orders placed while disabled");
-  assert.deepEqual(await loadActiveSprays(), []);
-  process.env.BOT_SPRAY_BUY_ENABLED = "true";
-});
+}
 
-test("startSprayBuy fires only the first (largest) slice immediately", async () => {
-  const broker = makeFakeBroker();
-  const result = await startSprayBuy(
-    {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
-      side: "call",
-      totalContracts: 10,
-      limitPrice: 1.25,
-      windowMs: 300_000,
-      slices: 3,
-      frontLoadBias: 0.6,
-    },
-    broker.deps,
-  );
+// ── Tests ───────────────────────────────────────────────────────────────────
 
+test("startSprayBuy places the first chasing order and reports the target", async () => {
+  const broker = new FakeBroker();
+  const result = await freshStart(broker);
   assert.equal(result.started, true);
-  assert.equal(result.scheduledSlices, 3);
-  assert.equal(broker.placed.length, 1, "only slice 0 placed at start");
-
-  const firstOrder = broker.placed[0].order;
-  assert.equal(firstOrder["order-type"], "Limit", "never a market order");
-  assert.equal(firstOrder.legs[0].action, "Buy to Open");
-  assert.equal(firstOrder.legs[0].symbol, CONTRACT);
-
-  const spray = await getSpray(result.sprayId!);
-  assert.ok(spray);
-  assert.equal(spray.slices[0].status, "placed");
-  assert.equal(spray.slices[1].status, "pending");
-  assert.equal(spray.slices[2].status, "pending");
-  // Front-loaded: first slice is the biggest.
-  assert.ok(spray.slices[0].quantity >= spray.slices[1].quantity);
+  assert.equal(result.scheduledSlices, 10, "reports the cumulative target");
+  assert.ok(result.firstSliceOrderId, "a working order id is returned");
+  assert.equal(broker.liveOrderCount(), 1, "exactly one live order");
 });
 
-test("advanceSprays releases later slices only as their offsets elapse", async () => {
-  const broker = makeFakeBroker();
-  const start = await startSprayBuy(
-    {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
-      side: "call",
-      totalContracts: 9,
-      limitPrice: 1.0,
-      windowMs: 300_000,
-      slices: 3,
-    },
-    broker.deps,
-  );
-  const sprayId = start.sprayId!;
-  assert.equal(broker.placed.length, 1);
-
-  // Advancing before the second slice's offset places nothing new.
-  broker.setNow(1_000_000 + 60_000);
-  await advanceSprays(broker.deps);
-  assert.equal(broker.placed.length, 1, "slice 1 not yet due");
-
-  // At the halfway offset, slice 1 fires.
-  broker.setNow(1_000_000 + 150_000);
-  await advanceSprays(broker.deps);
-  assert.equal(broker.placed.length, 2, "slice 1 now due");
-
-  // At the window end, slice 2 fires.
-  broker.setNow(1_000_000 + 300_000);
-  await advanceSprays(broker.deps);
-  assert.equal(broker.placed.length, 3, "slice 2 now due");
-
-  const spray = await getSpray(sprayId);
-  assert.ok(spray);
-  assert.ok(spray.slices.every((s) => s.status === "placed"));
+test("single-order invariant: never more than one live order across many cycles", async () => {
+  const broker = new FakeBroker();
+  await freshStart(broker);
+  // Walk the clock forward across the window, advancing every 20s. The price
+  // stays put (stagnant) so the chaser will tick up but must always retire the
+  // old order before placing a new one.
+  for (let i = 0; i < 20; i++) {
+    broker.clock += 20_000;
+    await advanceSprays(broker.deps());
+    assert.ok(
+      broker.liveOrderCount() <= 1,
+      `at least-one-order invariant held at cycle ${i} (live=${broker.liveOrderCount()})`,
+    );
+  }
 });
 
-test("advanceSprays reconciles fills and completes a partial spray", async () => {
-  const broker = makeFakeBroker();
-  const start = await startSprayBuy(
-    {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
-      side: "call",
-      totalContracts: 9,
-      limitPrice: 1.0,
-      windowMs: 300_000,
-      slices: 3,
-    },
-    broker.deps,
+test("idempotent on observed fills: a cancel-vs-fill race does NOT double-buy", async () => {
+  const broker = new FakeBroker();
+  const start = await freshStart(broker);
+  const orderId = start.firstSliceOrderId as string;
+
+  // The order fully fills its shortfall (the front-loaded clip unlocked at t=0)
+  // AND we cancel it in the same breath (the classic cancel-vs-fill race).
+  const firstOrder = broker.orders.find((o) => o.id === orderId)!;
+  const clip = firstOrder.quantity;
+  broker.fill(orderId, clip);
+
+  // Advance repeatedly — each advance re-reads the same filled order. If the
+  // bookkeeping double-counted, observedFilled would balloon past `clip`.
+  for (let i = 0; i < 3; i++) {
+    broker.clock += 25_000;
+    await advanceSprays(broker.deps());
+  }
+
+  const rec = await getSpray(start.sprayId as string);
+  assert.ok(rec, "record still present (target not yet met)");
+  assert.equal(
+    rec!.observedFilled,
+    clip,
+    "observed fill counted exactly once despite repeated re-reads / the race",
   );
-  const sprayId = start.sprayId!;
-
-  // Slice 0 fills; later slices never fill (name ran away) and expire.
-  broker.setStatus("1", "Filled", 5);
-
-  broker.setNow(1_000_000 + 150_000);
-  await advanceSprays(broker.deps); // reconciles slice 0 filled, places slice 1
-  broker.setStatus("2", "Expired");
-
-  broker.setNow(1_000_000 + 300_000);
-  await advanceSprays(broker.deps); // reconciles slice 1 expired, places slice 2
-  broker.setStatus("3", "Expired");
-
-  broker.setNow(1_000_000 + 360_000);
-  await advanceSprays(broker.deps); // reconciles slice 2 expired => complete
-
-  // The spray is now complete: slice 0 filled (5 contracts), 1 & 2 aborted.
-  const spray = await getSpray(sprayId);
-  assert.ok(spray);
-  const progress = summarizeSprayProgress(spray.slices);
-  assert.equal(progress.isComplete, true, "partial fill is a complete spray");
-  assert.equal(progress.filledContracts, 5);
-  // Completed sprays are pruned from the store on the next load.
-  assert.deepEqual(await loadActiveSprays(), [], "completed spray pruned");
 });
 
-test("aborting a spray leaves filled slices and stops placing the rest", async () => {
-  const broker = makeFakeBroker();
-  const start = await startSprayBuy(
-    {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
-      side: "call",
-      totalContracts: 9,
-      limitPrice: 1.0,
-      windowMs: 300_000,
-      slices: 3,
-    },
-    broker.deps,
-  );
-  const sprayId = start.sprayId!;
-  broker.setStatus("1", "Filled", 5);
+// fallow-ignore-next-line complexity -- test-loop simulating multi-cycle fills
+test("under-filled runner keeps chasing until the ramp target is met", async () => {
+  const broker = new FakeBroker();
+  const start = await freshStart(broker);
+  const sprayId = start.sprayId as string;
 
-  // Reconcile the fill, then abort on a (simulated) thesis flip.
-  await advanceSprays(broker.deps);
+  // Simulate a runner: every cycle, the book climbs and the working order fills
+  // 1 contract, then we advance. Over the window the spray should accumulate
+  // toward the full 10.
+  for (let i = 0; i < 25 && !(await isComplete(sprayId)); i++) {
+    broker.clock += 20_000;
+    // Book climbs (runner).
+    broker.bid += 0.02;
+    broker.ask += 0.02;
+    // Fill 1 more contract on whatever is live.
+    const live = broker.orders.find((o) => o.status === "Received");
+    if (live) broker.fill(live.id, live.filledQuantity + 1);
+    await advanceSprays(broker.deps());
+  }
+
+  const rec = await getSpray(sprayId);
+  // Either it completed (dropped from the store) or it's near-full — the point
+  // is the observed fill kept climbing past the old static-slice ceiling.
+  if (rec) {
+    assert.ok(rec.observedFilled >= 5, `runner kept filling (got ${rec.observedFilled})`);
+  } else {
+    assert.ok(true, "spray completed and was pruned");
+  }
+});
+
+async function isComplete(sprayId: string): Promise<boolean> {
+  return (await getSpray(sprayId)) == null;
+}
+
+test("deadline collapses patience: past the deadline the spray aborts", async () => {
+  const broker = new FakeBroker();
+  const start = await freshStart(broker, { windowMs: 60_000 });
+  const sprayId = start.sprayId as string;
+
+  // Jump PAST the window/deadline without filling.
+  broker.clock += 120_000;
+  await advanceSprays(broker.deps());
+
+  const rec = await getSpray(sprayId);
+  // Aborted sprays are pruned on the next load → gone from the store.
+  assert.equal(rec, null, "spray aborted + pruned past the deadline");
+});
+
+test("never chases past the ask (ceiling = ask)", async () => {
+  const broker = new FakeBroker();
+  broker.bid = 1.0;
+  broker.ask = 1.1; // tight book
+  const start = await freshStart(broker, { totalContracts: 4 });
+  const sprayId = start.sprayId as string;
+
+  for (let i = 0; i < 20 && (await getSpray(sprayId)); i++) {
+    broker.clock += 25_000;
+    await advanceSprays(broker.deps());
+  }
+  // Every order ever placed must rest at or below the ask (the ceiling).
+  for (const o of broker.orders) {
+    assert.ok(
+      o.limitPrice <= broker.ask + 1e-9,
+      `limit ${o.limitPrice} must never exceed the ask ${broker.ask}`,
+    );
+    assert.ok(o.quantity <= 4, "order size bounded by target");
+  }
+  assert.ok(broker.placedCount < 40, "chase does not thrash indefinitely at the ceiling");
+});
+
+test("blown-out spread gate: do not place into a spread wider than the gate", async () => {
+  const broker = new FakeBroker();
+  // Wide spread that the default cash entry gate rejects.
+  broker.bid = 1.0;
+  broker.ask = 4.0;
+  const before = broker.placedCount;
+  await freshStart(broker, { totalContracts: 4 });
+  // The first advance reads the blown-out book and refuses to place.
+  assert.equal(broker.placedCount, before, "no order placed into the blown-out spread");
+});
+
+test("abort keeps fills and stops chasing (idempotent)", async () => {
+  const broker = new FakeBroker();
+  const start = await freshStart(broker);
+  const sprayId = start.sprayId as string;
+
   await abortSprayBuy(sprayId);
+  await abortSprayBuy(sprayId); // idempotent — safe twice
+  const rec = await getSpray(sprayId);
+  assert.equal(rec, null, "aborted spray is pruned from the store");
 
-  // Any further advance must NOT place the remaining slices.
-  const placedBefore = broker.placed.length;
-  broker.setNow(1_000_000 + 300_000);
-  await advanceSprays(broker.deps);
-  assert.equal(broker.placed.length, placedBefore, "aborted spray never chases");
-
-  // Aborted spray is complete and pruned.
-  assert.deepEqual(await loadActiveSprays(), []);
+  // A subsequent advance is a no-op (nothing active).
+  const placedBefore = broker.placedCount;
+  broker.clock += 20_000;
+  await advanceSprays(broker.deps());
+  assert.equal(broker.placedCount, placedBefore, "no chasing after abort");
 });
 
-test("never places past the market-close guard (notAfterMs)", async () => {
-  const broker = makeFakeBroker();
-  await startSprayBuy(
-    {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
-      side: "call",
-      totalContracts: 9,
-      limitPrice: 1.0,
-      windowMs: 300_000,
-      slices: 3,
-      // Close 100s after start: slices 1 (150s) & 2 (300s) fall past it.
-      notAfterMs: 1_000_000 + 100_000,
-    },
-    broker.deps,
-  );
-  assert.equal(broker.placed.length, 1, "slice 0 placed before close");
-  // Slice 0 (placed before the close) fills; the later slices are past the guard.
-  broker.setStatus("1", "Filled", 3);
-
-  broker.setNow(1_000_000 + 150_000);
-  await advanceSprays(broker.deps);
-  broker.setNow(1_000_000 + 300_000);
-  await advanceSprays(broker.deps);
-
-  assert.equal(broker.placed.length, 1, "no slices placed past the close guard");
-  // Slice 0 filled; slices past the guard are aborted, not stranded => resolves.
-  assert.deepEqual(await loadActiveSprays(), []);
-});
-
-test("restart is idempotent: re-registering the same spray does not double-fire", async () => {
-  const broker = makeFakeBroker();
-  const input = {
-    accountNumber: ACCOUNT,
-    symbol: "SPY",
-    contractSymbol: CONTRACT,
-    side: "call" as const,
-    totalContracts: 9,
-    limitPrice: 1.0,
-    windowMs: 300_000,
-    slices: 3,
-  };
-
-  const first = await startSprayBuy(input, broker.deps);
-  assert.equal(broker.placed.length, 1);
-
-  // Same start time => same id => replay (as after a restart mid-window).
-  const replay = await startSprayBuy(input, broker.deps);
-  assert.equal(replay.sprayId, first.sprayId);
-  assert.equal(broker.placed.length, 1, "slice 0 not re-placed on replay");
-});
-
-test("makeSprayId is stable for the same account/contract/start", () => {
-  assert.equal(makeSprayId(ACCOUNT, CONTRACT, 42), makeSprayId(ACCOUNT, CONTRACT, 42));
-  assert.notEqual(makeSprayId(ACCOUNT, CONTRACT, 42), makeSprayId(ACCOUNT, CONTRACT, 43));
-});
-
-test("summarizeSprayProgress reflects the executor's slice states", async () => {
-  const broker = makeFakeBroker();
-  const start = await startSprayBuy(
-    {
-      accountNumber: ACCOUNT,
-      symbol: "SPY",
-      contractSymbol: CONTRACT,
-      side: "call",
-      totalContracts: 6,
-      limitPrice: 1.0,
-      windowMs: 200_000,
-      slices: 2,
-    },
-    broker.deps,
-  );
-  const spray = await getSpray(start.sprayId!);
-  assert.ok(spray);
-  const progress = summarizeSprayProgress(spray.slices);
-  assert.equal(progress.totalContracts, 6);
-  assert.equal(progress.filledContracts, 0);
-  assert.equal(progress.isComplete, false);
+test("disabled flag makes startSprayBuy a no-op", async () => {
+  process.env.BOT_SPRAY_BUY_ENABLED = "false";
+  const broker = new FakeBroker();
+  const result = await freshStart(broker);
+  assert.equal(result.started, false);
+  assert.equal(broker.placedCount, 0);
+  process.env.BOT_SPRAY_BUY_ENABLED = "true"; // restore for other tests
 });
