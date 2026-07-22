@@ -16,6 +16,7 @@ import {
   getMinLiquidityCapMultiplier,
 } from "~/strategy/option-liquidity-quality";
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
+import { getSeedSizingFloorPct, getSeedSizingCeilingPct } from "~/strategy/seed-sizing-model";
 import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
 
 export interface EnvNameFinding {
@@ -157,6 +158,8 @@ export function getStartupConfigSnapshot(
       maxUnderlyingAccountPct: getMaxUnderlyingAccountPct(),
       minLiquidityCapMultiplier: getMinLiquidityCapMultiplier(),
       combinedUnderlyingCapPct: getCombinedUnderlyingCapPct(),
+      seedSizingShadowFloorPct: getSeedSizingFloorPct(),
+      seedSizingShadowCeilingPct: getSeedSizingCeilingPct(),
     };
   } catch (error) {
     resolved = { error: error instanceof Error ? error.message : String(error) };
