@@ -53,38 +53,33 @@ const CAP_ENV_UNSET = {
   STRATEGY_CASH_MAX_BUY_EXPOSURE_PCT: "0.05",
 };
 
-test("underlying cap getters are off (Infinity) unless set to a positive value", async () => {
+test("contract cap getter is off (Infinity) unless set to a positive value", async () => {
   for (const raw of [undefined, "", "   ", "0", "-5", "garbage"]) {
     await withEnv(
-      {
-        STRATEGY_MAX_UNDERLYING_CONTRACTS: raw,
-        STRATEGY_MAX_UNDERLYING_NOTIONAL: raw,
-      },
+      { STRATEGY_MAX_UNDERLYING_CONTRACTS: raw },
       () => {
         assert.equal(
           getMaxUnderlyingContracts(),
           Infinity,
           `contracts cap should be off for ${JSON.stringify(raw)}`,
         );
-        assert.equal(
-          getMaxUnderlyingNotional(),
-          Infinity,
-          `notional cap should be off for ${JSON.stringify(raw)}`,
-        );
       },
     );
   }
 
-  await withEnv(
-    {
-      STRATEGY_MAX_UNDERLYING_CONTRACTS: "15",
-      STRATEGY_MAX_UNDERLYING_NOTIONAL: "800.50",
-    },
-    () => {
-      assert.equal(getMaxUnderlyingContracts(), 15);
-      assert.equal(getMaxUnderlyingNotional(), 800.5);
-    },
-  );
+  await withEnv({ STRATEGY_MAX_UNDERLYING_CONTRACTS: "15" }, () => {
+    assert.equal(getMaxUnderlyingContracts(), 15);
+  });
+});
+
+test("notional cap is RETIRED — always Infinity regardless of the (ignored) env var", async () => {
+  // Dollar-denominated caps are gone; the %-of-account per-underlying cap + the
+  // contract cap cover this. The knob is now a permanent no-op.
+  for (const raw of [undefined, "800.50", "0", "garbage"]) {
+    await withEnv({ STRATEGY_MAX_UNDERLYING_NOTIONAL: raw }, () => {
+      assert.equal(getMaxUnderlyingNotional(), Infinity);
+    });
+  }
 });
 
 test("getGroupContractCount sums absolute contract quantities, ignoring the multiplier", () => {
@@ -332,27 +327,23 @@ test("contract cap clamps the add exactly at the edge and logs it", async () => 
   );
 });
 
-test("notional cap bounds total group value (held value + add) and skips at the cap", async () => {
+test("notional cap is retired: setting STRATEGY_MAX_UNDERLYING_NOTIONAL no longer caps the add", async () => {
   await withEnv(
     { ...CAP_ENV_UNSET, STRATEGY_MAX_UNDERLYING_NOTIONAL: "800" },
     async () => {
-      // 5 contracts at bid 1.00 = $500 held → $300 of headroom.
-      const clamped = await runAllocation(5);
-      assert.equal(clamped.placedOrder, true);
-      const spend = clamped.estimatedOrderValue ?? 0;
-      assert.ok(spend > 0, "some headroom remains, so the add must size");
+      // Previously an $800 notional cap on a $500 held group clamped the add to
+      // $300; the knob is now ignored, so the add sizes on the budget caps alone
+      // and even a group already worth $800 keeps adding (no notional skip).
+      const uncapped = await runAllocation(5);
+      assert.equal(uncapped.placedOrder, true);
       assert.ok(
-        spend <= 300,
-        `add must not push group value past the $800 cap (spent $${spend} on $300 headroom)`,
+        (uncapped.estimatedOrderValue ?? 0) > 300,
+        "with the notional cap retired the add is bound only by the budget caps",
       );
 
-      // 8 contracts at bid 1.00 = $800 held → at the cap: skip, don't add.
-      const atCap = await runAllocation(8);
-      assert.equal(atCap.placedOrder, false);
-      assert.match(
-        atCap.skippedReason ?? "",
-        /underlying notional cap reached \(position value \$800\.00 >= max \$800\.00\)/,
-      );
+      const stillAdds = await runAllocation(8);
+      assert.equal(stillAdds.placedOrder, true);
+      assert.equal(stillAdds.skippedReason, undefined);
     },
   );
 });

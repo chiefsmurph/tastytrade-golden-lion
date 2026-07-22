@@ -22,7 +22,7 @@
 // Conventions: module vars + exported fns, small surface, env-overridable
 // STRATEGY_-prefixed constants that resolve to a safe (behavior-neutral or
 // conservative) default when unset/blank/invalid.
-import { readEnvPct } from "~/core/env-utils";
+import { readEnvFraction, readEnvPct } from "~/core/env-utils";
 import { TastytradeExpiration } from "~/core/types";
 
 // ---------------------------------------------------------------------------
@@ -234,7 +234,8 @@ export function computeOptionLiquidityQuality(
  * until opted in.
  */
 export function getMaxUnderlyingAccountPct(): number {
-  const parsed = readEnvPct("STRATEGY_MAX_UNDERLYING_ACCOUNT_PCT", 0);
+  // readEnvFraction accepts `60` (percent) or `0.60` (fraction) → 0.60.
+  const parsed = readEnvFraction("STRATEGY_MAX_UNDERLYING_ACCOUNT_PCT", 0);
   return parsed > 0 ? parsed : Number.POSITIVE_INFINITY;
 }
 
@@ -246,6 +247,8 @@ export function getMaxUnderlyingAccountPct(): number {
  * Clamped to [0, 1]; an unset/invalid value resolves to the default.
  */
 export function getMinLiquidityCapMultiplier(): number {
+  // A raw multiplier (0..1), NOT a percent-of-account — a value like `2` means
+  // "clamp to 1", so it must be read raw and NOT normalized as a percent.
   const parsed = readEnvPct("STRATEGY_MIN_LIQUIDITY_CAP_MULTIPLIER", 0.4);
   if (!Number.isFinite(parsed) || parsed < 0) return 0.4;
   return Math.min(1, parsed);
@@ -258,7 +261,8 @@ export function getMinLiquidityCapMultiplier(): number {
  * bet. Off (Infinity) when unset/blank/zero/invalid.
  */
 export function getCombinedUnderlyingCapPct(): number {
-  const parsed = readEnvPct("STRATEGY_COMBINED_UNDERLYING_CAP_PCT", 0);
+  // readEnvFraction accepts `70` (percent) or `0.70` (fraction) → 0.70.
+  const parsed = readEnvFraction("STRATEGY_COMBINED_UNDERLYING_CAP_PCT", 0);
   return parsed > 0 ? parsed : Number.POSITIVE_INFINITY;
 }
 

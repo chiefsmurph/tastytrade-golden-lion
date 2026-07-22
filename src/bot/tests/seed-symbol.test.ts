@@ -11,6 +11,11 @@ import {
   getAffordabilityRetryCap,
   shouldRetryCashSeedWithFallbackDteWindow,
   shouldRetrySeedWithItm,
+  getPositionMarketValue,
+  sumPositionExposure,
+  computeSeedExposures,
+  resolveSprayTarget,
+  shouldSpraySeed,
   type SeedSymbolResult,
 } from "../seed-symbol";
 import {
@@ -19,9 +24,12 @@ import {
   type TopOptionCandidateForSymbolResult,
 } from "~/strategy/option-candidate";
 import type { EffectiveBuyingPowerSummary } from "../effective-buying-power";
+import type { CurrentPosition } from "~/core/types";
 
 const cand = (obj: Record<string, unknown>) =>
   obj as TopOptionCandidateForSymbolResult;
+
+const pos = (obj: Record<string, unknown>) => obj as unknown as CurrentPosition;
 
 test("isWithinCashAccountSeedDteRange enforces 14-30 inclusive", () => {
   assert.equal(isWithinCashAccountSeedDteRange(13), false);
@@ -222,42 +230,34 @@ const bpSummary: EffectiveBuyingPowerSummary = {
   totalCapital: 1000,
 };
 
-test("checkSeedAffordability skips when cost exceeds the seed cap", () => {
-  const result = checkSeedAffordability(600, 500, 100000, bpSummary, costResult);
-  assert.equal(
-    result?.skippedReason,
-    "seed order cost 600.00 exceeds BOT_MAX_SEED_ORDER_COST 500.00",
-  );
-});
-
-test("checkSeedAffordability skips when cost exceeds buying power", () => {
-  const result = checkSeedAffordability(200, 500, 100, bpSummary, costResult);
+test("checkSeedAffordability skips when cost exceeds buying power (the only dollar bound)", () => {
+  const result = checkSeedAffordability(200, 100, bpSummary, costResult);
   assert.equal(
     result?.skippedReason,
     "insufficient effective buying power for seed order — capped at 100.00 by per-action max buy pct, order cost 200.00",
   );
 });
 
-test("checkSeedAffordability passes when affordable", () => {
-  assert.equal(checkSeedAffordability(200, 500, 100000, bpSummary, costResult), null);
+test("checkSeedAffordability passes when affordable (no dollar cap knob any more)", () => {
+  // A previously cap-blocked cost ($600) now passes as long as buying power
+  // covers it — there is no BOT_MAX_SEED_ORDER_COST clip.
+  const bigBp = { ...bpSummary, effectiveBuyingPower: 100000 };
+  assert.equal(checkSeedAffordability(600, 100000, bigBp, costResult), null);
 });
 
-test("getAffordabilityRetryCap returns the binding cap for a cheaper-strike retry", () => {
-  // Buying power is the binding cap.
-  assert.equal(getAffordabilityRetryCap(300, 500, 250, false, false), 250);
-  // BOT_MAX_SEED_ORDER_COST is the binding cap.
-  assert.equal(getAffordabilityRetryCap(600, 500, 100000, false, false), 500);
+test("getAffordabilityRetryCap returns effective buying power as the binding cap", () => {
+  // Buying power is the only remaining dollar bound and binds the retry.
+  assert.equal(getAffordabilityRetryCap(300, 250, false, false), 250);
 
   // Already the retry pass, or an explicit contract → no retry.
-  assert.equal(getAffordabilityRetryCap(300, 500, 250, true, false), null);
-  assert.equal(getAffordabilityRetryCap(300, 500, 250, false, true), null);
-  // Nonsensical caps → no retry.
-  assert.equal(getAffordabilityRetryCap(300, 500, 0, false, false), null);
-  assert.equal(getAffordabilityRetryCap(300, 500, -20, false, false), null);
-  assert.equal(getAffordabilityRetryCap(300, 500, Number.NaN, false, false), null);
-  // Cap not actually below the cost (shouldn't happen after an affordability
-  // skip, but the helper is pure) → no retry.
-  assert.equal(getAffordabilityRetryCap(300, 500, 400, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 250, true, false), null);
+  assert.equal(getAffordabilityRetryCap(300, 250, false, true), null);
+  // Nonsensical buying power → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 0, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, -20, false, false), null);
+  assert.equal(getAffordabilityRetryCap(300, Number.NaN, false, false), null);
+  // Buying power not actually below the cost → no retry.
+  assert.equal(getAffordabilityRetryCap(300, 400, false, false), null);
 });
 
 test("extractDryRunSkipReason unwraps broker error shapes", () => {
@@ -340,4 +340,103 @@ test("shouldRetrySeedWithItm retries margin only when OTM found nothing for a no
 
   // Explicit contracts bypass chain selection entirely — no retry.
   assert.equal(shouldRetrySeedWithItm("margin", null, true), false);
+});
+
+test("getPositionMarketValue: quantity × multiplier × mark, with close/open fallback", () => {
+  // 3 contracts × 100 × $1.50 mark = $450.
+  assert.equal(
+    getPositionMarketValue(
+      pos({ quantity: 3, multiplier: 100, "mark-price": 1.5 }),
+    ),
+    450,
+  );
+  // No mark → fall back to close-price.
+  assert.equal(
+    getPositionMarketValue(
+      pos({ quantity: 1, multiplier: 100, "close-price": 2.0 }),
+    ),
+    200,
+  );
+  // No mark/close → fall back to average-open-price.
+  assert.equal(
+    getPositionMarketValue(
+      pos({ quantity: 2, multiplier: 100, "average-open-price": 0.5 }),
+    ),
+    100,
+  );
+  // Zero quantity contributes nothing.
+  assert.equal(
+    getPositionMarketValue(pos({ quantity: 0, multiplier: 100, "mark-price": 5 })),
+    0,
+  );
+});
+
+test("sumPositionExposure: filters by underlying, sums all when symbol omitted", () => {
+  const positions = [
+    pos({ quantity: 1, multiplier: 100, "mark-price": 1.0, "underlying-symbol": "SG" }),
+    pos({ quantity: 2, multiplier: 100, "mark-price": 0.5, "underlying-symbol": "SG" }),
+    pos({ quantity: 1, multiplier: 100, "mark-price": 3.0, "underlying-symbol": "XXI" }),
+    pos({ quantity: 0, multiplier: 100, "mark-price": 9.0, "underlying-symbol": "SG" }),
+  ];
+  // SG only: $100 + $100 = $200 (the zero-qty leg is ignored).
+  assert.equal(sumPositionExposure(positions, "SG"), 200);
+  // All underlyings: $200 + $300 = $500 (margin-utilization total).
+  assert.equal(sumPositionExposure(positions), 500);
+  // Case-insensitive match.
+  assert.equal(sumPositionExposure(positions, "sg"), 200);
+});
+
+test("resolveSprayTarget takes the larger of the model quantity and the explicit option", () => {
+  assert.equal(resolveSprayTarget(5, undefined), 5); // model sized 5, no override
+  assert.equal(resolveSprayTarget(2, 4), 4); // explicit legacy override wins
+  assert.equal(resolveSprayTarget(5, 3), 5); // model wins over a smaller override
+  assert.equal(resolveSprayTarget(1, 0), 1); // single contract → target 1 (won't spray)
+  assert.equal(resolveSprayTarget(3, 3.9), 3); // fractional override floors
+});
+
+test("shouldSpraySeed requires >1 contract, a cash account, and the flag on", () => {
+  const priorFlag = process.env.BOT_SPRAY_BUY_ENABLED;
+  try {
+    process.env.BOT_SPRAY_BUY_ENABLED = "true";
+    assert.equal(shouldSpraySeed(3, "cash"), true);
+    assert.equal(shouldSpraySeed(1, "cash"), false); // single contract → no spray
+    assert.equal(shouldSpraySeed(3, "margin"), false); // margin → single clip
+    assert.equal(shouldSpraySeed(3, "unknown"), false);
+    process.env.BOT_SPRAY_BUY_ENABLED = "false";
+    assert.equal(shouldSpraySeed(3, "cash"), false); // flag off → no spray
+  } finally {
+    if (priorFlag === undefined) delete process.env.BOT_SPRAY_BUY_ENABLED;
+    else process.env.BOT_SPRAY_BUY_ENABLED = priorFlag;
+  }
+});
+
+test("computeSeedExposures: per-account, combined (dedup on same account), margin total", () => {
+  const cashPositions = [
+    pos({ quantity: 1, multiplier: 100, "mark-price": 1.0, "underlying-symbol": "SG" }),
+  ];
+  const marginPositions = [
+    pos({ quantity: 2, multiplier: 100, "mark-price": 1.5, "underlying-symbol": "SG" }),
+    pos({ quantity: 1, multiplier: 100, "mark-price": 4.0, "underlying-symbol": "XXI" }),
+  ];
+  // Seeding into the margin account; distinct cash + margin accounts.
+  const distinct = computeSeedExposures({
+    symbol: "SG",
+    seedingPositions: marginPositions,
+    cashPositions,
+    marginPositions,
+    sameAccount: false,
+  });
+  assert.equal(distinct.existingAccountExposure, 300); // SG in margin: 2×100×1.5
+  assert.equal(distinct.existingCombinedExposure, 400); // cash $100 + margin $300
+  assert.equal(distinct.marginTotalOptionExposure, 700); // $300 SG + $400 XXI
+
+  // Single-account config: combined must NOT double-count.
+  const same = computeSeedExposures({
+    symbol: "SG",
+    seedingPositions: cashPositions,
+    cashPositions,
+    marginPositions: cashPositions,
+    sameAccount: true,
+  });
+  assert.equal(same.existingCombinedExposure, 100); // just the cash figure, no double
 });
