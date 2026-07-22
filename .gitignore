@@ -22,6 +22,7 @@ logs/
 
 # Local runtime data
 data/runs.ndjson
+data/runs/
 data/secret-cache.json
 data/quote-streamer-restarts.json
 margin.ndjson

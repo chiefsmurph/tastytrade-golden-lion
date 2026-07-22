@@ -31,6 +31,7 @@ import { buildPnlLedgerEntries, appendPnlLedgerEntries, LedgerEntryContext } fro
 import { executeOvernightReductions } from "./overnight-position-reduction";
 import { PositionGroupEvaluation } from "./evaluate-position";
 import { getEffectiveTotalCapital } from "~/core/account-balance";
+import { advanceSprays } from "./actions/spray-buy";
 
 export type { RunCyclePreview, MultiAccountRunCyclePreview };
 
@@ -208,6 +209,30 @@ export default async function runBotCycle(
   try {
   await cancelAllLiveOrders(accountNumber);
   await pruneOldEntries();
+
+  // Advance any in-flight spray-buy schedules for this account: reconcile
+  // placed slices, release newly-due slices, abort past-close. Flag-gated
+  // (BOT_SPRAY_BUY_ENABLED, default OFF) — a no-op when disabled or idle. Runs
+  // after the cancel sweep, which protects spray-buy slice orders so they rest
+  // across cycles. Never throws the cycle: a spray failure is logged, not fatal.
+  try {
+    const sprayResult = await advanceSprays();
+    if (sprayResult.advanced > 0) {
+      console.log(
+        JSON.stringify({
+          scope: "spray-buy-advance",
+          accountNumber,
+          advanced: sprayResult.advanced,
+          completed: sprayResult.completed,
+        }),
+      );
+    }
+  } catch (sprayError) {
+    console.warn(
+      "spray-buy advance failed (non-fatal):",
+      sprayError instanceof Error ? sprayError.message : sprayError,
+    );
+  }
 
   const context = await buildRunCycleContext(accountNumber);
   console.log({ accountNumber: context.preview.accountNumber, run: "bot-cycle" });
