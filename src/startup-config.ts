@@ -17,7 +17,6 @@ import {
 } from "~/strategy/option-liquidity-quality";
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
 import { getSeedSizingFloorPct, getSeedSizingCeilingPct } from "~/strategy/seed-sizing-model";
-import { getMarginMaxTotalUtilization } from "~/strategy/seed-sizing-live";
 import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
 
 export interface EnvNameFinding {
@@ -53,12 +52,6 @@ const OBSOLETE_ENV_VARS: Record<string, string> = {
     "removed — daytradeScore dropped from all decision paths 2026-07-19",
   STRATEGY_GATE_STRONG_DAYTRADE_SCORE_MAX:
     "removed — daytradeScore dropped from all decision paths 2026-07-19",
-  // Dollar-denominated sizing knobs retired 2026-07-21: every seed / position
-  // limit is now a PERCENT of NLV.
-  BOT_MAX_SEED_ORDER_COST:
-    "removed — seed size is governed by SECRET_SEED_SIZING_FLOOR_PCT/_CEILING_PCT (%-of-NLV) + the %-of-account concentration caps; no dollar clip",
-  STRATEGY_MAX_UNDERLYING_NOTIONAL:
-    "removed — redundant with STRATEGY_MAX_UNDERLYING_ACCOUNT_PCT (%-of-account) + STRATEGY_MAX_UNDERLYING_CONTRACTS; no dollar cap",
 };
 
 // Legacy names the code still honors via explicit fallback (readEnvPctWithLegacy).
@@ -165,9 +158,8 @@ export function getStartupConfigSnapshot(
       maxUnderlyingAccountPct: getMaxUnderlyingAccountPct(),
       minLiquidityCapMultiplier: getMinLiquidityCapMultiplier(),
       combinedUnderlyingCapPct: getCombinedUnderlyingCapPct(),
-      seedSizingFloorPct: getSeedSizingFloorPct(),
-      seedSizingCeilingPct: getSeedSizingCeilingPct(),
-      marginMaxTotalUtilization: getMarginMaxTotalUtilization(),
+      seedSizingShadowFloorPct: getSeedSizingFloorPct(),
+      seedSizingShadowCeilingPct: getSeedSizingCeilingPct(),
     };
   } catch (error) {
     resolved = { error: error instanceof Error ? error.message : String(error) };

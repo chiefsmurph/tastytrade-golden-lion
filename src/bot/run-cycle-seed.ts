@@ -42,14 +42,15 @@ export function isNoFittingSeedCandidateReason(reason: string | null | undefined
   );
 }
 
-// The chain candidate was too expensive for available effective buying power
-// (per-action cap / exposure headroom / remaining buying power). The contract
-// margin holds is often cheaper than the fresh chain pick, so these skips are
-// also worth retrying via the held fallback. (The old dollar-cap "seed order
-// cost …" reason was retired 2026-07-21 with BOT_MAX_SEED_ORDER_COST.)
+// The chain candidate was too expensive (per-action cap, exposure headroom, or
+// BOT_MAX_SEED_ORDER_COST). The contract margin holds is often cheaper than the
+// fresh chain pick, so these skips are also worth retrying via the held fallback.
 export function isCostBlockedSeedReason(reason: string | null | undefined): boolean {
   if (!reason) return false;
-  return reason.startsWith("insufficient effective buying power for seed order");
+  return (
+    reason.startsWith("insufficient effective buying power for seed order") ||
+    reason.startsWith("seed order cost")
+  );
 }
 
 function getAskReturnPct(evaluation: PositionGroupEvaluation): number | null {
