@@ -10,6 +10,7 @@ import {
   DayReportEntry,
   DayReportGroup,
 } from "./day-report-store";
+import { getSeedRejectionScoreboard } from "./seed-rejection-scoreboard";
 import type { RunGroupReturn } from "./run-history";
 
 // The day-report snapshot must be recorded on the last *live* cycle of the day.
@@ -52,9 +53,10 @@ export function buildDayReportInput(
   totalCapital: number,
 ): Omit<DayReportEntry, "id" | "timestamp"> {
   const groups = buildGroupsFromRunGroups(runGroups);
+  const date = getPstDateString();
   return {
     accountNumber,
-    date: getPstDateString(),
+    date,
     netLiquidatingValue: getAccountBalanceNumber(accountBalances, "net-liquidating-value"),
     totalCapital,
     derivativeBuyingPower: getAccountBalanceNumber(accountBalances, "derivative-buying-power"),
@@ -66,6 +68,7 @@ export function buildDayReportInput(
       totalUnrealizedReturnAsk: groups.reduce((s, g) => s + g.totalUnrealizedReturnAsk, 0),
       totalUnrealizedReturnMid: groups.reduce((s, g) => s + g.totalUnrealizedReturnMid, 0),
       totalCostBasis: groups.reduce((s, g) => s + g.totalCostBasis, 0),
+      seedRejections: getSeedRejectionScoreboard(accountNumber, date),
     },
   };
 }

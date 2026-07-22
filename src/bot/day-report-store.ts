@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getAccountMarginOrCash } from "~/core/default-account";
+import type { SeedRejectionScoreboard } from "./seed-rejection-scoreboard";
 
 export interface DayReportGroup {
   underlyingSymbol: string;
@@ -30,6 +31,10 @@ export interface DayReportEntry {
     totalUnrealizedReturnAsk: number;
     totalUnrealizedReturnMid: number;
     totalCostBasis: number;
+    // Per-day, per-account seed-attempt scoreboard: fills + normalized
+    // rejection buckets. Optional so historical reports (written before this
+    // field existed) still parse.
+    seedRejections?: SeedRejectionScoreboard;
   };
 }
 

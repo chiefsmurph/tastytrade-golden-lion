@@ -9,6 +9,7 @@ import {
   CASH_ACCOUNT_SEED_MAX_DTE,
 } from "~/strategy/option-candidate";
 import { recordPositionOpened } from "~/bot/position-registry";
+import { recordSeedAttempt, recordSeedSkip } from "~/bot/seed-rejection-scoreboard";
 import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
 const lastCashAutoSeedAtBySymbol = new Map<string, number>();
@@ -304,6 +305,7 @@ async function maybeAutoSeedSymbol(options: {
 }): Promise<void> {
   const now = Date.now();
   if (isAutoSeedCooldownActive(options.cooldownMap, options.symbol, options.accountNumber, now)) {
+    recordSeedSkip(options.accountNumber, "seed suppressed by cooldown");
     return;
   }
 
@@ -312,6 +314,7 @@ async function maybeAutoSeedSymbol(options: {
       orderSource: SECRET_AUTO_SEED_ORDER_SOURCE,
       priceMode: "mid",
     });
+    recordSeedAttempt(options.accountNumber, result);
     const cooldownKind = classifySeedOutcomeCooldown(result);
     recordSeedOutcomeCooldown(
       cooldownKind,
