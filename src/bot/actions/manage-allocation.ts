@@ -41,6 +41,7 @@ import {
   getMaxUnderlyingNotional,
 } from "~/strategy/risk-limits";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
+import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
 
 export type AllocationRoute = "bid" | "mid" | "ask";
@@ -540,6 +541,112 @@ export async function placeRouteOrders(
   return placedOrders;
 }
 
+// ── Age-scaled "give" on continued (held-contract) margin adds ───────────────
+// The margin average-down guard blocks any add whose ask sits above our
+// weighted-average fill (average down only). That is the right rule for a fresh
+// entry — never chase a just-entered spike — but too rigid for an OLD, held
+// position we still have conviction in: topping up conviction is not the same as
+// chasing entry. The "give" allows adds a small amount ABOVE the average, where
+// the tolerance grows with position AGE:
+//   · fresh position (age 0) → near-zero give (unchanged: average down only)
+//   · older held position    → more give (top up above cost, within a cap)
+//
+// The whole feature is OFF unless STRATEGY_MARGIN_HELD_ADD_AGE_GIVE_ENABLED is
+// truthy, so default behavior is exactly the current average-down-only rule.
+
+// Master flag. Default OFF → getHeldAddAgeGivePct always returns 0 (unchanged).
+export function isHeldAddAgeGiveEnabled(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_MARGIN_HELD_ADD_AGE_GIVE_ENABLED);
+}
+
+// Age (in days) at which the give reaches its configured maximum. Younger
+// positions get a linearly smaller give. Floored at a small positive number so
+// the curve can never divide by zero or invert.
+function getHeldAddAgeGiveFullDays(): number {
+  const raw = readEnvPct("STRATEGY_MARGIN_HELD_ADD_AGE_GIVE_FULL_DAYS", 3);
+  return raw > 0 ? raw : 3;
+}
+
+// The give at full age, as a fraction of the weighted-average fill (0.04 = allow
+// adds up to 4% above our average once the position is fully "aged"). This is the
+// tunable target; the hard cap below bounds it regardless.
+function getHeldAddAgeGiveMaxPct(): number {
+  const raw = readEnvPct("STRATEGY_MARGIN_HELD_ADD_AGE_GIVE_MAX_PCT", 0.05);
+  return raw > 0 ? raw : 0;
+}
+
+// Absolute ceiling on the give, independent of the tunables above — a
+// belt-and-suspenders guard so a fat-fingered env can never let margin chase far
+// above its cost basis. Give is min(scaled, this).
+export const HELD_ADD_AGE_GIVE_HARD_CAP_PCT = 0.10;
+
+// Age → give curve: 0 at age 0, ramping LINEARLY to getHeldAddAgeGiveMaxPct at
+// getHeldAddAgeGiveFullDays, then flat. Result is a fraction of the average fill
+// and is hard-capped at HELD_ADD_AGE_GIVE_HARD_CAP_PCT. Returns 0 when the flag
+// is off or age is unknown, so the caller falls back to average-down-only.
+export function getHeldAddAgeGivePct(positionAgeDays: number | null): number {
+  if (!isHeldAddAgeGiveEnabled()) return 0;
+  if (positionAgeDays === null || !Number.isFinite(positionAgeDays) || positionAgeDays <= 0) {
+    return 0;
+  }
+
+  const fullDays = getHeldAddAgeGiveFullDays();
+  const t = Math.max(0, Math.min(1, positionAgeDays / fullDays));
+  const scaled = getHeldAddAgeGiveMaxPct() * t;
+  return Math.max(0, Math.min(scaled, HELD_ADD_AGE_GIVE_HARD_CAP_PCT));
+}
+
+// Age of a held group in days, derived from the earliest broker "created-at"
+// across its snapshots (the leg we've held longest). Returns null when no
+// snapshot carries a parseable timestamp — the give then resolves to 0.
+export function getHeldGroupAgeDays(
+  evaluation: PositionGroupEvaluation,
+  currentTime: Date,
+): number | null {
+  let earliestMs: number | null = null;
+  for (const snapshot of evaluation.positionSnapshots) {
+    const createdAt = snapshot.position?.["created-at"];
+    if (!createdAt) continue;
+    const ms = Date.parse(String(createdAt));
+    if (!Number.isFinite(ms)) continue;
+    if (earliestMs === null || ms < earliestMs) earliestMs = ms;
+  }
+  if (earliestMs === null) return null;
+  return (currentTime.getTime() - earliestMs) / 86_400_000;
+}
+
+// The margin average-down check, with the age-scaled give applied. Returns a skip
+// reason when the ask exceeds our allowed add (avg × (1 + give)), or null when the
+// add is permitted. Non-margin accounts and unknown/zero cost basis never block
+// here (cash keeps its overnight-hold accumulation). With the give flag OFF the
+// give is 0, so this reduces to "ask above our average → block" — the original
+// average-down-only rule, message unchanged.
+function getMarginAverageDownBlockReason(
+  accountMarginOrCash: "margin" | "cash" | "unknown",
+  heldWeightedAverageFill: number,
+  ask: number,
+  positionAgeDays: number | null,
+): string | null {
+  if (accountMarginOrCash !== "margin" || !(heldWeightedAverageFill > 0)) {
+    return null;
+  }
+
+  const givePct = getHeldAddAgeGivePct(positionAgeDays);
+  const maxAllowedAdd = heldWeightedAverageFill * (1 + givePct);
+  if (ask <= maxAllowedAdd) {
+    return null;
+  }
+
+  const avgText = `above our avg $${heldWeightedAverageFill.toFixed(2)}`;
+  // givePct === 0 (flag off, or age 0/unknown) → the exact average-down-only
+  // message; give > 0 annotates the age-scaled allowance it exceeded.
+  if (givePct > 0) {
+    const ageText = positionAgeDays !== null ? `${positionAgeDays.toFixed(1)}d old` : "age unknown";
+    return `margin held add blocked: ask $${ask.toFixed(2)} ${avgText} + ${(givePct * 100).toFixed(1)}% age-give (max $${maxAllowedAdd.toFixed(2)}, ${ageText}) (average down only)`;
+  }
+  return `margin held add blocked: ask $${ask.toFixed(2)} ${avgText} (average down only)`;
+}
+
 // When the chain search finds nothing buyable for a group we already hold,
 // fall back to adding to the held contract instead of skipping the group —
 // gated by the same time-aware entry spread limit and a DTE floor so the
@@ -618,24 +725,18 @@ export function getHeldContractFallbackCandidate(
     };
   }
 
-  // Margin average-down guard: keep adding to a held contract only while its ask
-  // is at or below our weighted-average fill — i.e. average down, never up. This
-  // is what governs continued scale-in on the illiquid ITM names the OTM pick
-  // can't reach (the held-contract fallback is the only path that re-buys them).
-  // Cash keeps its overnight-hold accumulation behavior.
-  const heldWeightedAverageFill = snapshot.weightedAverageFill;
-  if (
-    accountMarginOrCash === "margin" &&
-    heldWeightedAverageFill > 0 &&
-    ask > heldWeightedAverageFill
-  ) {
-    return {
-      askPrice: ask,
-      bidPrice: bid,
-      dte,
-      spreadPct,
-      skippedReason: `margin held add blocked: ask $${ask.toFixed(2)} above our avg $${heldWeightedAverageFill.toFixed(2)} (average down only)`,
-    };
+  // Margin average-down guard (with age-scaled give): keep adding to a held
+  // contract only while its ask is at or below our weighted-average fill plus the
+  // age-scaled give — average down, never chase a fresh entry. Cash keeps its
+  // overnight-hold accumulation behavior. See getMarginAverageDownBlockReason.
+  const averageDownBlock = getMarginAverageDownBlockReason(
+    accountMarginOrCash,
+    snapshot.weightedAverageFill,
+    ask,
+    getHeldGroupAgeDays(evaluation, currentTime),
+  );
+  if (averageDownBlock) {
+    return { askPrice: ask, bidPrice: bid, dte, spreadPct, skippedReason: averageDownBlock };
   }
 
   return {
