@@ -100,6 +100,12 @@ function getSprayChaseSteps(): number {
   return Math.floor(parsePositiveNumber(process.env.BOT_SPRAY_CHASE_STEPS, 10));
 }
 
+// How long (ms) a spray may have quote-unavailable before it aborts itself so
+// the seed logic can retry with a fresh contract. Default: 60 seconds.
+function getSprayQuoteUnavailableAbortMs(): number {
+  return parsePositiveNumber(process.env.BOT_SPRAY_QUOTE_UNAVAILABLE_ABORT_MS, 60 * 1000);
+}
+
 // Fraction of the window remaining, below which patience COLLAPSES: the chaser
 // jumps straight to the ceiling (take the ask) instead of dwelling. Default:
 // last 15% of the window.
@@ -119,6 +125,7 @@ export function getSprayBuyConfigSnapshot(): Record<string, unknown> {
     dwellK: getSprayDwellK(),
     chaseSteps: getSprayChaseSteps(),
     deadlineCollapseFraction: getSprayDeadlineCollapseFraction(),
+    quoteUnavailableAbortMs: getSprayQuoteUnavailableAbortMs(),
   };
 }
 
@@ -586,9 +593,18 @@ async function advanceOneSpray(
   if (shortfall > 0) {
     const ctx = await resolveChaseContext(record, now, deps);
     if (ctx) {
+      record.quoteUnavailableSinceMs = undefined;
       await driveWorkingOrder(record, now, allowed, shortfall, ctx, deps);
     } else {
-      console.log(JSON.stringify({ scope: "spray-quote-unavailable", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quoteSymbol: record.quoteSymbol }));
+      if (record.quoteUnavailableSinceMs == null) {
+        record.quoteUnavailableSinceMs = now;
+      }
+      const unavailableMs = now - record.quoteUnavailableSinceMs;
+      console.log(JSON.stringify({ scope: "spray-quote-unavailable", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quoteSymbol: record.quoteSymbol, unavailableMs }));
+      if (unavailableMs >= getSprayQuoteUnavailableAbortMs()) {
+        console.log(JSON.stringify({ scope: "spray-abort-no-quote", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, unavailableMs }));
+        record.aborted = true;
+      }
     }
   }
   await saveSpray(record);

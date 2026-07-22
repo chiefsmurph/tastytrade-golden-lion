@@ -76,6 +76,9 @@ export interface SprayRampRecord {
   workingOrder: SprayWorkingOrder | null;
   // Sticky abort flag (signal change / stop / thesis flip): keep fills, stop.
   aborted: boolean;
+  // First epoch ms at which quote was unavailable in a consecutive streak.
+  // Reset to undefined when a quote resolves. Used to abort dead contracts.
+  quoteUnavailableSinceMs?: number;
   createdAt: string;
   updatedAt: string;
 }
