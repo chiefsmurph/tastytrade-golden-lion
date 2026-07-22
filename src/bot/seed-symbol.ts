@@ -26,6 +26,11 @@ import {
   recordClosingOnly,
 } from "./closing-only-cache";
 import { isSprayBuyEnabled, startSprayBuy } from "./actions/spray-buy";
+import {
+  computeSeedSizing,
+  getSeedSizingFloorPct,
+  getSeedSizingCeilingPct,
+} from "~/strategy/seed-sizing-model";
 
 
 export interface SeedSymbolOptions {
@@ -343,6 +348,45 @@ export function checkSeedAffordability(
   return null;
 }
 
+// SHADOW-ONLY telemetry: emit a `seed-sizing-shadow` line comparing the real
+// (quantity: 1) seed against what the %-of-account model would have sized. Never
+// touches the order — pure logging. Neutral pluggable inputs (regime/liquidity)
+// are left undefined so computeSeedSizing treats them as 1.0 until fed.
+function logSeedSizingShadow(params: {
+  symbol: string;
+  side: "call" | "put";
+  accountNumber: string;
+  accountNLV: number;
+  optionPrice: number;
+  currentContracts: number;
+  currentNotional: number;
+}): void {
+  const sizing = computeSeedSizing({
+    accountNLV: params.accountNLV,
+    optionPrice: params.optionPrice,
+  });
+  console.log(
+    JSON.stringify({
+      scope: "seed-sizing-shadow",
+      symbol: params.symbol,
+      side: params.side,
+      accountNumber: params.accountNumber,
+      accountNLV: params.accountNLV,
+      optionPrice: params.optionPrice,
+      currentContracts: params.currentContracts,
+      currentNotional: params.currentNotional,
+      modelTargetPct: sizing.modelTargetPct,
+      modelTargetNotional: sizing.modelTargetNotional,
+      modelContracts: sizing.modelContracts,
+      modelContractsNotional: sizing.modelContractsNotional,
+      floorPct: getSeedSizingFloorPct(),
+      ceilingPct: getSeedSizingCeilingPct(),
+      regimeFavorability: sizing.regimeFavorability,
+      optionLiquidityQuality: sizing.optionLiquidityQuality,
+    }),
+  );
+}
+
 export async function seedSymbol(
   symbol: string,
   side: "call" | "put" = "call",
@@ -646,6 +690,23 @@ export async function seedSymbol(
     estimatedOrderCost,
     limitPrice: numericLimitPrice,
   };
+
+  // SHADOW-ONLY (2026-07-21): log what the %-of-account sizing model WOULD have
+  // chosen next to this real seed (which is always quantity: 1 → 1 contract).
+  // This changes NOTHING about the order placed below — it's a comparison line
+  // so the model can be evaluated before it's flipped live. totalCapital from
+  // the effective-buying-power summary is the account NLV proxy the band is
+  // measured against; the pluggable regime/liquidity inputs are left neutral
+  // (undefined → 1.0) until separate work feeds them.
+  logSeedSizingShadow({
+    symbol: normalizedSymbol,
+    side,
+    accountNumber: resolvedAccountNumber,
+    accountNLV: buyingPowerSummary.totalCapital,
+    optionPrice: numericLimitPrice,
+    currentContracts: 1,
+    currentNotional: estimatedOrderCost,
+  });
 
   const affordabilitySkip = checkSeedAffordability(
     estimatedOrderCost,
