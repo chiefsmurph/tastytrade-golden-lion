@@ -437,8 +437,9 @@ async function placeChase(
   let orderId: string | null;
   try {
     ({ orderId } = await deps.placeLimitOrder(record.accountNumber, order));
-  } catch {
-    return false; // transient placement failure; retry next cycle
+  } catch (err) {
+    console.log(JSON.stringify({ scope: "spray-place-error", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quantity, limitPrice, error: String(err) }));
+    return false;
   }
   if (!orderId) return false;
   const working: SprayWorkingOrder = {
