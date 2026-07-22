@@ -581,6 +581,8 @@ async function advanceOneSpray(
     const ctx = await resolveChaseContext(record, now, deps);
     if (ctx) {
       await driveWorkingOrder(record, now, allowed, shortfall, ctx, deps);
+    } else {
+      console.log(JSON.stringify({ scope: "spray-quote-unavailable", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quoteSymbol: record.quoteSymbol }));
     }
   }
   await saveSpray(record);
