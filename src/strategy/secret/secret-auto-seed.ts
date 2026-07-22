@@ -363,6 +363,27 @@ async function maybeAutoSeedMarginForPosition(options: {
   booleanSurplusPct: number;
 }): Promise<void> {
   if (!shouldSeedMarginSticky(options.position, options.observationDateStr)) {
+    // Observe-only: surface the interesting near-miss — a name the feed is
+    // actively buying (willBuy) that margin still won't seed because the full
+    // 4/4 thesis was never observed today. Gated on willBuy so it stays quiet:
+    // the sticky check runs for every position every tick, but only actively-
+    // bought names are worth auditing (this is exactly the XXI-on-2026-07-21
+    // case). fullThesisObservedToday is necessarily false here (sticky =
+    // willBuy && thesisObserved), logged explicitly to make the reason obvious.
+    if (options.position.willBuy === true) {
+      console.log(
+        JSON.stringify({
+          scope: "secret-auto-seed-margin-sticky-block",
+          symbol: options.symbol,
+          willBuy: true,
+          fullThesisObservedToday: wasFullThesisObservedToday(
+            options.symbol,
+            options.observationDateStr,
+          ),
+          plateauScore: options.position.plateauScore,
+        }),
+      );
+    }
     return;
   }
   if (isMarginSeedBlockedByPlateau(options.position)) {
