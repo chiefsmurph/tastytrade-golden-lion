@@ -1,49 +1,86 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  SpraySliceState,
-  abortOpenSlices,
-  summarizeSprayProgress,
-} from "./spray-schedule";
 
-// Cross-cycle store for pending spray-buy schedules.
+// Cross-cycle store for in-flight spray-buy RAMPS.
 //
 // golden-lion runs many short cycles per day (~4min each), so a multi-minute
 // spray spans several cycles: it CANNOT live in a single run's memory. This
-// module owns the pending-schedule state, persisted to disk (same pattern as
-// position-registry.ts) so a restart mid-spray resumes rather than double-fires
-// or strands slices. Follows the module-vars + exported-fns convention (no
-// classes / `this`).
+// module owns the ramp + working-order state, persisted to disk (same pattern
+// as position-registry.ts) so a restart mid-spray resumes rather than
+// double-fires or strands the target. Follows the module-vars + exported-fns
+// convention (no classes / `this`).
+//
+// The model is a SINGLE tick-chasing order against a time-ramped cumulative
+// target (see spray-ramp.ts). The record therefore holds only:
+//   - the ramp parameters (total, window, front-load) so the allowed cumulative
+//     target is recomputable from elapsed time on any cycle / after a restart,
+//   - the state of AT MOST ONE working (live) chasing order, and
+//   - the last OBSERVED filled quantity read back from the broker.
 //
 // Idempotence rules that keep restart safe:
-//   - Each spray has a stable `id`. Re-registering the same id is a no-op.
-//   - A slice moves pending -> placed exactly once (guarded by status); a
-//     restart after a placed-but-unrecorded order is reconciled by the executor
-//     against the broker, never blindly re-placed.
-//   - Completed sprays (all slices filled or aborted) are dropped on the next
-//     load so the file does not grow unbounded.
+//   - Each spray has a stable `id`. Re-registering the same id is a no-op (the
+//     in-flight state wins over a replayed start).
+//   - There is never more than one working order id at a time (single-order
+//     invariant). On restart the executor reconciles that one id against the
+//     broker before deciding to place anything — it never blindly re-places.
+//   - `observedFilled` only ever moves forward from what the broker reports, so
+//     a cancel-vs-fill race cannot double-count.
+//   - Completed sprays (observedFilled >= total, or aborted) are dropped on the
+//     next load so the file does not grow unbounded.
 
-export interface SprayRecord {
+export interface SprayWorkingOrder {
+  // Broker order id of the single live chasing order (string form).
+  orderId: string;
+  // Contracts requested on this working order (the shortfall at placement).
+  quantity: number;
+  // Limit price the working order currently rests at.
+  limitPrice: number;
+  // Absolute epoch ms the current limit was placed / last re-priced. The dwell
+  // curve measures patience from here.
+  lastMoveMs: number;
+  // Cumulative contracts filled by all PRIOR (retired) orders at the moment this
+  // order was placed. The spray's true cumulative fill is this plus the live
+  // fill on THIS order — recomputed each cycle so re-reading the same live order
+  // never double-counts.
+  filledBefore: number;
+}
+
+export interface SprayRampRecord {
   id: string;
   accountNumber: string;
   symbol: string;
   contractSymbol: string;
   side: "call" | "put";
   orderSource: string;
-  // Absolute epoch ms at which the spray started (slice offsets are relative).
+  // Streamer/quote symbol for the live bid/ask read (may differ from the OCC
+  // contractSymbol). Persisted so a per-cycle advance / a restart re-quotes the
+  // right symbol.
+  quoteSymbol: string;
+  // Account type for the entry spread-gate ceiling. Persisted for the same
+  // reason as quoteSymbol.
+  accountType: "margin" | "cash" | "unknown";
+  // Absolute epoch ms at which the spray started (ramp elapsed is relative).
   startedAtMs: number;
-  // Absolute epoch ms past which no further slices may be placed (market close
-  // guard). Slices due after this are aborted, never spilled past the close.
-  notAfterMs: number;
-  // Per-slice limit price. The executor re-quotes at placement, but this anchors
-  // the schedule and lets the store round-trip without a live quote.
-  limitPrice: number;
-  slices: SpraySliceState[];
+  // Absolute epoch ms past which no further chasing is allowed (min of the
+  // spray window end and the market-close guard). Near it, patience collapses
+  // (take the ask) or the remainder aborts.
+  deadlineMs: number;
+  // Ramp parameters (see spray-ramp.ts cumulativeAllowed).
+  totalContracts: number;
+  windowMs: number;
+  frontLoad: number;
+  // Contracts OBSERVED filled so far (monotonic, broker-confirmed). The whole
+  // decision keys off this — never off what we THINK we ordered.
+  observedFilled: number;
+  // The single live chasing order, or null when nothing is working right now.
+  workingOrder: SprayWorkingOrder | null;
+  // Sticky abort flag (signal change / stop / thesis flip): keep fills, stop.
+  aborted: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-type SprayData = Record<string, SprayRecord>;
+type SprayData = Record<string, SprayRampRecord>;
 
 function getStorePath(): string {
   const dataDir = process.env.BOT_DATA_DIR?.trim() || undefined;
@@ -54,12 +91,17 @@ function getStorePath(): string {
   );
 }
 
-// Drop sprays that are fully resolved (every slice filled or aborted) so the
-// file does not accumulate dead records. Pure.
+// A spray is DONE when it has filled its whole target or been aborted. Pure.
+export function isSprayComplete(record: SprayRampRecord): boolean {
+  if (record.aborted) return true;
+  return record.observedFilled >= Math.floor(record.totalContracts);
+}
+
+// Drop fully-resolved sprays so the file does not accumulate dead records. Pure.
 function pruneCompletedSprays(data: SprayData): SprayData {
   const next: SprayData = {};
   for (const [id, record] of Object.entries(data)) {
-    if (!summarizeSprayProgress(record.slices).isComplete) {
+    if (!isSprayComplete(record)) {
       next[id] = record;
     }
   }
@@ -81,9 +123,9 @@ async function writeStore(data: SprayData): Promise<void> {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
 }
 
-// Load all pending (not-yet-complete) sprays, pruning resolved ones as a side
+// Load all in-flight (not-yet-complete) sprays, pruning resolved ones as a side
 // effect so callers never see stale records and the file self-trims.
-export async function loadActiveSprays(): Promise<SprayRecord[]> {
+export async function loadActiveSprays(): Promise<SprayRampRecord[]> {
   const data = await readStore();
   const pruned = pruneCompletedSprays(data);
   if (Object.keys(pruned).length !== Object.keys(data).length) {
@@ -92,10 +134,13 @@ export async function loadActiveSprays(): Promise<SprayRecord[]> {
   return Object.values(pruned);
 }
 
-// Register a new spray schedule. Idempotent by id: if a spray with the same id
+// Register a new spray ramp. Idempotent by id: if a spray with the same id
 // already exists it is returned untouched (a restart that replays registration
-// does not clobber in-flight slice state). Returns the stored record.
-export async function registerSpray(record: SprayRecord): Promise<SprayRecord> {
+// does not clobber in-flight ramp / working-order state). Returns the stored
+// record.
+export async function registerSpray(
+  record: SprayRampRecord,
+): Promise<SprayRampRecord> {
   const data = await readStore();
   const existing = data[record.id];
   if (existing) {
@@ -106,32 +151,30 @@ export async function registerSpray(record: SprayRecord): Promise<SprayRecord> {
   return record;
 }
 
-export async function getSpray(id: string): Promise<SprayRecord | null> {
+export async function getSpray(id: string): Promise<SprayRampRecord | null> {
   const data = await readStore();
   return data[id] ?? null;
 }
 
-// Persist an updated slice array for a spray (e.g. a slice moved to placed /
-// filled / aborted). No-op if the spray is gone. Refreshes updatedAt.
-export async function updateSpraySlices(
-  id: string,
-  slices: SpraySliceState[],
-): Promise<void> {
+// Persist a whole updated record (working-order transitions, observed fills,
+// abort). No-op if the spray is gone. Refreshes updatedAt and prunes if the
+// update completed the spray.
+export async function saveSpray(record: SprayRampRecord): Promise<void> {
   const data = await readStore();
-  const record = data[id];
-  if (!record) return;
-  record.slices = slices;
+  if (!data[record.id]) return;
   record.updatedAt = new Date().toISOString();
-  await writeStore(data);
+  data[record.id] = record;
+  await writeStore(pruneCompletedSprays(data));
 }
 
-// Abort every still-open slice on a spray (signal change / stop / thesis flip)
-// and persist. Whatever already filled is kept; nothing is chased.
+// Abort a spray (signal change / stop / thesis flip): keep whatever filled,
+// stop chasing. Idempotent; safe when the id is unknown. Leaves any live
+// working-order id in place so the executor / cancel sweep can clean it up.
 export async function abortSpray(id: string): Promise<void> {
   const data = await readStore();
   const record = data[id];
   if (!record) return;
-  record.slices = abortOpenSlices(record.slices);
+  record.aborted = true;
   record.updatedAt = new Date().toISOString();
   await writeStore(pruneCompletedSprays(data));
 }

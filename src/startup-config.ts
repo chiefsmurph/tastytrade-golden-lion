@@ -18,6 +18,7 @@ import {
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
 import { getSeedSizingFloorPct, getSeedSizingCeilingPct } from "~/strategy/seed-sizing-model";
 import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
+import { getSprayBuyConfigSnapshot } from "~/bot/actions/spray-buy";
 
 export interface EnvNameFinding {
   name: string;
@@ -160,6 +161,7 @@ export function getStartupConfigSnapshot(
       combinedUnderlyingCapPct: getCombinedUnderlyingCapPct(),
       seedSizingShadowFloorPct: getSeedSizingFloorPct(),
       seedSizingShadowCeilingPct: getSeedSizingCeilingPct(),
+      sprayBuy: getSprayBuyConfigSnapshot(),
     };
   } catch (error) {
     resolved = { error: error instanceof Error ? error.message : String(error) };
