@@ -21,18 +21,29 @@ function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
   }
 }
 
-test("floor/ceiling defaults are 12% / 25% and env-overridable via SECRET_ prefix", () => {
+test("floor/ceiling LIVE defaults are 12% / 35% and env-overridable via SECRET_ prefix", () => {
   withEnv("SECRET_SEED_SIZING_FLOOR_PCT", undefined, () => {
     assert.equal(getSeedSizingFloorPct(), 0.12);
   });
   withEnv("SECRET_SEED_SIZING_CEILING_PCT", undefined, () => {
-    assert.equal(getSeedSizingCeilingPct(), 0.25);
+    assert.equal(getSeedSizingCeilingPct(), 0.35);
   });
   withEnv("SECRET_SEED_SIZING_FLOOR_PCT", "0.10", () => {
     assert.equal(getSeedSizingFloorPct(), 0.1);
   });
   withEnv("SECRET_SEED_SIZING_CEILING_PCT", "0.30", () => {
     assert.equal(getSeedSizingCeilingPct(), 0.3);
+  });
+});
+
+test("floor/ceiling accept integer-looking percents (12/35) as well as fractions", () => {
+  // The server .env writes these as `12`/`35`; readEnvFraction must normalize
+  // them to 0.12 / 0.35 rather than the latent 1200%/3500% raw-number bug.
+  withEnv("SECRET_SEED_SIZING_FLOOR_PCT", "12", () => {
+    assert.equal(getSeedSizingFloorPct(), 0.12);
+  });
+  withEnv("SECRET_SEED_SIZING_CEILING_PCT", "35", () => {
+    assert.equal(getSeedSizingCeilingPct(), 0.35);
   });
 });
 

@@ -42,15 +42,14 @@ export function isNoFittingSeedCandidateReason(reason: string | null | undefined
   );
 }
 
-// The chain candidate was too expensive (per-action cap, exposure headroom, or
-// BOT_MAX_SEED_ORDER_COST). The contract margin holds is often cheaper than the
-// fresh chain pick, so these skips are also worth retrying via the held fallback.
+// The chain candidate was too expensive for available effective buying power
+// (per-action cap / exposure headroom / remaining buying power). The contract
+// margin holds is often cheaper than the fresh chain pick, so these skips are
+// also worth retrying via the held fallback. (The old dollar-cap "seed order
+// cost …" reason was retired 2026-07-21 with BOT_MAX_SEED_ORDER_COST.)
 export function isCostBlockedSeedReason(reason: string | null | undefined): boolean {
   if (!reason) return false;
-  return (
-    reason.startsWith("insufficient effective buying power for seed order") ||
-    reason.startsWith("seed order cost")
-  );
+  return reason.startsWith("insufficient effective buying power for seed order");
 }
 
 function getAskReturnPct(evaluation: PositionGroupEvaluation): number | null {
@@ -59,6 +58,7 @@ function getAskReturnPct(evaluation: PositionGroupEvaluation): number | null {
   return ((evaluation.metrics.currentAskPrice - fill) / fill) * 100;
 }
 
+// fallow-ignore-next-line complexity
 async function getPositionAgeDays(
   accountNumber: string,
   symbol: string,
@@ -78,6 +78,7 @@ async function getPositionAgeDays(
   return null;
 }
 
+// fallow-ignore-next-line complexity
 function mapMarginSeedOrderForRunHistory(
   sourceAccountNumber: string,
   askReturnPctSource: number,
@@ -106,6 +107,7 @@ function mapMarginSeedOrderForRunHistory(
   };
 }
 
+// fallow-ignore-next-line complexity
 export async function maybeSeedMarginAccountFromCashAccount(
   accountNumber: string,
   currentTime: Date,
@@ -248,6 +250,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
   return results;
 }
 
+// fallow-ignore-next-line complexity
 export async function maybeSeedCashAccountFromMarginAccount(
   accountNumber: string,
   currentTime: Date,

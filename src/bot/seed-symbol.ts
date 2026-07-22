@@ -27,10 +27,13 @@ import {
 } from "./closing-only-cache";
 import { isSprayBuyEnabled, startSprayBuy } from "./actions/spray-buy";
 import {
-  computeSeedSizing,
   getSeedSizingFloorPct,
   getSeedSizingCeilingPct,
 } from "~/strategy/seed-sizing-model";
+import {
+  getMarginMaxTotalUtilization,
+  resolveSeedQuantity,
+} from "~/strategy/seed-sizing-live";
 
 
 export interface SeedSymbolOptions {
@@ -108,14 +111,16 @@ export function shouldRetrySeedWithItm(
 }
 
 // Affordability retry: seed-symbol picks a candidate FIRST, then the
-// affordability check skips if its cost blows a cap — so a near-broke account
-// skips forever even when cheaper strikes exist in the same chain. Returns the
-// binding cap (in order-cost dollars) to re-run selection with as maxAskPrice,
-// or null when no retry should happen: already the retry pass, an explicit
-// contract (nothing cheaper to hunt for), or a nonsensical cap.
+// affordability check skips if its cost exceeds available buying power — so a
+// near-broke account skips forever even when cheaper strikes exist in the same
+// chain. Returns the binding cap (effective buying power, in order-cost dollars)
+// to re-run selection with as maxAskPrice, or null when no retry should happen:
+// already the retry pass, an explicit contract (nothing cheaper to hunt for), or
+// a nonsensical cap. NB: the only remaining dollar bound is the broker's real
+// buying power — there is no tunable dollar knob (BOT_MAX_SEED_ORDER_COST was
+// retired; size is governed entirely by the %-of-NLV band + %-caps).
 export function getAffordabilityRetryCap(
   estimatedOrderCost: number,
-  maxSeedOrderCost: number,
   buyingPowerAvailable: number,
   alreadyRetried: boolean,
   hasExplicitContract: boolean,
@@ -123,14 +128,13 @@ export function getAffordabilityRetryCap(
   if (alreadyRetried || hasExplicitContract) {
     return null;
   }
-  const bindingCap = Math.min(maxSeedOrderCost, buyingPowerAvailable);
-  if (!Number.isFinite(bindingCap) || bindingCap <= 0) {
+  if (!Number.isFinite(buyingPowerAvailable) || buyingPowerAvailable <= 0) {
     return null;
   }
-  if (bindingCap >= estimatedOrderCost) {
+  if (buyingPowerAvailable >= estimatedOrderCost) {
     return null;
   }
-  return bindingCap;
+  return buyingPowerAvailable;
 }
 
 // Cash DTE-window fallback mirrors the margin ITM fallback above: small caps
@@ -154,22 +158,6 @@ export function shouldRetryCashSeedWithFallbackDteWindow(
   const dte = candidate?.dte != null ? Number(candidate.dte) : undefined;
   return candidate?.usedDteFallback === true || !isWithinCashAccountSeedDteRange(dte);
 }
-
-function getMaxSeedOrderCost(): number {
-  const raw = process.env.BOT_MAX_SEED_ORDER_COST;
-  if (!raw) {
-    return 500;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 500;
-  }
-
-  return parsed;
-}
-
-
 
 export function isWithinCashAccountSeedDteRange(dte: number | null | undefined): boolean {
   return (
@@ -236,6 +224,232 @@ async function hasOpenUnderlyingPosition(
 
     return getUnderlyingSymbolForPosition(position).toUpperCase() === symbol.toUpperCase();
   });
+}
+
+// Current market value of a single position (dollars). mark-price is the
+// broker's per-unit mark; multiplier is shares/contract (100 for options).
+// Falls back to close-price then average-open-price when mark is absent, so a
+// stale feed can't read as $0 exposure. Always non-negative (we only ever
+// LONG-open seeds; short legs would sign-flip but the bot doesn't open them).
+export function getPositionMarketValue(position: CurrentPosition): number {
+  const quantity = Math.abs(Number(position.quantity) || 0);
+  if (quantity === 0) return 0;
+  const multiplier = Math.abs(Number(position.multiplier) || 1);
+  const markPrice = Number(position["mark-price"]);
+  const closePrice = Number(position["close-price"]);
+  const averageOpen = Number(position["average-open-price"]);
+  const perUnit = Number.isFinite(markPrice) && markPrice > 0
+    ? markPrice
+    : Number.isFinite(closePrice) && closePrice > 0
+      ? closePrice
+      : Number.isFinite(averageOpen) && averageOpen > 0
+        ? averageOpen
+        : 0;
+  return quantity * multiplier * perUnit;
+}
+
+// Sum the market value of every non-zero position in a list that matches the
+// underlying (undefined `symbol` sums ALL positions → total account option
+// exposure, used by the margin-utilization rail).
+export function sumPositionExposure(
+  positions: CurrentPosition[],
+  symbol?: string,
+): number {
+  const wanted = symbol?.toUpperCase();
+  const matches = (position: CurrentPosition): boolean => {
+    if ((Number(position.quantity) || 0) === 0) return false;
+    if (!wanted) return true;
+    return getUnderlyingSymbolForPosition(position).toUpperCase() === wanted;
+  };
+  return positions
+    .filter(matches)
+    .reduce((sum, position) => sum + getPositionMarketValue(position), 0);
+}
+
+interface SeedExposureSnapshot {
+  // Market value of `symbol` already held in the seeding account.
+  existingAccountExposure: number;
+  // Market value of `symbol` held across BOTH cash + margin accounts.
+  existingCombinedExposure: number;
+  // Summed market value of ALL open margin option positions (leverage rail).
+  marginTotalOptionExposure: number;
+}
+
+// Pure: compute the three exposures the live sizing rails need from already-
+// fetched position lists. `sameAccount` = cash and margin resolve to the same
+// account (single-account configs) → the combined figure must not double-count.
+export function computeSeedExposures(params: {
+  symbol: string;
+  seedingPositions: CurrentPosition[];
+  cashPositions: CurrentPosition[];
+  marginPositions: CurrentPosition[];
+  sameAccount: boolean;
+}): SeedExposureSnapshot {
+  const cashExposure = sumPositionExposure(params.cashPositions, params.symbol);
+  const marginExposure = sumPositionExposure(params.marginPositions, params.symbol);
+  return {
+    existingAccountExposure: sumPositionExposure(params.seedingPositions, params.symbol),
+    existingCombinedExposure: params.sameAccount ? cashExposure : cashExposure + marginExposure,
+    marginTotalOptionExposure: sumPositionExposure(params.marginPositions),
+  };
+}
+
+// Gather the exposures the live sizing rails need. One positions-list fetch per
+// distinct account (cash + margin + seeding), reused for the per-underlying,
+// combined, and margin-total figures.
+async function getSeedExposureSnapshot(
+  seedingAccountNumber: string,
+  symbol: string,
+): Promise<SeedExposureSnapshot> {
+  const cashAccountNumber = await getCashAccountNumber();
+  const marginAccountNumber = await getMarginAccountNumber();
+
+  const uniqueAccounts = Array.from(
+    new Set([cashAccountNumber, marginAccountNumber, seedingAccountNumber]),
+  );
+  const fetched = await Promise.all(
+    uniqueAccounts.map((accountNumber) => fetchPositions(accountNumber)),
+  );
+  const positionsByAccount = new Map(fetched);
+
+  return computeSeedExposures({
+    symbol,
+    seedingPositions: positionsByAccount.get(seedingAccountNumber) ?? [],
+    cashPositions: positionsByAccount.get(cashAccountNumber) ?? [],
+    marginPositions: positionsByAccount.get(marginAccountNumber) ?? [],
+    sameAccount: cashAccountNumber === marginAccountNumber,
+  });
+}
+
+async function fetchPositions(
+  accountNumber: string,
+): Promise<[string, CurrentPosition[]]> {
+  const positions =
+    await tastytradeApi.balancesAndPositionsService.getPositionsList(accountNumber);
+  return [accountNumber, positions ?? []];
+}
+
+// Fetch exposures, run the live %-of-account sizing model + rails, and emit the
+// `seed-sizing-live` telemetry line. Extracted from seedSymbol to keep that
+// function lean; returns the resolved sizing (quantity + diagnostics).
+async function computeLiveSeedSizing(params: {
+  symbol: string;
+  side: "call" | "put";
+  accountNumber: string;
+  accountType: "margin" | "cash" | "unknown";
+  accountNLV: number;
+  optionPrice: number;
+  optionLiquidityQuality?: number;
+}): Promise<ReturnType<typeof resolveSeedQuantity>> {
+  const exposure = await getSeedExposureSnapshot(params.accountNumber, params.symbol);
+  const sizing = resolveSeedQuantity({
+    accountNLV: params.accountNLV,
+    optionPrice: params.optionPrice,
+    optionLiquidityQuality: params.optionLiquidityQuality,
+    accountType: params.accountType === "cash" ? "cash" : "margin",
+    concentrationBasis: params.accountNLV,
+    existingAccountExposure: exposure.existingAccountExposure,
+    existingCombinedExposure: exposure.existingCombinedExposure,
+    marginTotalOptionExposure: exposure.marginTotalOptionExposure,
+  });
+
+  console.log(
+    JSON.stringify({
+      scope: "seed-sizing-live",
+      symbol: params.symbol,
+      side: params.side,
+      accountNumber: params.accountNumber,
+      accountType: params.accountType,
+      accountNLV: params.accountNLV,
+      optionPrice: params.optionPrice,
+      optionLiquidityQuality: sizing.optionLiquidityQuality,
+      modelTargetPct: sizing.modelTargetPct,
+      modelContracts: sizing.modelContracts,
+      quantity: sizing.quantity,
+      flooredToOne: sizing.flooredToOne,
+      bindingRail: sizing.bindingRail,
+      estimatedOrderCost: sizing.orderCost,
+      floorPct: getSeedSizingFloorPct(),
+      ceilingPct: getSeedSizingCeilingPct(),
+      marginMaxTotalUtilization: getMarginMaxTotalUtilization(),
+      existingAccountExposure: exposure.existingAccountExposure,
+      existingCombinedExposure: exposure.existingCombinedExposure,
+      marginTotalOptionExposure: exposure.marginTotalOptionExposure,
+      perUnderlyingCapContracts: sizing.perUnderlyingCapContracts,
+      combinedCapContracts: sizing.combinedCapContracts,
+      marginUtilizationContracts: sizing.marginUtilizationContracts,
+      blockedReason: sizing.blockedReason ?? null,
+    }),
+  );
+
+  return sizing;
+}
+
+// Attempt to spray a multi-contract seed via the front-loaded spray primitive.
+// Cash-only + flag-gated (self-guarded by startSprayBuy). An explicit
+// sprayContracts option can request MORE than the model sized (legacy callers),
+// so the target is the larger of the two. Returns true when the spray fired (the
+// seed is placed); false to fall through to the caller's single-order path.
+// Pure: the spray target for a seed. An explicit sprayContracts option can
+// request MORE than the model sized (legacy callers), so take the larger.
+export function resolveSprayTarget(
+  seedQuantity: number,
+  sprayContractsOption: number | undefined,
+): number {
+  return Math.max(seedQuantity, Math.floor(sprayContractsOption ?? 0));
+}
+
+// Pure: whether a seed of this size should route through the spray primitive
+// (multi-contract, cash account, flag on).
+export function shouldSpraySeed(
+  sprayTarget: number,
+  accountType: "margin" | "cash" | "unknown",
+): boolean {
+  return sprayTarget > 1 && accountType === "cash" && isSprayBuyEnabled();
+}
+
+async function trySpraySeed(params: {
+  seedQuantity: number;
+  sprayContractsOption: number | undefined;
+  accountType: "margin" | "cash" | "unknown";
+  accountNumber: string;
+  symbol: string;
+  contractSymbol: string;
+  side: "call" | "put";
+  limitPrice: number;
+  orderSource: string;
+}): Promise<boolean> {
+  const sprayContracts = resolveSprayTarget(params.seedQuantity, params.sprayContractsOption);
+  if (!shouldSpraySeed(sprayContracts, params.accountType)) {
+    return false;
+  }
+  const sprayResult = await startSprayBuy({
+    accountNumber: params.accountNumber,
+    symbol: params.symbol,
+    contractSymbol: params.contractSymbol,
+    side: params.side,
+    totalContracts: sprayContracts,
+    limitPrice: params.limitPrice,
+    orderSource: params.orderSource,
+  });
+  if (!sprayResult.started) {
+    // Spray declined (flag flipped off mid-flight, invalid target) — caller
+    // falls through to the normal single-order path so the seed still lands.
+    return false;
+  }
+  console.log(
+    JSON.stringify({
+      scope: "seed-symbol-spray-buy",
+      symbol: params.symbol,
+      side: params.side,
+      contractSymbol: params.contractSymbol,
+      totalContracts: sprayContracts,
+      scheduledSlices: sprayResult.scheduledSlices,
+      firstSliceOrderId: sprayResult.firstSliceOrderId,
+      sprayId: sprayResult.sprayId,
+    }),
+  );
+  return true;
 }
 
 async function resolveSeedAccountNumber(options: {
@@ -324,21 +538,15 @@ export function checkCashSeedDte(
   return null;
 }
 
-// Guards the order against the max-seed-cost cap and available buying power.
-// Returns a skip result to return, or null to continue.
+// Guards the order against the broker's real effective buying power (the only
+// remaining dollar bound — the size itself is governed by the %-of-NLV band +
+// %-caps upstream). Returns a skip result to return, or null to continue.
 export function checkSeedAffordability(
   estimatedOrderCost: number,
-  maxSeedOrderCost: number,
   buyingPowerAvailable: number,
   buyingPowerSummary: Awaited<ReturnType<typeof getEffectiveBuyingPowerSummary>>,
   costResult: SeedSymbolResult,
 ): SeedSymbolResult | null {
-  if (estimatedOrderCost > maxSeedOrderCost) {
-    return {
-      ...costResult,
-      skippedReason: `seed order cost ${estimatedOrderCost.toFixed(2)} exceeds BOT_MAX_SEED_ORDER_COST ${maxSeedOrderCost.toFixed(2)}`,
-    };
-  }
   if (estimatedOrderCost > buyingPowerAvailable) {
     return {
       ...costResult,
@@ -348,46 +556,11 @@ export function checkSeedAffordability(
   return null;
 }
 
-// SHADOW-ONLY telemetry: emit a `seed-sizing-shadow` line comparing the real
-// (quantity: 1) seed against what the %-of-account model would have sized. Never
-// touches the order — pure logging. Neutral pluggable inputs (regime/liquidity)
-// are left undefined so computeSeedSizing treats them as 1.0 until fed.
-function logSeedSizingShadow(params: {
-  symbol: string;
-  side: "call" | "put";
-  accountNumber: string;
-  accountNLV: number;
-  optionPrice: number;
-  currentContracts: number;
-  currentNotional: number;
-}): void {
-  const sizing = computeSeedSizing({
-    accountNLV: params.accountNLV,
-    optionPrice: params.optionPrice,
-  });
-  console.log(
-    JSON.stringify({
-      scope: "seed-sizing-shadow",
-      symbol: params.symbol,
-      side: params.side,
-      accountNumber: params.accountNumber,
-      accountNLV: params.accountNLV,
-      optionPrice: params.optionPrice,
-      currentContracts: params.currentContracts,
-      currentNotional: params.currentNotional,
-      modelTargetPct: sizing.modelTargetPct,
-      modelTargetNotional: sizing.modelTargetNotional,
-      modelContracts: sizing.modelContracts,
-      modelContractsNotional: sizing.modelContractsNotional,
-      floorPct: getSeedSizingFloorPct(),
-      ceilingPct: getSeedSizingCeilingPct(),
-      regimeFavorability: sizing.regimeFavorability,
-      optionLiquidityQuality: sizing.optionLiquidityQuality,
-    }),
-  );
-}
-
-export async function seedSymbol(
+// Exported via the default export below; consumers all use the default import,
+// so the function itself is not a named export (keeps fallow's dead-export
+// analysis honest).
+// fallow-ignore-next-line complexity
+async function seedSymbol(
   symbol: string,
   side: "call" | "put" = "call",
   accountNumber?: string,
@@ -658,6 +831,50 @@ export async function seedSymbol(
     };
   }
 
+  const buyingPowerSummary = await getEffectiveBuyingPowerSummary(
+    resolvedAccountNumber,
+    new Date(),
+    { bypassCashAccountCap: true },
+  );
+  const buyingPowerAvailable = buyingPowerSummary.effectiveBuyingPower;
+  const accountNLV = buyingPowerSummary.totalCapital;
+
+  // LIVE %-of-account sizing (2026-07-21). Drives the REAL order quantity: the
+  // floor..ceiling NLV band × the candidate's optionLiquidityQuality (regime
+  // left neutral — regime is Stage 2's growth lever, not the seed), then clamped
+  // by the concentration caps + the total-margin-utilization leverage rail, then
+  // floored to at least 1 contract (never sizes DOWN vs the old quantity: 1
+  // unless a hard rail demands 0). Every limit is a %-of-NLV — no dollar knob.
+  const sizing = await computeLiveSeedSizing({
+    symbol: normalizedSymbol,
+    side,
+    accountNumber: resolvedAccountNumber,
+    accountType: resolvedAccountType,
+    accountNLV,
+    optionPrice: numericLimitPrice,
+    optionLiquidityQuality: candidate?.optionLiquidityQuality,
+  });
+  const seedQuantity = sizing.quantity;
+  const estimatedOrderCost = seedQuantity * numericLimitPrice * 100;
+
+  // Base extended with cost/limit data; used by the remaining returns.
+  const costResult: SeedSymbolResult = {
+    ...pricedResult,
+    buyingPowerAvailable,
+    estimatedOrderCost,
+    limitPrice: numericLimitPrice,
+  };
+
+  // A hard rail (concentration cap / margin-leverage ceiling already breached)
+  // sized the seed to 0. Skip — a genuine "do not add", not an affordability
+  // retry candidate.
+  if (seedQuantity < 1) {
+    return {
+      ...costResult,
+      skippedReason: sizing.blockedReason ?? "seed sizing resolved to zero contracts",
+    };
+  }
+
   const order: OrderPayload = {
     source: orderSource,
     "time-in-force": "Day",
@@ -668,62 +885,26 @@ export async function seedSymbol(
       {
         action: "Buy to Open",
         symbol: candidateSymbol,
-        quantity: 1,
+        quantity: seedQuantity,
         "instrument-type": normalizeInstrumentType("Equity Option"),
       },
     ],
   };
 
-  const buyingPowerSummary = await getEffectiveBuyingPowerSummary(
-    resolvedAccountNumber,
-    new Date(),
-    { bypassCashAccountCap: true },
-  );
-  const buyingPowerAvailable = buyingPowerSummary.effectiveBuyingPower;
-  const estimatedOrderCost = numericLimitPrice * 100;
-  const maxSeedOrderCost = getMaxSeedOrderCost();
-
-  // Base extended with cost/limit data; used by the remaining returns.
-  const costResult: SeedSymbolResult = {
-    ...pricedResult,
-    buyingPowerAvailable,
-    estimatedOrderCost,
-    limitPrice: numericLimitPrice,
-  };
-
-  // SHADOW-ONLY (2026-07-21): log what the %-of-account sizing model WOULD have
-  // chosen next to this real seed (which is always quantity: 1 → 1 contract).
-  // This changes NOTHING about the order placed below — it's a comparison line
-  // so the model can be evaluated before it's flipped live. totalCapital from
-  // the effective-buying-power summary is the account NLV proxy the band is
-  // measured against; the pluggable regime/liquidity inputs are left neutral
-  // (undefined → 1.0) until separate work feeds them.
-  logSeedSizingShadow({
-    symbol: normalizedSymbol,
-    side,
-    accountNumber: resolvedAccountNumber,
-    accountNLV: buyingPowerSummary.totalCapital,
-    optionPrice: numericLimitPrice,
-    currentContracts: 1,
-    currentNotional: estimatedOrderCost,
-  });
-
   const affordabilitySkip = checkSeedAffordability(
     estimatedOrderCost,
-    maxSeedOrderCost,
     buyingPowerAvailable,
     buyingPowerSummary,
     costResult,
   );
   if (affordabilitySkip) {
-    // The primary pick blew a cost cap, but a cheaper strike may exist in the
-    // same chain. Re-run the whole seed once with the binding cap as a
+    // The primary pick exceeded buying power, but a cheaper strike may exist in
+    // the same chain. Re-run the whole seed once with the binding cap as a
     // selection-level ask filter. If the retry cannot place, return the
     // ORIGINAL skip — its reason string is load-bearing (run-cycle-seed's
     // held-contract fallback matches it verbatim).
     const retryCap = getAffordabilityRetryCap(
       estimatedOrderCost,
-      maxSeedOrderCost,
       buyingPowerAvailable,
       options.maxAskPrice !== undefined,
       Boolean(explicitContract),
@@ -774,49 +955,28 @@ export async function seedSymbol(
     };
   }
 
-  // OPT-IN spray-buy (cash accounts only, flag-gated): when the caller asked for
+  // Spray-buy (cash accounts only, flag-gated): when the MODEL-SIZED quantity is
   // more than one contract, hand the acquisition to the front-loaded spray
-  // primitive instead of placing a single 1-lot order. startSprayBuy fires the
-  // first (largest) slice now and persists the rest for later cycles to release;
-  // it self-guards on the flag / target, so a disabled flag or <=1 target falls
-  // through to the normal single-order path below.
-  const sprayContracts = Math.floor(options.sprayContracts ?? 0);
-  if (
-    sprayContracts > 1 &&
-    resolvedAccountType === "cash" &&
-    isSprayBuyEnabled()
-  ) {
-    const sprayResult = await startSprayBuy({
-      accountNumber: resolvedAccountNumber,
-      symbol: normalizedSymbol,
-      contractSymbol: candidateSymbol,
-      side,
-      totalContracts: sprayContracts,
-      limitPrice: numericLimitPrice,
-      orderSource,
-    });
-    if (sprayResult.started) {
-      console.log(
-        JSON.stringify({
-          scope: "seed-symbol-spray-buy",
-          symbol: normalizedSymbol,
-          side,
-          contractSymbol: candidateSymbol,
-          totalContracts: sprayContracts,
-          scheduledSlices: sprayResult.scheduledSlices ?? null,
-          firstSliceOrderId: sprayResult.firstSliceOrderId ?? null,
-          sprayId: sprayResult.sprayId ?? null,
-        }),
-      );
-      return {
-        ...costResult,
-        dryRunResponse,
-        placedOrder: true,
-        usedHeldContractFallback: explicitContract ? true : undefined,
-      };
-    }
-    // Spray declined (flag flipped off mid-flight, invalid target) — fall
-    // through to the normal single-order path so the seed still lands.
+  // primitive instead of placing one big clip. Returns true when it fired (the
+  // seed has landed), false to fall through to the normal single-order path.
+  const sprayed = await trySpraySeed({
+    seedQuantity,
+    sprayContractsOption: options.sprayContracts,
+    accountType: resolvedAccountType,
+    accountNumber: resolvedAccountNumber,
+    symbol: normalizedSymbol,
+    contractSymbol: candidateSymbol,
+    side,
+    limitPrice: numericLimitPrice,
+    orderSource,
+  });
+  if (sprayed) {
+    return {
+      ...costResult,
+      dryRunResponse,
+      placedOrder: true,
+      usedHeldContractFallback: explicitContract ? true : undefined,
+    };
   }
 
   const orderResponse = await tastytradeApi.orderService.createOrder(
