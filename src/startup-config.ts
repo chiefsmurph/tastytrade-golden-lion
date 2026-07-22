@@ -10,6 +10,11 @@ import {
   isPhantomQuoteGuardEnabled,
 } from "~/strategy/liquidity-gate";
 import { getMarginMaxBuyExposurePct, getCashMaxBuyExposurePct } from "~/strategy/risk-limits";
+import {
+  getCombinedUnderlyingCapPct,
+  getMaxUnderlyingAccountPct,
+  getMinLiquidityCapMultiplier,
+} from "~/strategy/option-liquidity-quality";
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
 import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
 
@@ -149,6 +154,9 @@ export function getStartupConfigSnapshot(
       cashMaxBuyExposurePct: getCashMaxBuyExposurePct(),
       marginSeedFromCash: getMarginSeedConfig(),
       cashSeedFromMargin: getCashSeedFromMarginConfig(),
+      maxUnderlyingAccountPct: getMaxUnderlyingAccountPct(),
+      minLiquidityCapMultiplier: getMinLiquidityCapMultiplier(),
+      combinedUnderlyingCapPct: getCombinedUnderlyingCapPct(),
     };
   } catch (error) {
     resolved = { error: error instanceof Error ? error.message : String(error) };

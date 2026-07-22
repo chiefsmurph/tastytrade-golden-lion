@@ -16,6 +16,10 @@ import { TopOptionCandidateForSymbolResult } from "./types";
 
 import { getMarginTargetCallDelta, getMinIvRankPct } from "~/strategy/entry-filters";
 import {
+  computeOptionLiquidityQuality,
+  summarizeChainStructure,
+} from "~/strategy/option-liquidity-quality";
+import {
   EntryAccountType,
   evaluateLiquidityGate,
   getMaxEntrySpreadPctForAccountType,
@@ -199,6 +203,12 @@ export async function buildTopOptionCandidateResult(
     };
   }
 
+  // Chain-structure classification for the liquidity-quality score: computed
+  // once here (SG-like weeklies-in-window vs XXI-like monthly-only) and reused
+  // for every candidate quote below — it is a property of the underlying, not
+  // the strike.
+  const chainStructure = summarizeChainStructure(optionChain.expirations);
+
   const optionCandidates = chooseOptionCandidates(
     optionChain,
     underlyingPrice,
@@ -317,6 +327,16 @@ export async function buildTopOptionCandidateResult(
       liquidityGate,
     );
 
+    // optionLiquidityQuality (0..1): SG-like liquid weekly (high) vs thin
+    // monthly-only (low). Exported for the sizing model + the concentration
+    // caps. Uses this candidate's own spread/OI so it reflects the strike we'd
+    // actually trade, not just the chain structure.
+    const liquidityQuality = computeOptionLiquidityQuality({
+      chainStructure,
+      spreadPct: spreadStats.spreadPct,
+      openInterest: candidateOpenInterest,
+    });
+
     const candidateResult: TopOptionCandidateForSymbolResult = {
       ...normalizedCandidate,
       ...spreadStats,
@@ -325,6 +345,7 @@ export async function buildTopOptionCandidateResult(
       openInterest: candidateOpenInterest,
       dayVolume: candidateDayVolume,
       ivx: candidateIvx,
+      optionLiquidityQuality: liquidityQuality.score,
       maxAllowedSpreadPct,
       meetsSpreadRequirement: liquidityGate.meetsSpreadRequirement,
       quoteSymbol:

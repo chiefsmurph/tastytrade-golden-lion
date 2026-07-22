@@ -17,6 +17,11 @@ export interface TopOptionCandidateForSymbolResult {
   maxDTE?: number;
   meetsSpreadRequirement?: boolean;
   meetsVolumeRequirement?: boolean;
+  // optionLiquidityQuality (0..1): higher = SG-like liquid weekly, lower = thin
+  // monthly-only. Blended from chain weeklies-in-window, entry spread %, and
+  // open interest (see ~/strategy/option-liquidity-quality). Exported so the
+  // sizing model can consume it as its `optionLiquidityQuality` input.
+  optionLiquidityQuality?: number;
   minDTE?: number;
   preferredDTE?: number;
   "put-streamer-symbol"?: string;
