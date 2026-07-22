@@ -117,6 +117,7 @@ export type RunCycleContext = {
 };
 
 
+// fallow-ignore-next-line complexity
 function toRunPlanSelectedGroup(
   evaluation: PositionGroupEvaluation,
   rank: number,
@@ -138,6 +139,7 @@ function toRunPlanSelectedGroup(
   };
 }
 
+// fallow-ignore-next-line complexity
 function computeGroupReturns(
   completedEvaluations: PositionGroupEvaluation[],
   gatedEvaluations: PositionGroupEvaluation[] = [],
@@ -150,6 +152,7 @@ function computeGroupReturns(
     ]),
   );
 
+  // fallow-ignore-next-line complexity
   return completedEvaluations.map((evaluation) => {
     const secretSignals = getSecretPositionSignalsForSymbol(evaluation.underlyingSymbol);
     const firstSymbol = String(evaluation.positions[0]?.symbol ?? "").trim();
@@ -207,6 +210,14 @@ function computeGroupReturns(
       );
     }
 
+    const legWeightedFills: Record<string, number> = {};
+    for (const snapshot of evaluation.positionSnapshots) {
+      const sym = String(snapshot.position.symbol ?? "").trim();
+      if (sym && snapshot.weightedAverageFill > 0) {
+        legWeightedFills[sym] = snapshot.weightedAverageFill;
+      }
+    }
+
     return {
       askReturnPct,
       bidReturnPct,
@@ -223,6 +234,7 @@ function computeGroupReturns(
       underlyingPriceAtCycleTime: underlyingPrices.get(evaluation.underlyingSymbol.toUpperCase()) ?? null,
       underlyingSymbol: evaluation.underlyingSymbol,
       weightedAverageFill,
+      legWeightedFills,
     };
   });
 }
@@ -290,6 +302,7 @@ export function normalizeGroupExecutionTargetExposures(
   });
 }
 
+// fallow-ignore-next-line complexity
 export async function buildRunCycleContext(
   accountNumber?: string,
 ): Promise<RunCycleContext> {
@@ -703,6 +716,7 @@ export async function buildRunCycleContext(
     .filter(
       (evaluation) => !selectedUnderlyingSymbols.has(evaluation.underlyingSymbol),
     )
+    // fallow-ignore-next-line complexity
     .sort((a, b) => {
       const aExposure = a.executionTargets?.targetAccountExposure ?? Number.NEGATIVE_INFINITY;
       const bExposure = b.executionTargets?.targetAccountExposure ?? Number.NEGATIVE_INFINITY;

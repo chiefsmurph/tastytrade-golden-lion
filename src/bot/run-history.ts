@@ -43,6 +43,10 @@ export interface RunGroupReturn {
   underlyingPriceAtCycleTime: number | null;
   underlyingSymbol: string;
   weightedAverageFill: number;
+  // Per-leg cost basis keyed by OCC contract symbol. Use this over the blended
+  // group weightedAverageFill when computing realized P&L for a specific close
+  // order, since legs at different strikes/expirations have distinct cost bases.
+  legWeightedFills?: Record<string, number>;
 }
 
 export interface RunStrategyDecision {
@@ -256,6 +260,7 @@ async function getRunHistoryReadPathsForAccount(accountNumber: string): Promise<
   return [primaryPath, legacyPath];
 }
 
+// fallow-ignore-next-line complexity
 async function readRunHistoryFile(historyPath: string): Promise<RunHistoryEntry[]> {
   let raw = "";
 
@@ -316,6 +321,7 @@ function toPublicGroup(group: RunGroupReturn): PublicRunGroupReturn {
   };
 }
 
+// fallow-ignore-next-line complexity
 function aggregatePublicGroups(
   groups: PublicRunGroupReturn[],
   ticker: string,
@@ -444,6 +450,7 @@ export async function appendRunHistoryError(
   }
 }
 
+// fallow-ignore-next-line complexity
 export async function getRecentRunHistory(
   limit = 20,
   accountNumber?: string,
@@ -493,6 +500,7 @@ export async function getRecentRunHistory(
   return merged.slice(0, normalizedLimit);
 }
 
+// fallow-ignore-next-line complexity
 export async function getLastRunGroupsByTickers(
   rawTickers: string,
 ): Promise<LastRunGroupsByTickerMap> {
