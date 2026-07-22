@@ -608,6 +608,7 @@ export async function advanceSprays(
     return { advanced: 0, completed: 0 };
   }
   const active = await loadActiveSprays();
+  console.log(JSON.stringify({ scope: "spray-advance-entry", activeCount: active.length, ids: active.map(r => r.id.slice(-20)) }));
   let completed = 0;
   for (const record of active) {
     await advanceOneSpray(record, deps);
