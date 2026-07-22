@@ -12,6 +12,7 @@ import type { SecretSourcePosition } from "~/strategy/secret/types";
 import { countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
 import { recordPositionOpened, getRegistryEntry } from "./position-registry";
 import { getHeldContractFallbackCandidate } from "./actions/manage-allocation";
+import { recordSeedAttempt, recordSeedSkip } from "./seed-rejection-scoreboard";
 import {
   getMarginSeedConfig,
   getCashSeedFromMarginConfig,
@@ -194,6 +195,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
         gated: true,
         gateReason: decision.reason,
       }));
+      recordSeedSkip(accountNumber, `seed gate: ${decision.reason}`);
       continue;
     }
 
@@ -202,6 +204,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
       orderSource: MARGIN_SEED_FROM_CASH_ORDER_SOURCE,
       maxLimitPrice: cashFill > 0 ? cashFill : undefined,
     });
+    recordSeedAttempt(accountNumber, result);
 
     if (result.placedOrder) {
       await recordPositionOpened(accountNumber, symbol, side);
@@ -341,6 +344,7 @@ export async function maybeSeedCashAccountFromMarginAccount(
         gated: true,
         gateReason: decision.reason,
       }));
+      recordSeedSkip(accountNumber, `seed gate: ${decision.reason}`);
       continue;
     }
 
@@ -394,6 +398,8 @@ export async function maybeSeedCashAccountFromMarginAccount(
         }));
       }
     }
+
+    recordSeedAttempt(accountNumber, result);
 
     if (result.placedOrder) {
       await recordPositionOpened(accountNumber, symbol, side);
