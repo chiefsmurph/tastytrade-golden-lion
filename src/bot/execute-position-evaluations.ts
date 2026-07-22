@@ -37,6 +37,7 @@ import {
   isMarginSeedFromCashOrderSource,
   isOvernightReductionOrderSource,
   isSecretAutoSeedOrderSource,
+  isSprayBuyOrderSource,
 } from "./order-sources";
 import { isOvernightPosition } from "./position-registry";
 import { isInOvernightReductionWindow } from "~/strategy/overnight-reduction";
@@ -150,6 +151,17 @@ export async function cancelAllLiveOrders(
         orderId,
         skippedReason: "protected overnight reduction order",
         underlyingSymbol,
+      });
+      continue;
+    }
+
+    // Spray-buy slices rest across cycles by design (a spray spans several
+    // cycles); the spray executor — not the cancel sweep — owns their lifecycle.
+    if (isSprayBuyOrderSource(order.source)) {
+      results.push({
+        cancelled: false,
+        orderId,
+        skippedReason: "protected spray-buy slice order",
       });
       continue;
     }

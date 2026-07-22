@@ -25,6 +25,7 @@ import {
   isClosingOnlyDryRunError,
   recordClosingOnly,
 } from "./closing-only-cache";
+import { isSprayBuyEnabled, startSprayBuy } from "./actions/spray-buy";
 
 
 export interface SeedSymbolOptions {
@@ -47,6 +48,11 @@ export interface SeedSymbolOptions {
     quoteSymbol?: string;
     dte?: number;
   };
+  // OPT-IN spray-buy: when >1 and the spray-buy flag is on (cash accounts only),
+  // acquire this many contracts via the front-loaded spray primitive instead of
+  // a single 1-lot order. Default behavior is unchanged when unset / <= 1 / the
+  // flag is off / the account is not cash. Buy paths opt in explicitly.
+  sprayContracts?: number;
 }
 
 export interface SeedSymbolResult {
@@ -705,6 +711,51 @@ export async function seedSymbol(
           : error,
       skippedReason: extractDryRunSkipReason(error),
     };
+  }
+
+  // OPT-IN spray-buy (cash accounts only, flag-gated): when the caller asked for
+  // more than one contract, hand the acquisition to the front-loaded spray
+  // primitive instead of placing a single 1-lot order. startSprayBuy fires the
+  // first (largest) slice now and persists the rest for later cycles to release;
+  // it self-guards on the flag / target, so a disabled flag or <=1 target falls
+  // through to the normal single-order path below.
+  const sprayContracts = Math.floor(options.sprayContracts ?? 0);
+  if (
+    sprayContracts > 1 &&
+    resolvedAccountType === "cash" &&
+    isSprayBuyEnabled()
+  ) {
+    const sprayResult = await startSprayBuy({
+      accountNumber: resolvedAccountNumber,
+      symbol: normalizedSymbol,
+      contractSymbol: candidateSymbol,
+      side,
+      totalContracts: sprayContracts,
+      limitPrice: numericLimitPrice,
+      orderSource,
+    });
+    if (sprayResult.started) {
+      console.log(
+        JSON.stringify({
+          scope: "seed-symbol-spray-buy",
+          symbol: normalizedSymbol,
+          side,
+          contractSymbol: candidateSymbol,
+          totalContracts: sprayContracts,
+          scheduledSlices: sprayResult.scheduledSlices ?? null,
+          firstSliceOrderId: sprayResult.firstSliceOrderId ?? null,
+          sprayId: sprayResult.sprayId ?? null,
+        }),
+      );
+      return {
+        ...costResult,
+        dryRunResponse,
+        placedOrder: true,
+        usedHeldContractFallback: explicitContract ? true : undefined,
+      };
+    }
+    // Spray declined (flag flipped off mid-flight, invalid target) — fall
+    // through to the normal single-order path so the seed still lands.
   }
 
   const orderResponse = await tastytradeApi.orderService.createOrder(
