@@ -441,7 +441,10 @@ async function placeChase(
     console.log(JSON.stringify({ scope: "spray-place-error", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quantity, limitPrice, error: String(err) }));
     return false;
   }
-  if (!orderId) return false;
+  if (!orderId) {
+    console.log(JSON.stringify({ scope: "spray-place-no-order-id", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quantity, limitPrice }));
+    return false;
+  }
   const working: SprayWorkingOrder = {
     orderId,
     quantity,
