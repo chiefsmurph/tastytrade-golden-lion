@@ -510,6 +510,7 @@ async function driveWorkingOrder(
   deps: SprayDeps,
 ): Promise<void> {
   const working = record.workingOrder;
+  console.log(JSON.stringify({ scope: "spray-drive-debug", sprayId: record.id, symbol: record.symbol, hasWorking: !!working, shortfall, mid: ctx.mid, ceiling: ctx.ceiling, collapse: ctx.collapse }));
   if (!working) {
     // No live order: place one for the shortfall, starting at mid (or the
     // ceiling when collapsing / mid already at/above the ceiling).
