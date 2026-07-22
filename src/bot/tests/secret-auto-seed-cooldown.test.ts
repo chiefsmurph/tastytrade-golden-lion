@@ -16,7 +16,28 @@ test("placed orders get the standard per-symbol cooldown", () => {
   );
 });
 
-test("no-chain/no-candidate skips get the long cooldown", () => {
+test("a truly optionless underlying is classified no-chain, not no-candidate", () => {
+  // Emitted by option-candidate selection when the underlying carries ZERO
+  // expirations anywhere (see NO_OPTION_CHAIN_SKIP_REASON) — a permanent
+  // property, benched far longer than a chain that merely lacks a candidate.
+  assert.equal(
+    classifySeedOutcomeCooldown({
+      placedOrder: false,
+      skippedReason: "no option chain for underlying",
+    }),
+    "no-chain",
+  );
+  // …and it is NOT lumped with the generic no-candidate reason.
+  assert.notEqual(
+    classifySeedOutcomeCooldown({
+      placedOrder: false,
+      skippedReason: "no option chain for underlying",
+    }),
+    "no-candidate",
+  );
+});
+
+test("no-candidate skips (chain exists, no usable candidate) get the long cooldown", () => {
   // These match seed-symbol.ts skip strings verbatim.
   assert.equal(
     classifySeedOutcomeCooldown({ placedOrder: false, skippedReason: "no option candidate found" }),
@@ -96,6 +117,22 @@ test("placed cooldown uses the per-path map and the standard 10 min window", () 
   assert.equal(isAutoSeedCooldownActive(map, "CD-PLACED", "ACC-1", now + 10 * MIN), false);
   // The placed stamp lives on the caller's map — a different path's map is clear.
   assert.equal(isAutoSeedCooldownActive(new Map(), "CD-PLACED", "ACC-1", now + 1), false);
+});
+
+test("no-chain cooldown is very long (6h), account-independent, and outlasts no-candidate", () => {
+  const map = new Map<string, number>();
+  const now = 1_000_000_000;
+
+  recordSeedOutcomeCooldown("no-chain", map, "CD-NOCHAIN", "ACC-1", now);
+  // Still blocking past the 2h no-candidate window — a name confirmed optionless
+  // once should be probed at most ~once per 6.5h seed session.
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 121 * MIN), true);
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 359 * MIN), true);
+  // …for every account (chain absence is a property of the underlying)…
+  assert.equal(isAutoSeedCooldownActive(new Map(), "CD-NOCHAIN", "ACC-2", now + 359 * MIN), true);
+  // …and clears after 6 hours (conservative: not permanent, so a transient
+  // empty-chain fetch is re-probed next session rather than benched forever).
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 360 * MIN), false);
 });
 
 test("no-candidate cooldown is long (2h) and account-independent", () => {

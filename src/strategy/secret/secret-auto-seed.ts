@@ -7,6 +7,7 @@ import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct }
 import {
   CASH_ACCOUNT_SEED_MIN_DTE,
   CASH_ACCOUNT_SEED_MAX_DTE,
+  NO_OPTION_CHAIN_SKIP_REASON,
 } from "~/strategy/option-candidate";
 import { recordPositionOpened } from "~/bot/position-registry";
 import { recordSeedAttempt, recordSeedSkip } from "~/bot/seed-rejection-scoreboard";
@@ -20,15 +21,20 @@ const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 // buying-power skip blocked retries for 10 min, while optionless names got a
 // fresh chain walk every 10 min forever. Split by outcome instead:
 //   placed       → the existing per-path cooldown map (10 min default).
-//   no-candidate → long, symbol-keyed (no chain/candidate exists — including
-//                  DTE-window misses — account-independent and rarely
-//                  changing intraday).
+//   no-chain     → very long, symbol-keyed. The underlying is not optionable at
+//                  all (zero expirations anywhere) — a permanent property, so
+//                  re-probing burns a full chain fetch for a name that can NEVER
+//                  seed. Account-independent.
+//   no-candidate → long, symbol-keyed (a chain exists but has no usable
+//                  candidate — including DTE-window misses — account-independent
+//                  and rarely changing intraday).
 //   retry        → short, account+symbol-keyed (buying power, dry-run… are
 //                  transient and account-specific).
+const noChainSeedAtBySymbol = new Map<string, number>();
 const noCandidateSeedAtBySymbol = new Map<string, number>();
 const retrySeedAtByAccountSymbol = new Map<string, number>();
 
-export type SeedOutcomeCooldownKind = "placed" | "no-candidate" | "retry";
+export type SeedOutcomeCooldownKind = "placed" | "no-chain" | "no-candidate" | "retry";
 
 // Skip reasons from seed-symbol.ts meaning the underlying has no usable chain
 // or candidate at all. These strings are matched verbatim.
@@ -47,7 +53,10 @@ const NO_CANDIDATE_SKIP_REASONS = new Set([
   `cash seed candidate DTE must be within ${CASH_ACCOUNT_SEED_MIN_DTE}-${CASH_ACCOUNT_SEED_MAX_DTE}`,
 ]);
 
-// Pure classification of a seed attempt into which cooldown applies.
+// Pure classification of a seed attempt into which cooldown applies. The
+// no-chain check precedes no-candidate: an underlying with zero expirations
+// anywhere is permanently un-seedable (a distinct, longer bench) rather than a
+// name whose chain merely lacks a candidate today.
 export function classifySeedOutcomeCooldown(result: {
   placedOrder: boolean;
   skippedReason?: string | null;
@@ -55,13 +64,16 @@ export function classifySeedOutcomeCooldown(result: {
   if (result.placedOrder) {
     return "placed";
   }
+  if (result.skippedReason === NO_OPTION_CHAIN_SKIP_REASON) {
+    return "no-chain";
+  }
   if (NO_CANDIDATE_SKIP_REASONS.has(result.skippedReason ?? "")) {
     return "no-candidate";
   }
   return "retry";
 }
 
-// Exported for tests: true while ANY of the three cooldowns (placed /
+// Exported for tests: true while ANY of the four cooldowns (placed / no-chain /
 // no-candidate / retry) is still active for this symbol+account.
 export function isAutoSeedCooldownActive(
   cooldownMap: Map<string, number>,
@@ -71,6 +83,10 @@ export function isAutoSeedCooldownActive(
 ): boolean {
   const lastSeedAt = cooldownMap.get(symbol) ?? 0;
   if (now - lastSeedAt < getAutoSeedCooldownMs()) {
+    return true;
+  }
+  const lastNoChainAt = noChainSeedAtBySymbol.get(symbol) ?? 0;
+  if (now - lastNoChainAt < getNoChainCooldownMs()) {
     return true;
   }
   const lastNoCandidateAt = noCandidateSeedAtBySymbol.get(symbol) ?? 0;
@@ -91,6 +107,8 @@ export function recordSeedOutcomeCooldown(
 ): void {
   if (kind === "placed") {
     cooldownMap.set(symbol, now);
+  } else if (kind === "no-chain") {
+    noChainSeedAtBySymbol.set(symbol, now);
   } else if (kind === "no-candidate") {
     noCandidateSeedAtBySymbol.set(symbol, now);
   } else {
@@ -200,10 +218,25 @@ function getAutoSeedCooldownMs(): number {
   return readCooldownMs("SECRET_AUTO_SEED_COOLDOWN_MS", 10 * 60 * 1000);
 }
 
-// No chain/candidate on the underlying. Default 2h, not all-day: the seeding
-// window is only 6:30am-1pm PT and small-cap option spreads/liquidity tighten
-// as the session builds, so a morning "no candidate" deserves ~3 retries
-// within the window rather than 1.
+// Underlying has NO option chain at all (zero expirations anywhere) — it is not
+// optionable, a property that effectively never changes intraday and rarely
+// changes at all. Default 6h, which covers the whole 6:30am-1pm PT seed window
+// so a name confirmed optionless once is probed at most once per session.
+//
+// Chosen 6h rather than "permanent" deliberately (conservative): the empty
+// chain COULD, in principle, be a transient upstream fetch failure that
+// returned `expirations: []` instead of a real "not optionable" answer. A 6h
+// bench that resets across restarts (module-level map) errs toward re-probing a
+// name that might become seedable, over permanently starving it — while still
+// eliminating the per-tick re-fetch this was built to stop.
+function getNoChainCooldownMs(): number {
+  return readCooldownMs("SECRET_AUTO_SEED_NO_CHAIN_COOLDOWN_MS", 6 * 60 * 60 * 1000);
+}
+
+// A chain exists but has no usable candidate (spread/quote/DTE-window miss).
+// Default 2h, not all-day: the seeding window is only 6:30am-1pm PT and
+// small-cap option spreads/liquidity tighten as the session builds, so a
+// morning "no candidate" deserves ~3 retries within the window rather than 1.
 function getNoCandidateCooldownMs(): number {
   return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 2 * 60 * 60 * 1000);
 }

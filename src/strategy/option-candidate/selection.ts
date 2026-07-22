@@ -28,6 +28,13 @@ export { getMarginTargetCallDelta };
 const DEFAULT_TOP_CANDIDATE_DTE_TOLERANCE = 7;
 const IVX_TIEBREAK_DTE_WINDOW = 3;
 
+// Emitted when the underlying carries ZERO expirations anywhere (not optionable
+// at all) — a permanent property, distinct from a chain that exists but has no
+// candidate in the DTE window or whose candidates fail spread/quote gates.
+// Consumed verbatim by the seed cooldown to bench such names long-term. The
+// substring "no option chain" maps it to the seed-rejection `no-chain` bucket.
+export const NO_OPTION_CHAIN_SKIP_REASON = "no option chain for underlying";
+
 function getDefaultTopCandidateSelection() {
   const currentTime = new Date();
   const metrics: PositionMetrics = {
@@ -167,6 +174,31 @@ export async function buildTopOptionCandidateResult(
     optionChain,
     resolvedSelectionOptions,
   );
+
+  // No-chain vs no-candidate: an underlying with ZERO expirations anywhere is
+  // not optionable at all (fetchOptionChainWithVolume returns an empty
+  // `expirations: []` on the "No option chain found" path), which is a
+  // permanent property of the underlying — distinct from a chain that exists
+  // but has no candidate inside the DTE window (usedDteFallback) or whose
+  // candidates fail spread/quote gates (both transient/intraday). Surface a
+  // dedicated skip reason so the seed cooldown can bench it long-term instead
+  // of re-fetching the empty chain every cycle. The message contains "no
+  // option chain" so it maps cleanly to the seed-rejection `no-chain` bucket.
+  // Conservative by construction: a chain that merely quotes badly this instant
+  // still carries expirations, so it never lands here.
+  if (optionChain.expirations.length === 0) {
+    return {
+      maxAllowedSpreadPct: getMaxEntrySpreadPctForAccountType(accountType, now),
+      maxDTE: resolvedSelectionOptions?.maxDTE,
+      meetsSpreadRequirement: false,
+      minDTE: resolvedSelectionOptions?.minDTE,
+      preferredDTE,
+      skippedReason: NO_OPTION_CHAIN_SKIP_REASON,
+      strategy: defaultSelection?.strategy?.action,
+      usedDteFallback,
+    };
+  }
+
   const optionCandidates = chooseOptionCandidates(
     optionChain,
     underlyingPrice,

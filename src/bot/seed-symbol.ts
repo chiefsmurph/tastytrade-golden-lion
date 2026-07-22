@@ -12,6 +12,7 @@ import {
   CASH_ACCOUNT_SEED_MAX_DTE,
   getCashSeedDteFallbackWindow,
   getSeedSelectionOptionsForAccountType,
+  NO_OPTION_CHAIN_SKIP_REASON,
   type TopOptionCandidateForSymbolResult,
 } from "~/strategy/option-candidate";
 import { normalizeInstrumentType, OrderPayload, roundOrderPrice } from "./actions/order-utils";
@@ -532,6 +533,19 @@ export async function seedSymbol(
     return {
       ...baseResult,
       skippedReason: "time-of-day strategy is not allowing new accumulation",
+    };
+  }
+
+  // The underlying is not optionable at all (zero expirations anywhere).
+  // Preserve the dedicated no-chain reason verbatim so the seed cooldown benches
+  // it long-term instead of collapsing it into the generic "no option candidate
+  // found" (which would earn only the moderate no-candidate cooldown and keep
+  // re-fetching the empty chain). Only reached in-window (strategy check above),
+  // so an off-hours probe still returns the transient time-of-day reason.
+  if (candidate?.skippedReason === NO_OPTION_CHAIN_SKIP_REASON) {
+    return {
+      ...baseResult,
+      skippedReason: NO_OPTION_CHAIN_SKIP_REASON,
     };
   }
 
