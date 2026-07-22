@@ -1,4 +1,4 @@
-import { readEnvInt } from "~/core/env-utils";
+import { readEnvInt, readEnvPct } from "~/core/env-utils";
 import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
 
 function parseEnvFraction(key: string, fallback: number): number {
@@ -37,17 +37,13 @@ export function getMaxUnderlyingContracts(): number {
 }
 
 /**
- * RETIRED 2026-07-21 — dollar-denominated position caps are gone; every seed /
- * position limit is now a PERCENT of account NLV. This per-group NOTIONAL cap is
- * redundant with the %-based per-underlying concentration cap
- * (STRATEGY_MAX_UNDERLYING_ACCOUNT_PCT) plus the per-group CONTRACT cap
- * (STRATEGY_MAX_UNDERLYING_CONTRACTS), so it is permanently OFF (Infinity). The
- * STRATEGY_MAX_UNDERLYING_NOTIONAL env var is now ignored (flagged obsolete at
- * boot). Kept as a stable Infinity so the allocation-lane clamp math that reads
- * it stays a no-op without a wider refactor.
+ * Max market value in dollars per position group, measured the way the
+ * exposure caps measure it: current bid × quantity × multiplier
+ * (see `getGroupMarketValue`).
  */
 export function getMaxUnderlyingNotional(): number {
-  return Infinity;
+  const parsed = readEnvPct("STRATEGY_MAX_UNDERLYING_NOTIONAL", 0);
+  return parsed > 0 ? parsed : Infinity;
 }
 
 // Dip-responsive target boost for margin: press a dip harder by raising the
