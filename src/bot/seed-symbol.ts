@@ -346,7 +346,7 @@ async function computeLiveSeedSizing(params: {
     accountNLV: params.accountNLV,
     optionPrice: params.optionPrice,
     optionLiquidityQuality: params.optionLiquidityQuality,
-    accountType: params.accountType === "margin" ? "margin" : "cash",
+    accountType: params.accountType === "cash" ? "cash" : "margin",
     concentrationBasis: params.accountNLV,
     existingAccountExposure: exposure.existingAccountExposure,
     existingCombinedExposure: exposure.existingCombinedExposure,
