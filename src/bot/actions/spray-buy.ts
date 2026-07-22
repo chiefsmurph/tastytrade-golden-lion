@@ -554,13 +554,17 @@ async function advanceOneSpray(
   record: SprayRampRecord,
   deps: SprayDeps,
 ): Promise<void> {
-  if (record.aborted || isSprayComplete(record)) return;
+  if (record.aborted || isSprayComplete(record)) {
+    console.log(JSON.stringify({ scope: "spray-advance-skip", sprayId: record.id, aborted: record.aborted, observedFilled: record.observedFilled, totalContracts: record.totalContracts }));
+    return;
+  }
 
   const now = deps.now();
   await reconcileWorkingOrder(record, deps); // fold fills, free a dead slot
 
   // Deadline: past it, cancel any remainder and abort — no chasing past close.
   if (now >= record.deadlineMs) {
+    console.log(JSON.stringify({ scope: "spray-advance-deadline", sprayId: record.id, now, deadlineMs: record.deadlineMs }));
     await retireWorkingOrder(record, deps);
     record.aborted = true;
     await saveSpray(record);
@@ -574,6 +578,7 @@ async function advanceOneSpray(
     frontLoad: record.frontLoad,
   });
   const shortfall = allowed - record.observedFilled;
+  console.log(JSON.stringify({ scope: "spray-advance-shortfall", sprayId: record.id, symbol: record.symbol, allowed, observedFilled: record.observedFilled, shortfall, elapsed: now - record.startedAtMs }));
 
   // Only touch the book when there's a shortfall to chase; otherwise just persist
   // any reconciled state (a working order for a now-satisfied target can stay —
