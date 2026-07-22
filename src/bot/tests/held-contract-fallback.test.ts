@@ -9,6 +9,7 @@ function occSymbol(root: string, yymmdd: string, strike: string): string {
   return `${root.padEnd(6, " ")}${yymmdd}C${strike}`;
 }
 
+// fallow-ignore-next-line complexity
 function buildEvaluation(
   snapshots: Array<{
     symbol: string;
@@ -223,18 +224,20 @@ test("isNoFittingSeedCandidateReason matches only candidate-fit failures", () =>
   );
 });
 
-test("isCostBlockedSeedReason matches only cost/buying-power failures", () => {
+test("isCostBlockedSeedReason matches only buying-power failures", () => {
   assert.equal(
     isCostBlockedSeedReason(
       "insufficient effective buying power for seed order — capped at 98.80 by per-action max buy pct, order cost 183.00",
     ),
     true,
   );
+  // The old dollar-cap reason is retired (BOT_MAX_SEED_ORDER_COST removed) and
+  // is no longer produced, so it no longer classifies as cost-blocked.
   assert.equal(
     isCostBlockedSeedReason(
       "seed order cost 250.00 exceeds BOT_MAX_SEED_ORDER_COST 200.00",
     ),
-    true,
+    false,
   );
 
   assert.equal(isCostBlockedSeedReason(null), false);

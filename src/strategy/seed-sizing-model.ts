@@ -1,17 +1,17 @@
 /**
- * %-of-account seed sizing model (SHADOW-ONLY as of 2026-07-21).
+ * %-of-account seed sizing model (LIVE as of 2026-07-21).
  *
- * The live seed path sizes every seed at a hard-coded `quantity: 1` contract
- * (see ~/bot/seed-symbol.ts). That means the dollar size of a seed is an
+ * The seed path used to size every seed at a hard-coded `quantity: 1` contract
+ * (see ~/bot/seed-symbol.ts). That meant the dollar size of a seed was an
  * ACCIDENT of the option's price: a $0.30 option → ~2% of a $1,650 account, a
- * $3.00 option → ~18%. Position size ends up a byproduct of option price, not
+ * $3.00 option → ~18%. Position size ended up a byproduct of option price, not
  * conviction.
  *
  * This module expresses seed size as a target % of account NLV (a notional
  * band) and converts that back to a whole contract count at the current option
- * price. It is NOT wired into live order sizing — callers log what this model
- * WOULD have chosen next to the real (quantity: 1) seed so the two can be
- * compared before anything is flipped live.
+ * price. seed-symbol.ts + seed-sizing-live.ts now consume it to drive the REAL
+ * order quantity (floored to at least 1 contract, then clamped by concentration
+ * + margin-utilization rails).
  *
  * The target % is a configurable FLOOR..CEILING band multiplied by two
  * PLUGGABLE, DEFAULT-NEUTRAL (1.0) inputs so separate work can feed them later
@@ -23,7 +23,7 @@
  * never inflate it past the ceiling.
  */
 
-import { readEnvPct } from "~/core/env-utils";
+import { readEnvFraction } from "~/core/env-utils";
 
 // Standard US equity-option contract multiplier (shares per contract). The
 // seed path prices order cost as limitPrice × 100 everywhere else, so the
@@ -33,12 +33,17 @@ export const OPTION_CONTRACT_MULTIPLIER = 100;
 // Target band, as a FRACTION of account NLV (0.12 = 12%). The ceiling is the
 // neutral-inputs target; the multipliers fade it down toward — but never below
 // — the floor. Env-overridable via the existing SECRET_ prefix pattern.
+//
+// LIVE band (2026-07-21): floor 12% → ceiling 35%. readEnvFraction accepts the
+// value written either way — `12`/`35` (percent) or `0.12`/`0.35` (fraction) —
+// so a server .env with integer-looking `12`/`35` resolves correctly instead of
+// the latent 1200% bug that a raw reader would produce once sizing goes live.
 export function getSeedSizingFloorPct(): number {
-  return readEnvPct("SECRET_SEED_SIZING_FLOOR_PCT", 0.12);
+  return readEnvFraction("SECRET_SEED_SIZING_FLOOR_PCT", 0.12);
 }
 
 export function getSeedSizingCeilingPct(): number {
-  return readEnvPct("SECRET_SEED_SIZING_CEILING_PCT", 0.25);
+  return readEnvFraction("SECRET_SEED_SIZING_CEILING_PCT", 0.35);
 }
 
 export interface SeedSizingInputs {
