@@ -1,4 +1,4 @@
-import { getCurrentAllocationBudget } from "./actions/manage-allocation";
+import { getCurrentAllocationBudget } from "./allocation-budget";
 import { getTimeOfDayExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import { getAccountMarginOrCash } from "~/core/default-account";
 import { getMaxBuyExposurePctForAccountType } from "~/strategy/risk-limits";

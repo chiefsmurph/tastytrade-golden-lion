@@ -1,6 +1,6 @@
 import tastytradeApi from "~/core/tastytrade-client";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
-import { PositionGroupEvaluation } from "../evaluate-position";
+import { PositionGroupEvaluation, type PositionQuoteSnapshot } from "../evaluate-position";
 import {
   StrategyAccountType,
   evaluateTradingStrategy,
@@ -11,7 +11,7 @@ import {
   EOD_FORCED_CLOSE_MINUTE,
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
-import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById } from "./order-utils";
+import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById, type OrderPayload } from "./order-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
 const CLOSE_TICK_INTERVAL_MS = 30_000;
@@ -213,6 +213,158 @@ export function shouldSkipClosePositionForMorningSpread(
   return { shouldSkip: false };
 }
 
+interface CloseTickChaseParams {
+  accountNumber: string;
+  baseOrder: OrderPayload;
+  orderAction: string;
+  startPrice: number;
+  edgePrice: number;
+  tickSize: number;
+  maxTickMoves: number;
+  isUrgentClose: boolean;
+  tickChaseEnabled: boolean;
+  tickIntervalMs: number;
+  createOrder: NonNullable<ClosePositionDependencies["createOrder"]>;
+  cancelOrder: NonNullable<ClosePositionDependencies["cancelOrder"]>;
+  checkOrderFilled: NonNullable<ClosePositionDependencies["checkOrderFilled"]>;
+}
+
+// Walks the limit price from startPrice toward edgePrice, re-placing the order
+// each tick, until it fills, reaches the edge, or exhausts maxTickMoves.
+// Urgent closes must fill: the final move crosses straight to the edge (the
+// bid for a sell) instead of stepping one tick at a time.
+function advanceClosePrice(
+  orderAction: string,
+  currentPrice: number,
+  edgePrice: number,
+  tickSize: number,
+  isUrgentClose: boolean,
+  isFinalTickMove: boolean,
+): number {
+  if (isUrgentClose && isFinalTickMove) {
+    return edgePrice;
+  }
+  return moveClosePriceTowardEdge(orderAction, currentPrice, edgePrice, tickSize);
+}
+
+async function runCloseTickChase(
+  params: CloseTickChaseParams,
+): Promise<{
+  activeOrderId: string | undefined;
+  lastOrderResponse: TastytradePlacedOrderResponse | undefined;
+}> {
+  const {
+    accountNumber,
+    baseOrder,
+    orderAction,
+    startPrice,
+    edgePrice,
+    tickSize,
+    maxTickMoves,
+    isUrgentClose,
+    tickChaseEnabled,
+    tickIntervalMs,
+    createOrder,
+    cancelOrder,
+    checkOrderFilled,
+  } = params;
+
+  let currentPrice = startPrice;
+  let tickMoveCount = 0;
+  let activeOrderId: string | undefined;
+  let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
+
+  while (tickMoveCount <= maxTickMoves) {
+    const mustCancelPrevious =
+      Boolean(activeOrderId) && tickChaseEnabled && tickMoveCount > 0;
+    const cancelledPrevious = mustCancelPrevious
+      ? await cancelOrderById(accountNumber, activeOrderId as string, cancelOrder)
+      : true;
+    if (!cancelledPrevious) {
+      // Can't confirm the previous sell died — placing another would risk
+      // a double-sell. Leave the existing order working; the next cycle's
+      // cancelAllLiveOrders sweep owns cleanup.
+      break;
+    }
+
+    const order = {
+      ...baseOrder,
+      price: (Math.round(currentPrice * 100) / 100).toFixed(2),
+    };
+    const orderResponse = await createOrder(accountNumber, order);
+    lastOrderResponse = orderResponse;
+    activeOrderId = orderResponse?.order?.id;
+
+    if (!tickChaseEnabled || tickMoveCount >= maxTickMoves) {
+      break;
+    }
+
+    if (pricesAreEqual(currentPrice, edgePrice)) {
+      break;
+    }
+
+    const isFilled = activeOrderId
+      ? await checkOrderFilled(accountNumber, activeOrderId, tickIntervalMs)
+      : false;
+
+    if (isFilled) {
+      break;
+    }
+
+    currentPrice = advanceClosePrice(
+      orderAction,
+      currentPrice,
+      edgePrice,
+      tickSize,
+      isUrgentClose,
+      tickMoveCount + 1 >= maxTickMoves,
+    );
+    tickMoveCount += 1;
+  }
+
+  return { activeOrderId, lastOrderResponse };
+}
+
+// The CLOSE_POSITION decision was made at cycle start with prices that can
+// be minutes stale by the time this order goes out. Re-run the strategy
+// against the prices this order is actually priced from — a position that
+// recovered past its stop (or corrected back below its profit target)
+// must not be sold on the stale trigger. EOD forced liquidation always
+// bypasses this re-check: its trigger is the clock, not the price. The
+// strategy.action gate exempts overnight partial reductions, which are
+// exposure-driven closes, not stop/target closes.
+function hasStrategyRecoveredAtExecution(
+  evaluation: PositionGroupEvaluation,
+  snapshot: PositionQuoteSnapshot,
+  accountType: StrategyAccountType,
+): boolean {
+  const isEodForcedClose =
+    getTimeInMinutes(evaluation.metrics.currentTime) >= EOD_FORCED_CLOSE_MINUTE;
+  if (evaluation.strategy.action !== "CLOSE_POSITION" || isEodForcedClose) {
+    return false;
+  }
+
+  const freshStrategy = evaluateTradingStrategy(
+    {
+      currentBidPrice: snapshot.currentBidPrice,
+      currentAskPrice: snapshot.currentAskPrice,
+      weightedAverageFill: snapshot.weightedAverageFill,
+      currentTime: new Date(),
+      lastActionTime: evaluation.metrics.lastActionTime,
+    },
+    accountType,
+  );
+
+  if (freshStrategy.action !== "MANAGE_ALLOCATION") {
+    return false;
+  }
+
+  console.warn(
+    `[close-position] ${snapshot.position.symbol}: strategy flipped to MANAGE_ALLOCATION at execution time — original close reason "${evaluation.strategy.reason}" no longer holds at bid ${snapshot.currentBidPrice} (${freshStrategy.reason}). Skipping close.`,
+  );
+  return true;
+}
+
 export async function closePosition(
   accountNumber: string,
   evaluation: PositionGroupEvaluation,
@@ -296,43 +448,23 @@ export async function closePosition(
       continue;
     }
 
-    // The CLOSE_POSITION decision was made at cycle start with prices that can
-    // be minutes stale by the time this order goes out. Re-run the strategy
-    // against the prices this order is actually priced from — a position that
-    // recovered past its stop (or corrected back below its profit target)
-    // must not be sold on the stale trigger. EOD forced liquidation always
-    // bypasses this re-check: its trigger is the clock, not the price. The
-    // strategy.action gate exempts overnight partial reductions, which are
-    // exposure-driven closes, not stop/target closes.
-    const isEodForcedClose =
-      getTimeInMinutes(evaluation.metrics.currentTime) >= EOD_FORCED_CLOSE_MINUTE;
-    if (evaluation.strategy.action === "CLOSE_POSITION" && !isEodForcedClose) {
-      const freshStrategy = evaluateTradingStrategy(
-        {
-          currentBidPrice: snapshot.currentBidPrice,
-          currentAskPrice: snapshot.currentAskPrice,
-          weightedAverageFill: snapshot.weightedAverageFill,
-          currentTime: new Date(),
-          lastActionTime: evaluation.metrics.lastActionTime,
-        },
+    if (
+      hasStrategyRecoveredAtExecution(
+        evaluation,
+        snapshot,
         dependencies.accountType ?? "unknown",
-      );
-
-      if (freshStrategy.action === "MANAGE_ALLOCATION") {
-        console.warn(
-          `[close-position] ${snapshot.position.symbol}: strategy flipped to MANAGE_ALLOCATION at execution time — original close reason "${evaluation.strategy.reason}" no longer holds at bid ${snapshot.currentBidPrice} (${freshStrategy.reason}). Skipping close.`,
-        );
-        results.push({
-          accountNumber,
-          action: "CLOSE_POSITION",
-          placedOrder: false,
-          skippedReason:
-            "strategy flipped to MANAGE_ALLOCATION at execution time (recovered from stop/target)",
-          symbol: snapshot.position.symbol,
-          underlyingSymbol: evaluation.underlyingSymbol,
-        });
-        continue;
-      }
+      )
+    ) {
+      results.push({
+        accountNumber,
+        action: "CLOSE_POSITION",
+        placedOrder: false,
+        skippedReason:
+          "strategy flipped to MANAGE_ALLOCATION at execution time (recovered from stop/target)",
+        symbol: snapshot.position.symbol,
+        underlyingSymbol: evaluation.underlyingSymbol,
+      });
+      continue;
     }
 
     const edgePrice = getEdgePrice(
@@ -356,59 +488,21 @@ export async function closePosition(
       maxTickMoves,
     );
 
-    let currentPrice = startPrice;
-    let tickMoveCount = 0;
-    let activeOrderId: string | undefined;
-    let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
-
-    while (tickMoveCount <= maxTickMoves) {
-      if (activeOrderId && tickChaseEnabled && tickMoveCount > 0) {
-        const cancelled = await cancelOrderById(accountNumber, activeOrderId, cancelOrder);
-        if (!cancelled) {
-          // Can't confirm the previous sell died — placing another would risk
-          // a double-sell. Leave the existing order working; the next cycle's
-          // cancelAllLiveOrders sweep owns cleanup.
-          break;
-        }
-      }
-
-      const order = {
-        ...baseOrder,
-        price: (Math.round(currentPrice * 100) / 100).toFixed(2),
-      };
-      const orderResponse = await createOrder(accountNumber, order);
-      lastOrderResponse = orderResponse;
-      activeOrderId = orderResponse?.order?.id;
-
-      if (!tickChaseEnabled || tickMoveCount >= maxTickMoves) {
-        break;
-      }
-
-      if (pricesAreEqual(currentPrice, edgePrice)) {
-        break;
-      }
-
-      const isFilled = activeOrderId
-        ? await checkOrderFilled(accountNumber, activeOrderId, tickIntervalMs)
-        : false;
-
-      if (isFilled) {
-        break;
-      }
-
-      // Urgent closes must fill: the final move crosses straight to the edge
-      // (the bid for a sell) instead of stepping one tick at a time.
-      const isFinalTickMove = tickMoveCount + 1 >= maxTickMoves;
-      currentPrice = isUrgentClose && isFinalTickMove
-        ? edgePrice
-        : moveClosePriceTowardEdge(
-            orderAction,
-            currentPrice,
-            edgePrice,
-            tickSize,
-          );
-      tickMoveCount += 1;
-    }
+    let { activeOrderId, lastOrderResponse } = await runCloseTickChase({
+      accountNumber,
+      baseOrder,
+      orderAction,
+      startPrice,
+      edgePrice,
+      tickSize,
+      maxTickMoves,
+      isUrgentClose,
+      tickChaseEnabled,
+      tickIntervalMs,
+      createOrder,
+      cancelOrder,
+      checkOrderFilled,
+    });
 
     // Fetch final order state to capture fills for JSONL — createOrder response
     // typically doesn't include fills, but a subsequent getOrder does.
