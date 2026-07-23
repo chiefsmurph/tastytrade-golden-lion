@@ -357,9 +357,9 @@ export async function buildTopOptionCandidateResult(
     };
 
     if (liquidityGate.passed) {
-      const sanitizedResult = sanitizeTopCandidateResponse(candidateResult);
-      console.log(`Top option candidate for ${symbol}:`, sanitizedResult);
-      return sanitizedResult;
+      // (log removed: this was a pure duplicate of the ipc-response block that
+      // logs the same sanitized object immediately after — ~20.5K lines/day)
+      return sanitizeTopCandidateResponse(candidateResult);
     }
 
     for (const failedCheck of liquidityGate.failedChecks) {

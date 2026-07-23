@@ -497,7 +497,26 @@ export default async function runBotCycle(
     executionResults,
   );
 
-  console.log("Execution results:", JSON.stringify(executionResults, null, 2));
+  // Strip the full Tastytrade broker ack (buying-power-effect, fee-calculation
+  // breakdowns, per-venue arrays) — keep just orderId/status/price. ~10K lines/day.
+  const summarizeOrderResponse = (r: any) => {
+    if (!r || typeof r !== "object") return r;
+    const order = r.order || {};
+    return { orderId: order.id, status: order.status, price: order.price };
+  };
+  console.log(
+    "Execution results:",
+    JSON.stringify(
+      executionResults,
+      (key, value) => {
+        if (key === "orderResponse") return summarizeOrderResponse(value);
+        if (key === "orderResponses" && Array.isArray(value))
+          return value.map(summarizeOrderResponse);
+        return value;
+      },
+      2,
+    ),
+  );
 
   try {
     await maybeRecordDayReport(

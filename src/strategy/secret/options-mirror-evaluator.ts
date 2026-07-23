@@ -186,6 +186,11 @@ function fmtNum(n: number): string {
   return n.toFixed(2);
 }
 
+// Debounce: the detailed would-buy lines are identical tick-to-tick when the
+// candidate set doesn't change, so they only print when the set (tickers+scores)
+// changes. The per-tick summary line still prints every tick for heartbeat.
+let lastMirrorCandidateSignature = "";
+
 // Logs would-buy candidates and a per-tick summary. Skips are silent — only
 // candidates (score ≥ threshold) produce a log line to keep output clean.
 // fallow-ignore-next-line complexity
@@ -195,15 +200,18 @@ export function logOptionsMirrorEval(
 ): void {
   let marginCandidates = 0;
   let cashCandidates = 0;
+  const detailLines: string[] = [];
+  const signatureParts: string[] = [];
 
   for (const pos of positions) {
     const m = evaluateMarginOpt(pos, regime);
     if (m.wouldBuy && m.components !== null && m.score !== null) {
       const c = m.components;
       const strike = m.strikeOtm !== null ? `$${m.strikeOtm.toFixed(2)}` : "strike=?";
-      console.log(
+      detailLines.push(
         `[options-mirror] MARGIN_OPT would-buy ${m.ticker.padEnd(6)} score ${fmtNum(m.score)} ${strike} OTM/weekly [bwExc ${fmtNum(c.bwExcess)} room ${fmtNum(c.room)} fresh ${fmtNum(c.fresh)} momo ${fmtNum(c.momo)}]`,
       );
+      signatureParts.push(`M:${m.ticker}:${fmtNum(m.score)}`);
       marginCandidates++;
     }
 
@@ -211,11 +219,19 @@ export function logOptionsMirrorEval(
     if (ca.wouldBuy && ca.components !== null && ca.score !== null) {
       const c = ca.components;
       const strike = ca.strikeItm !== null ? `$${ca.strikeItm.toFixed(2)}` : "strike=?";
-      console.log(
+      detailLines.push(
         `[options-mirror] CASH_OPT   would-buy ${ca.ticker.padEnd(6)} score ${fmtNum(ca.score)} ${strike} ITM/10-14d [hs ${fmtNum(c.hs)} thesis ${fmtNum(c.thesis)} entry ${fmtNum(c.entry)} stab ${fmtNum(c.stab)} regime ${fmtNum(c.regime)}]`,
       );
+      signatureParts.push(`C:${ca.ticker}:${fmtNum(ca.score)}`);
       cashCandidates++;
     }
+  }
+
+  // Only emit the detail lines when the candidate set changed.
+  const signature = signatureParts.join("|");
+  if (signature !== lastMirrorCandidateSignature) {
+    for (const line of detailLines) console.log(line);
+    lastMirrorCandidateSignature = signature;
   }
 
   if (marginCandidates > 0 || cashCandidates > 0) {

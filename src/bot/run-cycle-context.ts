@@ -316,16 +316,18 @@ export async function buildRunCycleContext(
     );
   const accountMarginOrCash = await getAccountMarginOrCash(resolvedAccountNumber);
 
+  // Summary only — the full accountBalances blob is 65 lines with 36 fields
+  // permanently "0.0" (crypto/futures/bonds/etc). ~13.4K lines/day saved.
   console.log(
-    JSON.stringify(
-      {
-        scope: "account-balances",
-        accountNumber: resolvedAccountNumber,
-        accountBalances,
-      },
-      null,
-      2,
-    ),
+    JSON.stringify({
+      scope: "account-balances",
+      accountNumber: resolvedAccountNumber,
+      nlv: accountBalances["net-liquidating-value"],
+      derivBP: accountBalances["derivative-buying-power"],
+      usedDerivBP: accountBalances["used-derivative-buying-power"],
+      maintenanceReq: accountBalances["maintenance-requirement"],
+      updatedAt: accountBalances["updated-at"],
+    }),
   );
 
   const buyingPower = getSpendableFundsForAccountType(
@@ -368,9 +370,7 @@ export async function buildRunCycleContext(
     accountMarginOrCash,
   );
   const cachedSecretPositions = getCachedSecretSourcePositions();
-  console.log(
-    `[secret] cached source positions: ${cachedSecretPositions.length}`,
-  );
+  // (log removed: duplicate of "Secret Socket: ... positions=N" in RUN SNAPSHOT)
   const secretSocketStatus = getSecretSocketStatus();
   const baseExecutionTargets = timeOfDayExecutionTargets;
   const dynamicTakeProfitTarget = getDynamicTakeProfitTarget(currentTime);

@@ -265,7 +265,9 @@ test("closePosition chases sell-to-close from midpoint down to bid", async () =>
     maxTickMoves: 2,
   });
 
-  assert.deepEqual(submittedPrices, ["1.10", "1.05", "1.00"]);
+  // Sell chase now starts HIGH (ask 1.20) and walks down to the bid (1.00) over
+  // maxTickMoves=2 → tick 0.10: 1.20, 1.10, 1.00. (Was mid-start 1.10/1.05/1.00.)
+  assert.deepEqual(submittedPrices, ["1.20", "1.10", "1.00"]);
   assert.deepEqual(cancelledOrderIds, ["1", "2"].map(Number));
   assert.equal(results.length, 1);
   assert.equal(results[0]?.placedOrder, true);
@@ -312,9 +314,9 @@ test("closePosition stops chasing when a cancel cannot be confirmed (no double-s
     maxTickMoves: 2,
   });
 
-  // One order placed at mid; the failed cancel must break the chase before a
-  // second sell goes live against the still-working first order.
-  assert.deepEqual(submittedPrices, ["1.10"]);
+  // One order placed at the ask (start-high sell chase); the failed cancel must
+  // break the chase before a second sell goes live against the still-working first.
+  assert.deepEqual(submittedPrices, ["1.20"]);
   assert.equal(results.length, 1);
   assert.equal(results[0]?.placedOrder, true);
 });

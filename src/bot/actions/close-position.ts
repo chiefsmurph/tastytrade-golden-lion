@@ -78,28 +78,49 @@ function getEdgePrice(
   return bid > 0 ? bid : midpoint;
 }
 
+// Where the chase STARTS. A sell posts HIGH (toward the ask) and walks down to
+// the bid, so a taker willing to pay above mid is captured — instead of starting
+// at mid and only ever conceding (which caps upside at mid and hands the top half
+// of the spread to the market maker on an instant fill). Non-urgent starts at the
+// ask; urgent (EOD/stop) starts just above mid to test for the eager taker while
+// still leaving room to walk to the bid and guarantee the clear. Buys unchanged
+// (start at mid). Never returns worse than mid for a sell.
+function getCloseStartPrice(
+  action: string,
+  ask: number,
+  midpoint: number,
+  isUrgentClose: boolean,
+): number {
+  if (action.startsWith("Buy")) return midpoint;
+  if (!(ask > midpoint)) return midpoint;
+  if (isUrgentClose) {
+    return Math.min(ask, midpoint + 2 * getMinTickSize(midpoint));
+  }
+  return ask;
+}
+
 function getCloseTickSize(
   action: string,
-  midpoint: number,
+  startPrice: number,
   edgePrice: number,
   maxTickMoves: number,
 ): number {
   const safeMoveCount = Math.max(1, maxTickMoves);
-  const minTickSize = getMinTickSize(midpoint);
+  const minTickSize = getMinTickSize(startPrice);
 
   if (action.startsWith("Buy")) {
-    if (edgePrice <= midpoint || !Number.isFinite(edgePrice)) {
+    if (edgePrice <= startPrice || !Number.isFinite(edgePrice)) {
       return minTickSize;
     }
 
-    return Math.max((edgePrice - midpoint) / safeMoveCount, minTickSize);
+    return Math.max((edgePrice - startPrice) / safeMoveCount, minTickSize);
   }
 
-  if (edgePrice >= midpoint || !Number.isFinite(edgePrice)) {
+  if (edgePrice >= startPrice || !Number.isFinite(edgePrice)) {
     return minTickSize;
   }
 
-  return Math.max((midpoint - edgePrice) / safeMoveCount, minTickSize);
+  return Math.max((startPrice - edgePrice) / safeMoveCount, minTickSize);
 }
 
 function moveClosePriceTowardEdge(
@@ -320,14 +341,22 @@ export async function closePosition(
       snapshot.currentAskPrice,
       midpointPrice,
     );
+    // Start high (toward the ask) and walk down to the edge (bid) — the tick size
+    // spans the FULL start→edge range so the walk still completes in maxTickMoves.
+    const startPrice = getCloseStartPrice(
+      orderAction,
+      snapshot.currentAskPrice,
+      midpointPrice,
+      isUrgentClose,
+    );
     const tickSize = getCloseTickSize(
       orderAction,
-      midpointPrice,
+      startPrice,
       edgePrice,
       maxTickMoves,
     );
 
-    let currentPrice = midpointPrice;
+    let currentPrice = startPrice;
     let tickMoveCount = 0;
     let activeOrderId: string | undefined;
     let lastOrderResponse: TastytradePlacedOrderResponse | undefined;

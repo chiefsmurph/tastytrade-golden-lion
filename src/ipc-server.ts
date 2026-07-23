@@ -383,6 +383,9 @@ function logRequest(
   status: "received" | "route-hit" | "missing-command" | "unknown-command" | "invalid-json",
   raw?: string,
 ) {
+  // "route-hit" is identical in content to "received" (same id/command/args) —
+  // skip it. And log compact (no pretty-print). ~17K lines/day saved.
+  if (status === "route-hit") return;
   console.log(
     JSON.stringify({
       scope: "ipc-request",
@@ -392,7 +395,7 @@ function logRequest(
       args: request.args,
       raw: raw ?? undefined,
       timestamp: new Date().toISOString(),
-    }, null, 2),
+    }),
   );
 }
 
@@ -403,9 +406,10 @@ function logResponse(response: IpcResponse) {
       id: response.id,
       ok: response.ok,
       error: response.error ?? null,
-      result: response.result ?? null,
+      // result suppressed on success (the caller already has it) — logged only on failure
+      ...(response.ok ? {} : { result: response.result ?? null }),
       timestamp: new Date().toISOString(),
-    }, null, 2),
+    }),
   );
 }
 

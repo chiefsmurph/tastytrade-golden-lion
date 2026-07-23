@@ -200,11 +200,16 @@ export interface LiquidityGateLogContext {
   underlyingSymbol?: string;
 }
 
-/** One line per gate decision so the effect is auditable in the day's logs. */
+/**
+ * One line per FAILED gate decision so the effect is auditable in the day's logs.
+ * Passes are suppressed by default (only failures are interesting) — set
+ * GL_VERBOSE_LIQUIDITY=1 to log every evaluation.
+ */
 export function logLiquidityGateDecision(
   context: LiquidityGateLogContext,
   decision: LiquidityGateDecision,
 ): void {
+  if (decision.passed && process.env.GL_VERBOSE_LIQUIDITY !== "1") return;
   console.log(
     JSON.stringify({
       scope: "liquidity-gate",

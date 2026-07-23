@@ -135,17 +135,31 @@ test("no-chain cooldown is very long (6h), account-independent, and outlasts no-
   assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 360 * MIN), false);
 });
 
-test("no-candidate cooldown is long (2h) and account-independent", () => {
+test("no-candidate cooldown is long (2h) and account-independent (after early session)", () => {
   const map = new Map<string, number>();
-  const now = 1_000_000_000;
+  // Recorded at 10:00am local (past the 7:15am early-session window) so the full
+  // 2h cooldown applies. Local-time constructor matches the local getHours() the
+  // cooldown uses, keeping this deterministic regardless of the runner timezone.
+  const now = new Date(2026, 0, 12, 10, 0, 0).getTime();
 
   recordSeedOutcomeCooldown("no-candidate", map, "CD-NOCAND", "ACC-1", now);
   // Blocks well past the placed window…
   assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 119 * MIN), true);
   // …for every account (chain absence is a property of the underlying)…
   assert.equal(isAutoSeedCooldownActive(new Map(), "CD-NOCAND", "ACC-2", now + 119 * MIN), true);
-  // …and clears after 2 hours: ~3 retries fit in the 6:30am-1pm PT window.
+  // …and clears after 2 hours.
   assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 120 * MIN), false);
+});
+
+test("no-candidate cooldown is SHORT (15 min) when recorded in the early session", () => {
+  const map = new Map<string, number>();
+  // Recorded at 6:45am local — inside the 6:30-7:15am ramp where the spread gate
+  // loosens, so a fresh probe should be allowed after 15 min, not benched 2h.
+  const now = new Date(2026, 0, 12, 6, 45, 0).getTime();
+
+  recordSeedOutcomeCooldown("no-candidate", map, "CD-EARLY", "ACC-1", now);
+  assert.equal(isAutoSeedCooldownActive(map, "CD-EARLY", "ACC-1", now + 14 * MIN), true);
+  assert.equal(isAutoSeedCooldownActive(map, "CD-EARLY", "ACC-1", now + 16 * MIN), false);
 });
 
 test("retry cooldown is short (3 min) and account-specific", () => {

@@ -52,6 +52,18 @@ export function logRunSnapshot(preview: RunCyclePreview): void {
 }
 
 export function logRunPlan(preview: RunCyclePreview): void {
+  // Idle cycles: suppress the empty RUN PLAN block. Keep it whenever there's ANY
+  // activity or signal (allocations, closes, ignored do-not-touch, diagnostics).
+  if (
+    preview.plan.rows.length === 0 &&
+    preview.plan.ignoredGroups.length === 0 &&
+    preview.plan.diagnostics.length === 0 &&
+    preview.strategySummary.manageAllocationCount === 0 &&
+    preview.strategySummary.closePositionCount === 0
+  ) {
+    return;
+  }
+
   console.log("\n================= RUN PLAN =================");
   console.log(`Account: ${preview.accountNumber}`);
   console.log(
@@ -103,14 +115,10 @@ export function logRunPlan(preview: RunCyclePreview): void {
 }
 
 export function logGroupReturns(groupReturns: RunGroupReturn[]): void {
+  // Idle cycles: suppress the empty block — RUN SNAPSHOT already marks the cycle.
+  if (groupReturns.length === 0) return;
+
   console.log("\n============== GROUP RETURNS ==============");
-
-  if (groupReturns.length === 0) {
-    console.log("No grouped position returns available.");
-    console.log("===========================================\n");
-    return;
-  }
-
   console.log(
     "underlying            side   bid%      ask%      current%   costBasis     unrlzdBid$   unrlzdAsk$",
   );
@@ -136,14 +144,10 @@ export function logGroupReturns(groupReturns: RunGroupReturn[]): void {
 }
 
 export function logStrategyDecisions(strategyDecisions: RunStrategyDecision[]): void {
+  // Idle cycles: suppress the empty block — RUN SNAPSHOT already marks the cycle.
+  if (strategyDecisions.length === 0) return;
+
   console.log("\n========== STRATEGY DECISIONS ===========");
-
-  if (strategyDecisions.length === 0) {
-    console.log("No strategy decisions available.");
-    console.log("========================================\n");
-    return;
-  }
-
   for (const decision of strategyDecisions) {
     console.log(`\n${decision.underlyingSymbol}`);
     console.log(`  Action: ${decision.strategyAction}`);
@@ -160,21 +164,18 @@ export function logExecutionTargetsByGroup(
   currentTime: Date,
   accountType: StrategyAccountType = "unknown",
 ): void {
+  const manageAllocations = evaluations.filter(
+    (e) => e.strategy.action === "MANAGE_ALLOCATION",
+  );
+
+  // Idle cycles: suppress the whole block (incl. the base-targets header) — noise.
+  if (manageAllocations.length === 0) return;
+
   console.log("\n=== EXECUTION TARGETS BY GROUP ===");
   console.log(
     `Time-of-Day Base (shared): exp=${formatPercent(baseExecutionTargets.targetAccountExposure)}, dte=${baseExecutionTargets.targetDTE}, bid=${baseExecutionTargets.bidWeight.toFixed(2)}/mid=${baseExecutionTargets.midWeight.toFixed(2)}/ask=${baseExecutionTargets.askWeight.toFixed(2)}`,
   );
   console.log("Secret Socket: per-group by ticker (configured positions source key)");
-
-  const manageAllocations = evaluations.filter(
-    (e) => e.strategy.action === "MANAGE_ALLOCATION",
-  );
-
-  if (manageAllocations.length === 0) {
-    console.log("No MANAGE_ALLOCATION groups to show.");
-    console.log("===================================\n");
-    return;
-  }
 
   const { secondsSinceLastPositionsUpdate } = getSecretSocketStatus();
   const secretPositionsAge =
