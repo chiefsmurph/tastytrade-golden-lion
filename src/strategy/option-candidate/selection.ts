@@ -442,10 +442,12 @@ export async function getTopOptionCandidateForSymbol(
   if (ivRank != null) {
     const minIvRank = getMinIvRankPct();
     if (ivRank < minIvRank) {
+      const rawIvRank = ivMetrics?.rawIvRank;
+      const rawNote = rawIvRank != null ? ` (raw ${rawIvRank})` : "";
       return {
         ivRank,
         skippedByIvGate: true,
-        skippedReason: `IV rank ${ivRank.toFixed(1)} below minimum ${minIvRank} — low premium environment`,
+        skippedReason: `IV rank ${ivRank.toFixed(1)}${rawNote} below minimum ${minIvRank} — low premium environment`,
       };
     }
   }
