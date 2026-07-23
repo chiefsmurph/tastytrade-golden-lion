@@ -1,3 +1,4 @@
+import { assertNotReadOnly } from "./read-only-accounts";
 import type {
   OrderRequest,
   TastytradeOrder,
@@ -91,6 +92,7 @@ export function createTypedOrderService(rawOrderService: RawOrderService): Typed
       orderId: number,
       replacementOrder: Partial<OrderRequest>,
     ) {
+      assertNotReadOnly(accountNumber);
       return (await rawOrderService.replaceOrder(
         accountNumber,
         orderId,
@@ -111,6 +113,7 @@ export function createTypedOrderService(rawOrderService: RawOrderService): Typed
       return (await rawOrderService.getOrders(accountNumber, queryParams)) as TastytradeOrder[];
     },
     async createOrder(accountNumber: string, order: OrderRequest) {
+      assertNotReadOnly(accountNumber);
       return (await rawOrderService.createOrder(
         accountNumber,
         order,
