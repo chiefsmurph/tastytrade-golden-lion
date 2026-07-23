@@ -76,8 +76,11 @@ export function classifySeedOutcomeCooldown(result: {
 // The morning spread gate ramps 5%→30% across 6:30-8:00am PT (see
 // spread-thresholds.ts). A no-candidate failure at 6:35am (5% gate) deserves a
 // short retry so the bot can re-probe when the gate loosens at 6:45am (10%),
-// not a 2h bench that misses the entire open window.
-const EARLY_SESSION_END_MINUTE = 7 * 60 + 15; // 7:15am PT (45 min into session)
+// not a 2h bench that misses the entire open window. The window ends where the
+// ramp ends (8:00am) — after that the gate holds at 30% and retrying no longer
+// benefits from a loosening threshold. (7:15am was too early: it benched names
+// that failed at the 20% level ~90s after the cutoff — e.g. MBLY 7/23 07:16.)
+const EARLY_SESSION_END_MINUTE = 8 * 60; // 8:00am PT — end of the spread-gate ramp
 const EARLY_SESSION_NO_CANDIDATE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
 
 function getEffectiveNoCandidateCooldownMs(attemptAt: number): number {

@@ -151,11 +151,12 @@ test("no-candidate cooldown is long (2h) and account-independent (after early se
   assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 120 * MIN), false);
 });
 
-test("no-candidate cooldown is SHORT (15 min) when recorded in the early session", () => {
+test("no-candidate cooldown is SHORT (15 min) anywhere in the 6:30-8:00am gate ramp", () => {
   const map = new Map<string, number>();
-  // Recorded at 6:45am local — inside the 6:30-7:15am ramp where the spread gate
-  // loosens, so a fresh probe should be allowed after 15 min, not benched 2h.
-  const now = new Date(2026, 0, 12, 6, 45, 0).getTime();
+  // Recorded at 7:30am local — past the OLD 7:15am cutoff but still inside the
+  // 6:30-8:00am spread-gate ramp, so it should get the 15-min retry, not 2h.
+  // (This is the MBLY-7:16am class of case the window was extended to cover.)
+  const now = new Date(2026, 0, 12, 7, 30, 0).getTime();
 
   recordSeedOutcomeCooldown("no-candidate", map, "CD-EARLY", "ACC-1", now);
   assert.equal(isAutoSeedCooldownActive(map, "CD-EARLY", "ACC-1", now + 14 * MIN), true);
