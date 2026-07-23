@@ -109,7 +109,6 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; run history and the position registry live in `runs/` and day reports in `day-reports/` beneath it.
 - `BOT_DO_NOT_TOUCH_GROUPS` — Comma-separated group keys the bot should leave alone.
 - `BOT_READ_ONLY_ACCOUNTS` — Comma-separated account numbers the bot can inspect but should not trade.
-- `BOT_MAX_SEED_ORDER_COST` — Maximum estimated dollar cost for a single seed order. Defaults to `200`.
 
 ### Strategy: Seed Thresholds
 
@@ -141,6 +140,7 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 
 ### Strategy: Position Sizing and Exposure
 
+- `STRATEGY_MARGIN_MAX_TOTAL_UTILIZATION` — **Leverage rail (enforced by default).** Caps the summed market value of all open margin option positions at this multiple of margin NLV. This is a leverage *multiple* (not a percent-of-account) and is read raw: it defaults to `1.5` and non-positive/non-finite values are refused and fall back to the default, so the rail is never accidentally off. Applies to the margin account only (the cash account is unlevered). Enforced in `src/strategy/seed-sizing-live.ts`.
 - `STRATEGY_MAX_OPTION_SPREAD_PCT` — Maximum bid/ask spread as a fraction of the midpoint. Defaults to `0.3`.
 - `STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT` — Margin-only entry (buy-side) spread ceiling as a fraction of the midpoint. Defaults to the `STRATEGY_MAX_OPTION_SPREAD_PCT` value, so behavior is unchanged until set. Set it tighter than the shared gate (e.g. `0.10`) because margin must flatten by EOD and pays the spread on both entry and the forced exit; cash keeps using the shared gate.
 - `STRATEGY_MIN_OPEN_INTEREST` — Minimum open interest on the requested side for a new-entry candidate. Defaults to `0` (disabled). Unknown/missing open interest always passes with a `liquidity-gate` log note — missing data is never treated as zero liquidity.
@@ -151,7 +151,6 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_SPREAD_PCT` — Wide-spread suppression for the dip boost: when the position's current bid/ask spread (fraction of mid) exceeds this value, the dip boost is suppressed (avoids averaging into a name whose "dip" is really a blown-out spread you can't exit). Unset/blank disables suppression (non-binding). Example: `0.15` suppresses when the spread is wider than `15%` of mid.
 - `STRATEGY_MAX_ALLOCATION_BUY_POSITION_MULTIPLE` — Cap on a single allocation buy as a multiple of the group's current market value (e.g. `3` lets a `$87` position add at most `~$261` in one action), applied on top of the pct-of-capital caps. Unset disables the cap. Note this caps each *add*, not the total — because it re-reads current value every cycle, a fast series of adds compounds; use the two caps below to bound the total.
 - `STRATEGY_MAX_UNDERLYING_CONTRACTS` — Absolute ceiling on total option contracts held per position group (`UNDERLYING::side`). Allocation buys are clamped to the remaining headroom and skipped once holdings reach the cap (logged under `allocation-underlying-cap`). Recomputed from live broker positions every cycle, so intraday restarts cannot re-open accumulation. `0` or unset disables the cap.
-- `STRATEGY_MAX_UNDERLYING_NOTIONAL` — Absolute ceiling in dollars on a position group's market value (current bid × quantity × multiplier, the same basis as the exposure caps). Allocation buys may not spend past the remaining headroom under it. `0` or unset disables the cap.
 - `STRATEGY_OVERNIGHT_REDUCTION_DAYS_TO_SELLOFF` — Calendar days until a cash overnight position should be fully sold off. Defaults to `6`.
 - `STRATEGY_OVERNIGHT_REDUCTION_START_FLOOR_PCT` — Exposure floor percentage on day 1 of overnight reduction; interpolates linearly to `0` by the selloff day. Defaults to `20`.
 - `STRATEGY_MIN_IV_RANK_PCT` — Minimum IV rank (`0`–`100`) required before entering a position. Defaults to `20`; set to `0` to disable.
@@ -171,6 +170,13 @@ If these are omitted or the feed is disconnected, the runtime continues normally
 - `SECRET_AUTO_SEED_ON_TICKER_RECS_UPDATE` — Set to `true` to allow auto-seeding when ticker recommendations update. Defaults to `false`.
 - `SECRET_AUTO_SEED_START_TIME` — Start of the auto-seed window in `HH:mm` format. Defaults to `06:30`.
 - `SECRET_AUTO_SEED_COOLDOWN_MS` — Minimum delay between secret-feed auto-seeds for the same symbol. Defaults to `600000`.
+
+### Retired Variables
+
+These variables are no longer read as live caps. They are documented here so nobody re-adds them as phantom safety limits — sizing and concentration are now governed entirely by percent-of-NLV controls. The boot log (`src/startup-config.ts`) warns when an obsolete name is present.
+
+- `BOT_MAX_SEED_ORDER_COST` — Retired 2026-07-21. Was a per-seed dollar cap (formerly defaulted to `200`). Seed sizing is now 100% percent-of-NLV via `SECRET_SEED_SIZING_FLOOR_PCT` / `SECRET_SEED_SIZING_CEILING_PCT`; there is no dollar clip.
+- `STRATEGY_MAX_UNDERLYING_NOTIONAL` — Retired 2026-07-21. Was a per-group dollar ceiling on market value. `getMaxUnderlyingNotional()` in `src/strategy/risk-limits.ts` now returns `Infinity` (permanently off); the env var is ignored and flagged obsolete at boot. Per-group concentration is now bounded by `STRATEGY_MAX_UNDERLYING_CONTRACTS` and the percent-of-account caps.
 
 ## Running Tests
 

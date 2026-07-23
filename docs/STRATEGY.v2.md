@@ -182,7 +182,7 @@ runs these gates **in order**; the first match wins:
 
 ## 7. Signal gating — the position gate
 
-The optional external feed (Socket.IO, `src/bot/secret/`) supplies a
+The optional external feed (Socket.IO, `src/strategy/secret/`) supplies a
 `SecretSourcePosition` per ticker: buy weights, boolean thesis signals,
 daytrade scores, and a consolidated rollup. `computePositionGate`
 ([position-gate.ts:241-315](../src/strategy/position-gate.ts#L241-L315)) turns
