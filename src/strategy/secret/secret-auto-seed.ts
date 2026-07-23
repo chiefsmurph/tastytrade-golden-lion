@@ -76,7 +76,7 @@ export function classifySeedOutcomeCooldown(result: {
 // The morning spread gate ramps 5%→30% across 6:30-8:00am PT (see
 // spread-thresholds.ts). A no-candidate failure at 6:35am (5% gate) deserves a
 // short retry so the bot can re-probe when the gate loosens at 6:45am (10%),
-// not a 2h bench that misses the entire open window. The window ends where the
+// not a 45-min bench that misses the entire open window. The window ends where the
 // ramp ends (8:00am) — after that the gate holds at 30% and retrying no longer
 // benefits from a loosening threshold. (7:15am was too early: it benched names
 // that failed at the 20% level ~90s after the cutoff — e.g. MBLY 7/23 07:16.)
@@ -239,25 +239,27 @@ function getAutoSeedCooldownMs(): number {
 
 // Underlying has NO option chain at all (zero expirations anywhere) — it is not
 // optionable, a property that effectively never changes intraday and rarely
-// changes at all. Default 6h, which covers the whole 6:30am-1pm PT seed window
-// so a name confirmed optionless once is probed at most once per session.
+// changes at all. Default 3h: with the seed window ~6:30am-1pm PT, a name
+// confirmed optionless is re-probed about twice per session rather than once.
 //
-// Chosen 6h rather than "permanent" deliberately (conservative): the empty
+// Chosen 3h rather than "permanent" deliberately (conservative): the empty
 // chain COULD, in principle, be a transient upstream fetch failure that
-// returned `expirations: []` instead of a real "not optionable" answer. A 6h
+// returned `expirations: []` instead of a real "not optionable" answer. A 3h
 // bench that resets across restarts (module-level map) errs toward re-probing a
 // name that might become seedable, over permanently starving it — while still
 // eliminating the per-tick re-fetch this was built to stop.
 function getNoChainCooldownMs(): number {
-  return readCooldownMs("SECRET_AUTO_SEED_NO_CHAIN_COOLDOWN_MS", 6 * 60 * 60 * 1000);
+  return readCooldownMs("SECRET_AUTO_SEED_NO_CHAIN_COOLDOWN_MS", 3 * 60 * 60 * 1000);
 }
 
 // A chain exists but has no usable candidate (spread/quote/DTE-window miss).
-// Default 2h, not all-day: the seeding window is only 6:30am-1pm PT and
+// Default 45min, not all-day: the seeding window is only 6:30am-1pm PT and
 // small-cap option spreads/liquidity tighten as the session builds, so a
-// morning "no candidate" deserves ~3 retries within the window rather than 1.
+// morning "no candidate" gets re-probed several times within the window. Kept
+// deliberately short because this cooldown is account-independent (keyed by
+// symbol) — a margin miss on a tight spread gate suppresses the cash seed too.
 function getNoCandidateCooldownMs(): number {
-  return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 2 * 60 * 60 * 1000);
+  return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 45 * 60 * 1000);
 }
 
 // Transient failures (buying power, closing-only, dry-run rejection).
