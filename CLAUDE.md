@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+First look at any AGENTS.md always!
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Commands
