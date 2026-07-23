@@ -3,7 +3,6 @@ import { config } from "dotenv";
 import type { TypedOrderService } from "./tastytrade-order-service";
 import type { getBidAskForSymbol as GetBidAskForSymbol, getUnderlyingPrice as GetUnderlyingPrice } from "./market-data";
 import type { fetchOptionChain as FetchOptionChain, fetchOptionChainWithVolume as FetchOptionChainWithVolume } from "./option-service";
-import type { cancelAllLiveOrders as CancelAllLiveOrders } from "~/bot/execute-position-evaluations";
 import type {
   CurrentPosition,
   TastytradeCustomerAccountResource,
@@ -40,9 +39,6 @@ type TypedInstrumentsService = {
 type TypedOrderServiceWithRaw = TypedOrderService & RawTastytradeClient["orderService"];
 
 export interface JohnsService {
-  cancelAllLiveOrders: (
-    ...args: Parameters<typeof CancelAllLiveOrders>
-  ) => ReturnType<typeof CancelAllLiveOrders>;
   fetchOptionChain: (
     ...args: Parameters<typeof FetchOptionChain>
   ) => ReturnType<typeof FetchOptionChain>;
@@ -114,10 +110,6 @@ tastytradeApi.johnsService = {
   async fetchOptionChainWithVolume(...args) {
     const { fetchOptionChainWithVolume } = await import("./option-service");
     return fetchOptionChainWithVolume(...args);
-  },
-  async cancelAllLiveOrders(...args) {
-    const { cancelAllLiveOrders } = await import("~/bot/execute-position-evaluations");
-    return cancelAllLiveOrders(...args);
   },
 };
 

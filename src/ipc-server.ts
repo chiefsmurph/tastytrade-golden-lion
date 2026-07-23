@@ -30,6 +30,7 @@ import {
   stopMarketOpenScheduler,
 } from "./bot/market-open-scheduler";
 import getLastRunCycle from "./bot/get-last-run-cycle";
+import { cancelAllLiveOrders } from "./bot/execute-position-evaluations";
 import { getStartupConfigSnapshot } from "./startup-config";
 import { getLastRunGroupsByTickers, getRecentRunHistory } from "./bot/run-history";
 import getDayReport from "./bot/get-day-report";
@@ -95,7 +96,7 @@ const commandHandlers: Record<string, CommandHandler> = {
   },
   "core:cancelAllLiveOrders": async ([accountNumber]) => {
     const resolvedAccountNumber = accountNumber ?? (await getDefaultAccountNumber());
-    return tastytradeApi.johnsService.cancelAllLiveOrders(resolvedAccountNumber);
+    return cancelAllLiveOrders(resolvedAccountNumber);
   },
   "core:fetchOptionChainWithVolume": async ([symbol]) => {
     assertArg(symbol, "symbol");
