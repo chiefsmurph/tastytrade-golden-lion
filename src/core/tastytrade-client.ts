@@ -1,5 +1,6 @@
 import TastytradeClient from "@tastytrade/api";
 import { config } from "dotenv";
+import { assertNotReadOnly } from "./read-only-accounts";
 import type { TypedOrderService } from "./tastytrade-order-service";
 import type { getBidAskForSymbol as GetBidAskForSymbol, getUnderlyingPrice as GetUnderlyingPrice } from "./market-data";
 import type { fetchOptionChain as FetchOptionChain, fetchOptionChainWithVolume as FetchOptionChainWithVolume } from "./option-service";
@@ -97,6 +98,61 @@ tastytradeApi.balancesAndPositionsService.getAccountBalanceValues = async (
 
   return accountBalance;
 };
+
+// Read-only enforcement at the broker chokepoint.
+//
+// The production `orderService` is the raw SDK client (createTypedOrderService
+// is never invoked in the wiring), so guarding the typed factory alone would
+// NOT protect the live path. Wrap the raw mutating placement methods here so
+// every caller — run-cycle, manual IPC (bot:seedSymbol / purchaseSymbol /
+// closePosition), and secret-auto-seed — must cross the same check.
+//
+// Dry-run / preview endpoints (postOrderDryRun, replacementOrderDryRun) are
+// intentionally left unwrapped: they are non-mutating and are legitimately
+// used on read-only accounts for margin / buying-power effect calculations.
+const rawCreateOrder = tastytradeApi.orderService.createOrder.bind(
+  tastytradeApi.orderService,
+);
+const rawReplaceOrder = tastytradeApi.orderService.replaceOrder.bind(
+  tastytradeApi.orderService,
+);
+const rawCreateComplexOrder = tastytradeApi.orderService.createComplexOrder.bind(
+  tastytradeApi.orderService,
+);
+const rawEditOrder = tastytradeApi.orderService.editOrder.bind(
+  tastytradeApi.orderService,
+);
+
+tastytradeApi.orderService.createOrder = ((accountNumber: string, order) => {
+  assertNotReadOnly(accountNumber);
+  return rawCreateOrder(accountNumber, order);
+}) as typeof tastytradeApi.orderService.createOrder;
+
+tastytradeApi.orderService.replaceOrder = ((
+  accountNumber: string,
+  orderId,
+  replacementOrder,
+) => {
+  assertNotReadOnly(accountNumber);
+  return rawReplaceOrder(accountNumber, orderId, replacementOrder);
+}) as typeof tastytradeApi.orderService.replaceOrder;
+
+tastytradeApi.orderService.createComplexOrder = ((
+  accountNumber: string,
+  order,
+) => {
+  assertNotReadOnly(accountNumber);
+  return rawCreateComplexOrder(accountNumber, order);
+}) as typeof tastytradeApi.orderService.createComplexOrder;
+
+tastytradeApi.orderService.editOrder = ((
+  accountNumber: string,
+  orderId,
+  order,
+) => {
+  assertNotReadOnly(accountNumber);
+  return rawEditOrder(accountNumber, orderId, order);
+}) as typeof tastytradeApi.orderService.editOrder;
 
 tastytradeApi.johnsService = {
   async getBidAskForSymbol(...args) {
