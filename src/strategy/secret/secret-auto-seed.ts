@@ -73,6 +73,22 @@ export function classifySeedOutcomeCooldown(result: {
   return "retry";
 }
 
+// The morning spread gate ramps 5%→30% across 6:30-8:00am PT (see
+// spread-thresholds.ts). A no-candidate failure at 6:35am (5% gate) deserves a
+// short retry so the bot can re-probe when the gate loosens at 6:45am (10%),
+// not a 2h bench that misses the entire open window.
+const EARLY_SESSION_END_MINUTE = 7 * 60 + 15; // 7:15am PT (45 min into session)
+const EARLY_SESSION_NO_CANDIDATE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+
+function getEffectiveNoCandidateCooldownMs(attemptAt: number): number {
+  if (attemptAt === 0) return getNoCandidateCooldownMs();
+  const d = new Date(attemptAt);
+  const minuteOfDay = d.getHours() * 60 + d.getMinutes();
+  return minuteOfDay < EARLY_SESSION_END_MINUTE
+    ? EARLY_SESSION_NO_CANDIDATE_COOLDOWN_MS
+    : getNoCandidateCooldownMs();
+}
+
 // Exported for tests: true while ANY of the four cooldowns (placed / no-chain /
 // no-candidate / retry) is still active for this symbol+account.
 export function isAutoSeedCooldownActive(
@@ -90,7 +106,7 @@ export function isAutoSeedCooldownActive(
     return true;
   }
   const lastNoCandidateAt = noCandidateSeedAtBySymbol.get(symbol) ?? 0;
-  if (now - lastNoCandidateAt < getNoCandidateCooldownMs()) {
+  if (now - lastNoCandidateAt < getEffectiveNoCandidateCooldownMs(lastNoCandidateAt)) {
     return true;
   }
   const lastRetryAt = retrySeedAtByAccountSymbol.get(`${accountNumber}:${symbol}`) ?? 0;
