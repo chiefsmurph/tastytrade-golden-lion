@@ -11,6 +11,11 @@ export interface PositionGateSignals {
   strongStockYes: boolean;
   goodBooleanScore: number;
   allBooleansGood: boolean;
+  // Raw stock-yes proxy inputs — surfaced for logging so they can be validated against
+  // forward return later (currently unvalidated conviction proxies; see the gate audit).
+  // Optional: only computePositionGate populates them; test fixtures may omit them.
+  qualityToBuy?: boolean;
+  percentOfBalance?: number;
 }
 
 export interface PositionGateResult {
@@ -79,6 +84,16 @@ export function getSingleYesMaxTargetPct(): number {
 
 export function getBasicYesMaxTargetPct(): number {
   return readEnvPct("STRATEGY_GATE_BASIC_YES_MAX_TARGET_PCT", 0.10);
+}
+
+// (b) 2026-07-24 — demote the unvalidated stock-yes proxies (isQualityToBuy / percentOfBalance).
+// When on, a stock-yes tier NOT backed by validated thesis (feed full buyFraction>=1.0, or a
+// real manual thesis >= GATE_PROXY_DEMOTE_THESIS_MIN) is capped at the basic ceiling — so the
+// proxies can't grant a large target on their own. Can ONLY reduce a non-thesis target; never
+// raises anything. Off by default. See docs/gl-gate-audit-alpha-vs-risk-2026-07-24.md.
+const GATE_PROXY_DEMOTE_THESIS_MIN = 4;
+function getGateProxyDemoteEnabled(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_GATE_PROXY_DEMOTE_ENABLED);
 }
 
 export function getBothYesMaxTargetPct(): number {
@@ -291,6 +306,8 @@ export function computePositionGate(options: {
     strongStockYes,
     goodBooleanScore,
     allBooleansGood,
+    qualityToBuy,
+    percentOfBalance,
   };
 
   let maxTargetPct = 0;
@@ -304,6 +321,16 @@ export function computePositionGate(options: {
     maxTargetPct = getSingleYesMaxTargetPct();
   } else if (basicStockYes) {
     maxTargetPct = getBasicYesMaxTargetPct();
+  }
+
+  // (b) 2026-07-24 — demote the unvalidated stock-yes proxies: a tier not backed by
+  // validated thesis (feed full buyFraction>=1.0, or manual thesis >= the bar) is capped
+  // at the basic ceiling, so isQualityToBuy / percentOfBalance can't grant a large target
+  // on their own. Thesis-backed names are untouched; this only ever reduces. Off by default.
+  const thesisBacked =
+    allBooleansGood || goodBooleanScore >= GATE_PROXY_DEMOTE_THESIS_MIN;
+  if (getGateProxyDemoteEnabled() && !thesisBacked) {
+    maxTargetPct = Math.min(maxTargetPct, getBasicYesMaxTargetPct());
   }
 
   // Each good boolean adds a fixed boost on top of the signal tier
