@@ -415,6 +415,10 @@ async function trySpraySeed(params: {
   accountNumber: string;
   symbol: string;
   contractSymbol: string;
+  // dxLink streamer symbol for the chase's live bid/ask read. MUST be forwarded:
+  // the streamer can't resolve an OCC contract symbol, so without this the chase
+  // never gets a quote and the spray aborts as "no-quote" (see spray-buy.ts).
+  quoteSymbol?: string;
   side: "call" | "put";
   limitPrice: number;
   orderSource: string;
@@ -427,6 +431,7 @@ async function trySpraySeed(params: {
     accountNumber: params.accountNumber,
     symbol: params.symbol,
     contractSymbol: params.contractSymbol,
+    quoteSymbol: params.quoteSymbol,
     side: params.side,
     totalContracts: sprayContracts,
     limitPrice: params.limitPrice,
@@ -966,6 +971,7 @@ async function seedSymbol(
     accountNumber: resolvedAccountNumber,
     symbol: normalizedSymbol,
     contractSymbol: candidateSymbol,
+    quoteSymbol,
     side,
     limitPrice: numericLimitPrice,
     orderSource,
