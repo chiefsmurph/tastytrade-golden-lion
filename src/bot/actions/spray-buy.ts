@@ -19,6 +19,27 @@ import {
   registerSpray,
   saveSpray,
 } from "./spray-store";
+import { recordSeedOutcome } from "./seed-outcome-store";
+
+// Persist a terminal seed-spray outcome so the dashboard's pre-trade candidate
+// can be overridden with the real execution state (a placed-then-aborted spray
+// must not keep reading "✅ buying power"). Best-effort inside the store — never
+// throws, so it can't disturb the order loop. See seed-outcome-store.ts.
+async function recordTerminalSeedOutcome(
+  record: SprayRampRecord,
+  state: "aborted" | "filled",
+  reason?: string,
+): Promise<void> {
+  await recordSeedOutcome({
+    accountType: record.accountType,
+    symbol: record.symbol,
+    side: record.side,
+    state,
+    reason,
+    observedFilled: record.observedFilled,
+    totalContracts: Math.floor(record.totalContracts),
+  });
+}
 
 // Spray-buy EXECUTOR — single tick-chaser vs a time-ramped cumulative target.
 //
@@ -604,6 +625,7 @@ async function advanceOneSpray(
     await retireWorkingOrder(record, deps);
     record.aborted = true;
     await saveSpray(record);
+    await recordTerminalSeedOutcome(record, "aborted", "deadline");
     return;
   }
 
@@ -636,10 +658,16 @@ async function advanceOneSpray(
       if (unavailableMs >= getSprayQuoteUnavailableAbortMs()) {
         console.log(JSON.stringify({ scope: "spray-abort-no-quote", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, unavailableMs, reason: resolution.reason, spreadPct: resolution.spreadPct, maxSpreadPct: resolution.maxSpreadPct }));
         record.aborted = true;
+        await recordTerminalSeedOutcome(record, "aborted", resolution.reason ?? "no-quote");
       }
     }
   }
   await saveSpray(record);
+  // Record a clean fill so a later successful spray clears any earlier abort
+  // overlay for this symbol (same store key is overwritten).
+  if (!record.aborted && record.observedFilled >= Math.floor(record.totalContracts) && record.observedFilled > 0) {
+    await recordTerminalSeedOutcome(record, "filled");
+  }
 }
 
 export interface AdvanceSpraysResult {
