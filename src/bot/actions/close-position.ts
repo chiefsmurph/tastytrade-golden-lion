@@ -376,7 +376,21 @@ export async function closePosition(
         ...baseOrder,
         price: (Math.round(currentPrice * 100) / 100).toFixed(2),
       };
-      const orderResponse = await createOrder(accountNumber, order);
+      let orderResponse: TastytradePlacedOrderResponse | undefined;
+      try {
+        orderResponse = await createOrder(accountNumber, order);
+      } catch (err) {
+        // Placement rejected (e.g. 422 — stale/phantom position, nothing to close,
+        // bad order). Stop chasing; the post-loop guard records this leg as a skip
+        // instead of letting the throw crash the entire cycle. The tastytrade error
+        // body is logged by the order service (order-service-error).
+        console.warn(
+          `[close-position] ${snapshot.position.symbol}: order placement rejected — ${
+            err instanceof Error ? err.message : String(err)
+          }. Skipping close.`,
+        );
+        break;
+      }
       lastOrderResponse = orderResponse;
       activeOrderId = orderResponse?.order?.id;
 
@@ -427,6 +441,21 @@ export async function closePosition(
       } catch {
         // use lastOrderResponse as-is
       }
+    }
+
+    if (!lastOrderResponse) {
+      // The tick-chase never got a resting order placed (every attempt was rejected —
+      // see the order-placement-rejected warning above). Record a skip, not a fill,
+      // so we don't decrement remainingToClose or claim a close that never happened.
+      results.push({
+        accountNumber,
+        action: "CLOSE_POSITION",
+        placedOrder: false,
+        skippedReason: "order placement rejected by broker (see order-service-error log)",
+        symbol: snapshot.position.symbol,
+        underlyingSymbol: evaluation.underlyingSymbol,
+      });
+      continue;
     }
 
     remainingToClose -= qtyToClose;
