@@ -8,7 +8,7 @@ import {
   isReadOnlyAccount,
 } from "~/core/default-account";
 import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier, getRegimePostureMult } from "~/strategy/position-gate";
-import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
+import { getCashDipTargetBoostPct, getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -615,6 +615,18 @@ export async function buildRunCycleContext(
     const scaledTargetAccountExposure =
       finalTargets.targetAccountExposure * cashGateMaxTargetPct;
 
+    // Cash dip boost (symmetric to margin): on a genuine mid-return dip, raise
+    // the target exposure so manage-allocation can average down instead of
+    // staying pinned at the gate ceiling. Off unless
+    // STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT is set; same bid-safety + wide-spread
+    // guards as margin, so it will NOT press a position near its stop-loss floor.
+    const dipTargetBoostPct = getCashDipTargetBoostPct(
+      midReturnPerc,
+      goodBooleanScore,
+      dipSpreadFraction,
+      bidReturnPerc,
+    );
+
     console.log(
       JSON.stringify({
         scope: "cash-position-gate",
@@ -631,6 +643,11 @@ export async function buildRunCycleContext(
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
         maxTargetPct: cashGateMaxTargetPct,
         booleanSurplusPct,
+        dipTargetBoostPct,
+        askReturnPerc,
+        midReturnPerc,
+        bidReturnPerc,
+        dipSpreadFraction,
         originalTargetPct: finalTargets.targetAccountExposure,
         effectiveTargetPct: scaledTargetAccountExposure,
       }),
@@ -643,6 +660,7 @@ export async function buildRunCycleContext(
         targetAccountExposure: scaledTargetAccountExposure,
         maxTargetAccountExposure: cashGateMaxTargetPct,
         booleanSurplusPct,
+        dipTargetBoostPct,
         positionGate: gate,
       },
     };
