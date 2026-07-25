@@ -3,7 +3,7 @@ import { SECRET_AUTO_SEED_ORDER_SOURCE } from "~/bot/order-sources";
 import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretRegime, SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct, getGovernorMult, governorFactorForEnabled, getMarginGovernorMin } from "~/strategy/position-gate";
 import {
   CASH_ACCOUNT_SEED_MIN_DTE,
   CASH_ACCOUNT_SEED_MAX_DTE,
@@ -347,6 +347,33 @@ export function isMarginSeedBlockedByPlateau(
   );
 }
 
+// Add-governor (margin = HARD): block the seed when the underlying knifes below
+// MARGIN_GOVERNOR_MIN — margin is leveraged and liquidates EOD, so it can't ride a
+// knife to recovery. The richer sibling of the plateau block; dark until enabled.
+export function isMarginSeedBlockedByGovernor(position: SecretSourcePosition): boolean {
+  return governorFactorForEnabled(getGovernorMult(position), "margin") === 0;
+}
+
+// The margin knife gates (plateau + governor), logged. Returns true if either
+// blocks the seed. Consolidated so the caller stays a single line.
+function marginSeedBlockedByKnife(position: SecretSourcePosition, symbol: string): boolean {
+  if (isMarginSeedBlockedByPlateau(position)) {
+    console.log(JSON.stringify({
+      scope: "secret-auto-seed-margin-plateau-block",
+      symbol, plateauScore: position.plateauScore, minPlateauScore: getMinPlateauScore(),
+    }));
+    return true;
+  }
+  if (isMarginSeedBlockedByGovernor(position)) {
+    console.log(JSON.stringify({
+      scope: "secret-auto-seed-margin-governor-block",
+      symbol, governorMult: getGovernorMult(position), marginGovernorMin: getMarginGovernorMin(),
+    }));
+    return true;
+  }
+  return false;
+}
+
 async function maybeAutoSeedSymbol(options: {
   symbol: string;
   side: "call" | "put";
@@ -356,6 +383,7 @@ async function maybeAutoSeedSymbol(options: {
   triggerReason?: string;
   goodBooleanScore?: number;
   booleanSurplusPct?: number;
+  governorMult?: number;
 }): Promise<void> {
   const now = Date.now();
   if (isAutoSeedCooldownActive(options.cooldownMap, options.symbol, options.accountNumber, now)) {
@@ -367,6 +395,7 @@ async function maybeAutoSeedSymbol(options: {
     const result = await seedSymbol(options.symbol, options.side, options.accountNumber, {
       orderSource: SECRET_AUTO_SEED_ORDER_SOURCE,
       priceMode: "mid",
+      governorMult: options.governorMult,
     });
     recordSeedAttempt(options.accountNumber, result);
     const cooldownKind = classifySeedOutcomeCooldown(result);
@@ -440,15 +469,7 @@ async function maybeAutoSeedMarginForPosition(options: {
     }
     return;
   }
-  if (isMarginSeedBlockedByPlateau(options.position)) {
-    console.log(
-      JSON.stringify({
-        scope: "secret-auto-seed-margin-plateau-block",
-        symbol: options.symbol,
-        plateauScore: options.position.plateauScore,
-        minPlateauScore: getMinPlateauScore(),
-      }),
-    );
+  if (marginSeedBlockedByKnife(options.position, options.symbol)) {
     return;
   }
   await maybeAutoSeedSymbol({
@@ -521,6 +542,7 @@ export async function maybeAutoSeedFromSecretPositions(
         triggerReason: "secret-positions-update: isQualityToBuy",
         goodBooleanScore,
         booleanSurplusPct,
+        governorMult: getGovernorMult(position),
       });
     }
 

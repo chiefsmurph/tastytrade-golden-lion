@@ -4,6 +4,12 @@ import {
   computePositionGate,
   getBasicYesMaxTargetPct,
   getBothYesMaxTargetPct,
+  getCashGovernorFloor,
+  getGovernorMult,
+  getMarginGovernorMin,
+  governorFactorFor,
+  governorFactorForEnabled,
+  getPlateauGovernorMult,
   getSingleYesMaxTargetPct,
   getStrongYesMaxTargetPct,
   shouldSeedMarginFromBooleans,
@@ -166,4 +172,76 @@ test("margin seeding requires the FULL feed thesis (thesisCount >= thesisMax)", 
   assert.equal(shouldSeedMarginFromBooleans(p({ thesisCount: 4 })), false);
   assert.equal(shouldSeedMarginFromBooleans(p({ isClearedToBuy: true, willBuy: true })), false);
   assert.equal(shouldSeedMarginFromBooleans(undefined), false);
+});
+
+// ── Add-governor (dark-launch) ──────────────────────────────────────────────
+const P = (extra: Partial<SecretSourcePosition>) => ({ ticker: "X", ...extra }) as SecretSourcePosition;
+
+test("getGovernorMult: prefers the feed's full governorMult over the plateau fallback", () => {
+  // feed sent the Alpaca-computed mult → use it verbatim, ignoring plateauScore
+  assert.equal(getGovernorMult(P({ governorMult: 0.6, plateauScore: 90 })), 0.6);
+  assert.equal(getGovernorMult(P({ governorMult: 1, plateauScore: 5 })), 1);
+  // clamps to <= 1 (the governor only ever throttles)
+  assert.equal(getGovernorMult(P({ governorMult: 1.4 })), 1);
+});
+
+test("getGovernorMult: falls back to the plateau-only ramp when the feed omits governorMult", () => {
+  // no governorMult → plateau ramp (knife plateau 5 → floor)
+  assert.equal(getGovernorMult(P({ plateauScore: 5 })), getPlateauGovernorMult(P({ plateauScore: 5 })));
+  // neither present → never penalize
+  assert.equal(getGovernorMult(undefined), 1);
+  assert.equal(getGovernorMult(P({})), 1);
+  assert.equal(getGovernorMult(P({ governorMult: NaN, plateauScore: 70 })), 1);
+});
+
+test("plateau fallback: absent plateauScore never penalizes; knife→floor, based→full", () => {
+  const floor = 0.4; // STRATEGY_PLATEAU_GOVERNOR_KNIFE_FLOOR default
+  assert.equal(getPlateauGovernorMult(undefined), 1);
+  assert.equal(getPlateauGovernorMult(P({ plateauScore: NaN })), 1);
+  assert.ok(Math.abs(getPlateauGovernorMult(P({ plateauScore: 10 })) - floor) < 1e-9);
+  assert.equal(getPlateauGovernorMult(P({ plateauScore: 65 })), 1);
+  const mid = getPlateauGovernorMult(P({ plateauScore: 50 }));
+  assert.ok(Math.abs(mid - (floor + (1 - floor) * 0.5)) < 1e-9);
+});
+
+test("computePositionGate SURFACES governorMult but never applies it (account-aware downstream)", () => {
+  // The gate is shared by both accounts; the governor is applied per-account in
+  // run-cycle-context / seed paths, so the raw maxTargetPct must be untouched here.
+  const result = gate({ ticker: "X", isQualityToBuy: true, percentOfBalance: 80, governorMult: 0.4 });
+  assert.equal(result.governorMult, 0.4); // observed
+  assert.ok(result.maxTargetPct >= getSingleYesMaxTargetPct()); // never reduced in the gate
+});
+
+test("governorFactorFor: MARGIN hard-blocks below MIN (returns 0), tapers above", () => {
+  const min = getMarginGovernorMin(); // 0.6 default
+  assert.equal(governorFactorFor(0.4, "margin"), 0); // knife below the line → block
+  assert.equal(governorFactorFor(min - 0.001, "margin"), 0);
+  assert.equal(governorFactorFor(min, "margin"), min); // at the line → taper (not block)
+  assert.equal(governorFactorFor(0.8, "margin"), 0.8);
+  assert.equal(governorFactorFor(1, "margin"), 1);
+});
+
+test("governorFactorForEnabled: 1 (no-op) when off, account-aware factor when on", () => {
+  const prev = process.env.STRATEGY_GOVERNOR_ENABLED;
+  try {
+    delete process.env.STRATEGY_GOVERNOR_ENABLED;
+    assert.equal(governorFactorForEnabled(0.4, "margin"), 1); // off → no-op
+    assert.equal(governorFactorForEnabled(0.4, "cash"), 1);
+    process.env.STRATEGY_GOVERNOR_ENABLED = "true";
+    assert.equal(governorFactorForEnabled(0.4, "margin"), 0); // on → margin hard-block
+    assert.equal(governorFactorForEnabled(0.1, "cash"), getCashGovernorFloor()); // on → cash floor
+  } finally {
+    if (prev === undefined) delete process.env.STRATEGY_GOVERNOR_ENABLED;
+    else process.env.STRATEGY_GOVERNOR_ENABLED = prev;
+  }
+});
+
+test("governorFactorFor: CASH soft-floors (never blocks)", () => {
+  const floor = getCashGovernorFloor(); // 0.35 default
+  assert.equal(governorFactorFor(0.1, "cash"), floor); // deep knife still buys a probe, never 0
+  assert.equal(governorFactorFor(0, "cash"), floor);
+  assert.equal(governorFactorFor(0.5, "cash"), 0.5); // above the floor → passes through
+  assert.equal(governorFactorFor(1, "cash"), 1);
+  // cash is strictly freer than margin on the same knife
+  assert.ok(governorFactorFor(0.4, "cash") > governorFactorFor(0.4, "margin"));
 });
