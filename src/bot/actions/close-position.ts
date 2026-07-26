@@ -247,6 +247,35 @@ function advanceClosePrice(
   return moveClosePriceTowardEdge(orderAction, currentPrice, edgePrice, tickSize);
 }
 
+// Places one close order, converting a broker rejection (e.g. 422 — stale/phantom
+// position, nothing to close, bad order) into `undefined` so the tick-chase loop
+// stops instead of letting the throw crash the cycle. The tastytrade error body is
+// logged by the order service (order-service-error). [preserves main afc73e8 through
+// the PR-27 runCloseTickChase extraction]
+async function placeCloseOrder(
+  accountNumber: string,
+  order: OrderPayload,
+  createOrder: NonNullable<ClosePositionDependencies["createOrder"]>,
+): Promise<TastytradePlacedOrderResponse | undefined> {
+  try {
+    return await createOrder(accountNumber, order);
+  } catch (err) {
+    console.warn(
+      `[close-position] order placement rejected (${accountNumber}) — ${
+        err instanceof Error ? err.message : String(err)
+      }. Skipping close.`,
+    );
+    return undefined;
+  }
+}
+
+// The option-close tick-chase state machine the PR-27 refactor pulled out of
+// closePosition: cancel → place → fill-check → advance, up to MAX_CLOSE_TICK_MOVES,
+// with urgent-close special-casing plus a rejection break that keeps a 422 from
+// crashing the cycle (main afc73e8). The branch count is intrinsic to that loop —
+// the single break that tips it over threshold IS the crash-safety guard — and
+// splitting it further would scatter one coherent state machine across helpers.
+// fallow-ignore-next-line complexity
 async function runCloseTickChase(
   params: CloseTickChaseParams,
 ): Promise<{
@@ -291,9 +320,14 @@ async function runCloseTickChase(
       ...baseOrder,
       price: (Math.round(currentPrice * 100) / 100).toFixed(2),
     };
-    const orderResponse = await createOrder(accountNumber, order);
+    const orderResponse = await placeCloseOrder(accountNumber, order, createOrder);
+    if (!orderResponse) {
+      // Placement rejected (see placeCloseOrder) — stop chasing; the caller records
+      // this leg as a skip instead of letting the throw crash the cycle.
+      break;
+    }
     lastOrderResponse = orderResponse;
-    activeOrderId = orderResponse?.order?.id;
+    activeOrderId = orderResponse.order?.id;
 
     if (!tickChaseEnabled || tickMoveCount >= maxTickMoves) {
       break;
@@ -521,6 +555,21 @@ export async function closePosition(
       } catch {
         // use lastOrderResponse as-is
       }
+    }
+
+    if (!lastOrderResponse) {
+      // The tick-chase never got a resting order placed (every attempt was rejected —
+      // see the order-placement-rejected warning above). Record a skip, not a fill,
+      // so we don't decrement remainingToClose or claim a close that never happened.
+      results.push({
+        accountNumber,
+        action: "CLOSE_POSITION",
+        placedOrder: false,
+        skippedReason: "order placement rejected by broker (see order-service-error log)",
+        symbol: snapshot.position.symbol,
+        underlyingSymbol: evaluation.underlyingSymbol,
+      });
+      continue;
     }
 
     remainingToClose -= qtyToClose;

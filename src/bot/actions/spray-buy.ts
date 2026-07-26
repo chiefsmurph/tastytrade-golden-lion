@@ -19,6 +19,27 @@ import {
   registerSpray,
   saveSpray,
 } from "./spray-store";
+import { recordSeedOutcome } from "./seed-outcome-store";
+
+// Persist a terminal seed-spray outcome so the dashboard's pre-trade candidate
+// can be overridden with the real execution state (a placed-then-aborted spray
+// must not keep reading "✅ buying power"). Best-effort inside the store — never
+// throws, so it can't disturb the order loop. See seed-outcome-store.ts.
+async function recordTerminalSeedOutcome(
+  record: SprayRampRecord,
+  state: "aborted" | "filled",
+  reason?: string,
+): Promise<void> {
+  await recordSeedOutcome({
+    accountType: record.accountType,
+    symbol: record.symbol,
+    side: record.side,
+    state,
+    reason,
+    observedFilled: record.observedFilled,
+    totalContracts: Math.floor(record.totalContracts),
+  });
+}
 
 // Spray-buy EXECUTOR — single tick-chaser vs a time-ramped cumulative target.
 //
@@ -477,30 +498,59 @@ interface ChaseContext {
   dwell: { baseMs: number; k: number };
 }
 
+// Why a chase cycle produced no usable context. Distinguishes a genuine
+// quote-feed outage (dxLink) from a live book the chaser refuses to cross, so
+// aborts are diagnosable instead of all reading "no-quote":
+//   no-quote        — getBidAsk returned nothing (3s stream timeout, or a
+//                     bid-only quote that parseQuote rejects for lacking an ask)
+//   spread-too-wide — a two-sided quote whose spread exceeds the chase ceiling
+//                     (min of the account gate and the morning spread ramp)
+//   bad-mid         — a quote with a non-positive midpoint
+type ChaseUnavailableReason = "no-quote" | "spread-too-wide" | "bad-mid";
+type ChaseResolution =
+  | { ctx: ChaseContext; reason?: undefined }
+  | {
+      ctx: null;
+      reason: ChaseUnavailableReason;
+      bid?: number;
+      ask?: number;
+      spreadPct?: number;
+      maxSpreadPct?: number;
+    };
+
 // fallow-ignore-next-line complexity -- unit-tested (spray-buy.test.ts), high CRAP is a coverage-attribution artifact
 async function resolveChaseContext(
   record: SprayRampRecord,
   now: number,
   deps: SprayDeps,
-): Promise<ChaseContext | null> {
+): Promise<ChaseResolution> {
   const quote = await deps.getBidAsk(record.quoteSymbol);
-  if (!quote) return null;
+  if (!quote) return { ctx: null, reason: "no-quote" };
   const mid = getMidpointPrice(quote.bid, quote.ask);
   const maxSpreadPct = getMaxEntrySpreadPctForAccountType(record.accountType, new Date(now));
   const ceiling = chaseCeiling(quote.bid, quote.ask, maxSpreadPct);
-  if (ceiling == null || !(mid > 0)) return null;
+  if (ceiling == null) {
+    const spreadPct =
+      quote.bid > 0 && quote.ask > 0
+        ? (quote.ask - quote.bid) / ((quote.ask + quote.bid) / 2)
+        : undefined;
+    return { ctx: null, reason: "spread-too-wide", bid: quote.bid, ask: quote.ask, spreadPct, maxSpreadPct };
+  }
+  if (!(mid > 0)) return { ctx: null, reason: "bad-mid", bid: quote.bid, ask: quote.ask };
 
   // Deadline-collapse: in the final fraction of the window, take the ceiling
   // (ask) immediately instead of dwelling.
   const windowRemainingFrac =
     record.windowMs > 0 ? (record.deadlineMs - now) / record.windowMs : 0;
   return {
-    mid,
-    ask: quote.ask,
-    ceiling,
-    collapse: windowRemainingFrac <= getSprayDeadlineCollapseFraction(),
-    tickSize: chaseTickSize(mid, ceiling, getSprayChaseSteps()),
-    dwell: { baseMs: getSprayDwellBaseMs(), k: getSprayDwellK() },
+    ctx: {
+      mid,
+      ask: quote.ask,
+      ceiling,
+      collapse: windowRemainingFrac <= getSprayDeadlineCollapseFraction(),
+      tickSize: chaseTickSize(mid, ceiling, getSprayChaseSteps()),
+      dwell: { baseMs: getSprayDwellBaseMs(), k: getSprayDwellK() },
+    },
   };
 }
 
@@ -575,6 +625,7 @@ async function advanceOneSpray(
     await retireWorkingOrder(record, deps);
     record.aborted = true;
     await saveSpray(record);
+    await recordTerminalSeedOutcome(record, "aborted", "deadline");
     return;
   }
 
@@ -591,23 +642,32 @@ async function advanceOneSpray(
   // any reconciled state (a working order for a now-satisfied target can stay —
   // it only helps fill sooner).
   if (shortfall > 0) {
-    const ctx = await resolveChaseContext(record, now, deps);
-    if (ctx) {
+    const resolution = await resolveChaseContext(record, now, deps);
+    if (resolution.ctx) {
       record.quoteUnavailableSinceMs = undefined;
-      await driveWorkingOrder(record, now, allowed, shortfall, ctx, deps);
+      await driveWorkingOrder(record, now, allowed, shortfall, resolution.ctx, deps);
     } else {
       if (record.quoteUnavailableSinceMs == null) {
         record.quoteUnavailableSinceMs = now;
       }
       const unavailableMs = now - record.quoteUnavailableSinceMs;
-      console.log(JSON.stringify({ scope: "spray-quote-unavailable", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quoteSymbol: record.quoteSymbol, unavailableMs }));
+      // reason distinguishes a real dxLink outage ("no-quote") from a book the
+      // chaser won't cross ("spread-too-wide") — see ChaseResolution. Same abort
+      // timer either way, but the log now says which.
+      console.log(JSON.stringify({ scope: "spray-quote-unavailable", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, quoteSymbol: record.quoteSymbol, unavailableMs, reason: resolution.reason, bid: resolution.bid, ask: resolution.ask, spreadPct: resolution.spreadPct, maxSpreadPct: resolution.maxSpreadPct }));
       if (unavailableMs >= getSprayQuoteUnavailableAbortMs()) {
-        console.log(JSON.stringify({ scope: "spray-abort-no-quote", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, unavailableMs }));
+        console.log(JSON.stringify({ scope: "spray-abort-no-quote", sprayId: record.id, symbol: record.symbol, contractSymbol: record.contractSymbol, unavailableMs, reason: resolution.reason, spreadPct: resolution.spreadPct, maxSpreadPct: resolution.maxSpreadPct }));
         record.aborted = true;
+        await recordTerminalSeedOutcome(record, "aborted", resolution.reason ?? "no-quote");
       }
     }
   }
   await saveSpray(record);
+  // Record a clean fill so a later successful spray clears any earlier abort
+  // overlay for this symbol (same store key is overwritten).
+  if (!record.aborted && record.observedFilled >= Math.floor(record.totalContracts) && record.observedFilled > 0) {
+    await recordTerminalSeedOutcome(record, "filled");
+  }
 }
 
 export interface AdvanceSpraysResult {

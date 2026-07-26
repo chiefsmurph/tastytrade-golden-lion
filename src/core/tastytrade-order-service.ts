@@ -59,6 +59,18 @@ export interface TypedOrderService {
   getCustomerOrders(customerId: string, queryParams?: object): Promise<TastytradeOrder[]>;
 }
 
+// Pulls the tastytrade error body out of a failed order request. The bare axios
+// "Request failed with status code 422" hides the actual reason (invalid price
+// increment, closing-only, nothing-to-close, etc.); the response body carries it.
+export function describeOrderError(error: unknown): {
+  status?: number;
+  body?: unknown;
+} {
+  const response =
+    (error as { response?: { status?: number; data?: unknown } })?.response ?? {};
+  return { status: response.status, body: response.data };
+}
+
 export function createTypedOrderService(rawOrderService: RawOrderService): TypedOrderService {
   return {
     async postReconfirmOrder(accountNumber: string, orderId: number) {
@@ -113,11 +125,27 @@ export function createTypedOrderService(rawOrderService: RawOrderService): Typed
       return (await rawOrderService.getOrders(accountNumber, queryParams)) as TastytradeOrder[];
     },
     async createOrder(accountNumber: string, order: OrderRequest) {
+      // Read-only guard FIRST — fail fast before we ever touch the broker (PR #27),
+      // then the 422 error-body logging around the actual order (main afc73e8).
       assertNotReadOnly(accountNumber);
-      return (await rawOrderService.createOrder(
-        accountNumber,
-        order,
-      )) as TastytradePlacedOrderResponse;
+      try {
+        return (await rawOrderService.createOrder(
+          accountNumber,
+          order,
+        )) as TastytradePlacedOrderResponse;
+      } catch (error) {
+        // Surface the tastytrade error body (the actual reason the bare axios
+        // "status code 422" message hides), then rethrow unchanged.
+        console.error(
+          JSON.stringify({
+            scope: "order-service-error",
+            call: "createOrder",
+            accountNumber,
+            ...describeOrderError(error),
+          }),
+        );
+        throw error;
+      }
     },
     async createComplexOrder(accountNumber: string, order: object) {
       return (await rawOrderService.createComplexOrder(

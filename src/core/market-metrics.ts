@@ -2,6 +2,7 @@ import tastytradeApi from "./tastytrade-client";
 
 export interface UnderlyingIvMetrics {
   ivRank: number;              // 0–100 scale (matches UI "IV Rank")
+  rawIvRank: number;           // pre-scale value straight from the API (0–1 decimal); kept for diagnostics/logs
   impliedVolatility: number | null; // raw IV index level (decimal, e.g. 1.187 = 118.7%)
 }
 
@@ -16,14 +17,25 @@ function toNumber(value: unknown): number | null {
 
 // The API returns implied-volatility-index-rank as a 0–1 decimal (live-verified
 // 2026-07-03: MARA "0.355173693"); every threshold in this codebase (entry min
-// 20, seed fallbacks 50/70) is 0–100, so values ≤ 1 are scaled up here.
+// 20, seed fallbacks 50/70) is 0–100, so fractional values are scaled up ×100.
+//
+// IV rank is contractually a 0–1 fraction, but it can transiently exceed 1.0 when
+// current IV prints above its trailing-year high (rank slightly over 100%). The
+// old `<= 1` guard mis-read such a raw 1.2 (= 120%, a HIGH-premium name) as a bare
+// 1.2% "low premium" and skipped it. We now treat any raw value below
+// IV_RANK_FRACTIONAL_MAX as a fraction and scale it; values at/above the cutoff are
+// assumed already on the 0–100 scale (defensive against an API scale change). A
+// real 0–1 rank never reaches the cutoff (max ~1.x), so the partition is clean.
+const IV_RANK_FRACTIONAL_MAX = 2;
+
 export function parseUnderlyingIvMetricsEntry(entry: unknown): UnderlyingIvMetrics | null {
   const record = entry as Record<string, unknown> | null | undefined;
   const rawIvRank = toNumber(record?.["implied-volatility-index-rank"]);
   if (rawIvRank == null) return null;
 
   return {
-    ivRank: rawIvRank <= 1 ? rawIvRank * 100 : rawIvRank,
+    ivRank: rawIvRank < IV_RANK_FRACTIONAL_MAX ? rawIvRank * 100 : rawIvRank,
+    rawIvRank,
     impliedVolatility: toNumber(record?.["implied-volatility-index"]),
   };
 }

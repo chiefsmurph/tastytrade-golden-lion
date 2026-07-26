@@ -71,6 +71,9 @@ export interface ResolveSeedQuantityInput {
   optionPrice: number;
   /** optionLiquidityQuality (0..1) of the chosen candidate; undefined → neutral. */
   optionLiquidityQuality?: number;
+  /** Add-governor knife factor (0..1); undefined → neutral. Fades the seed toward
+   * the floor on a falling knife (cash-soft; margin blocks upstream). */
+  governorFactor?: number;
   /** "margin" | "cash" — the margin-utilization rail applies to margin only. */
   accountType: "margin" | "cash" | "unknown";
   /** Concentration-cap basis (dollars) both %-caps are measured against. */
@@ -230,6 +233,7 @@ export function resolveSeedQuantity(
     accountNLV: input.accountNLV,
     optionPrice: input.optionPrice,
     optionLiquidityQuality: input.optionLiquidityQuality,
+    governorFactor: input.governorFactor,
   });
   const optionLiquidityQuality = sizing.optionLiquidityQuality;
   const modelContracts = sizing.modelContracts;

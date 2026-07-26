@@ -57,6 +57,11 @@ export interface SecretSourcePosition {
   gateMult?: number; // gate favorability (full = 2.0)
   failsDayHighGate?: boolean; // true = blocked by extended-pump guard
   plateauScore?: number; // 0-100 "how flat", entry-quality; feed gates its own buys at >= 35
+  // Add-governor knife-brake (0.35–1.0), computed on the Alpaca position from the
+  // underlying's slope + plateau + afterFall — the SINGLE source of truth. <1 = the
+  // underlying is a falling knife; we throttle the option buy target by it. Read by
+  // computePositionGate (plateauScore is the fallback when this is absent).
+  governorMult?: number;
   // Scan-computed — strike anchors + entry quality (wired 2026-07-13, OBSERVE-ONLY):
   trueLow?: number; // liquid-bar intraday low — ITM strike floor
   trueHigh?: number; // liquid-bar intraday high — OTM strike cap

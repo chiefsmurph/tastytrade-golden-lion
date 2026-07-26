@@ -1,7 +1,41 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isMarginSeedBlockedByPlateau } from "~/strategy/secret/secret-auto-seed";
+import { isMarginSeedBlockedByPlateau, isMarginSeedBlockedByGovernor } from "~/strategy/secret/secret-auto-seed";
+import type { SecretSourcePosition } from "~/strategy/secret/types";
+
+function withGovernor<T>(value: string | undefined, fn: () => T): T {
+  const prev = process.env.STRATEGY_GOVERNOR_ENABLED;
+  if (value === undefined) delete process.env.STRATEGY_GOVERNOR_ENABLED;
+  else process.env.STRATEGY_GOVERNOR_ENABLED = value;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.STRATEGY_GOVERNOR_ENABLED;
+    else process.env.STRATEGY_GOVERNOR_ENABLED = prev;
+  }
+}
+
+const pos = (governorMult?: number, plateauScore?: number) =>
+  ({ ticker: "X", governorMult, plateauScore }) as SecretSourcePosition;
+
+test("isMarginSeedBlockedByGovernor: DARK by default (never blocks when disabled)", () => {
+  withGovernor(undefined, () => {
+    assert.equal(isMarginSeedBlockedByGovernor(pos(0.3)), false); // knife, but off
+    assert.equal(isMarginSeedBlockedByGovernor(pos(1)), false);
+  });
+});
+
+test("isMarginSeedBlockedByGovernor: when ENABLED, blocks a knife below MARGIN_GOVERNOR_MIN", () => {
+  withGovernor("true", () => {
+    assert.equal(isMarginSeedBlockedByGovernor(pos(0.35)), true); // below 0.6 default → block
+    assert.equal(isMarginSeedBlockedByGovernor(pos(0.59)), true);
+    assert.equal(isMarginSeedBlockedByGovernor(pos(0.6)), false); // at the line → allow
+    assert.equal(isMarginSeedBlockedByGovernor(pos(1)), false); // based → allow
+    // missing governorMult falls back to plateau (65 = based → allow)
+    assert.equal(isMarginSeedBlockedByGovernor(pos(undefined, 70)), false);
+  });
+});
 
 test("blocks margin seeds when plateauScore is numeric and below the floor", () => {
   assert.equal(isMarginSeedBlockedByPlateau({ plateauScore: 20 }, 35), true);

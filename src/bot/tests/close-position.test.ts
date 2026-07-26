@@ -160,6 +160,35 @@ test("closePosition places EOD orders even when the spread is wide", async () =>
   assert.equal(results[0]?.placedOrder, true);
 });
 
+test("closePosition records a skip (does not throw) when order placement is rejected", async () => {
+  // Regression: a stale/phantom position produced a 422 on the sell-to-close that was
+  // uncaught and crashed the whole cash cycle. A placement rejection must degrade to a
+  // placedOrder:false skip, not a throw, and must not decrement/claim a close.
+  const evaluation = buildEvaluation("2026-06-25T12:56:00", {
+    metrics: {
+      currentAskPrice: 1.77,
+      currentBidPrice: 1.0,
+      currentTime: new Date("2026-06-25T12:56:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 1.55,
+    },
+  });
+
+  let createOrderCalls = 0;
+  const results = await closePosition("ACC-1", evaluation, {
+    createOrder: async () => {
+      createOrderCalls += 1;
+      throw new Error("Request failed with status code 422");
+    },
+    checkOrderFilled: async () => true,
+  });
+
+  assert.equal(createOrderCalls, 1); // rejected on first attempt -> stops chasing
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.placedOrder, false);
+  assert.match(results[0]?.skippedReason ?? "", /rejected/);
+});
+
 test("closePosition skips all order placement when the morning gate is active", async () => {
   const evaluation = buildEvaluation("2026-06-25T06:30:00", {
     metrics: {

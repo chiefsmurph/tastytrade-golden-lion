@@ -34,11 +34,15 @@ import {
   getMarginMaxTotalUtilization,
   resolveSeedQuantity,
 } from "~/strategy/seed-sizing-live";
+import { governorFactorForEnabled } from "~/strategy/position-gate";
 
 
 export interface SeedSymbolOptions {
   priceMode?: "ask" | "mid";
   orderSource?: string;
+  // Add-governor knife mult (0.35–1.0) from the feed position. Cash seeds fade
+  // toward the floor by it; margin is hard-blocked upstream so it's inert here.
+  governorMult?: number;
   // Reject the seed if the computed limit price exceeds this value.
   // Used to gate averaging-down seeds to entries cheaper than the cash fill.
   maxLimitPrice?: number;
@@ -340,12 +344,21 @@ async function computeLiveSeedSizing(params: {
   accountNLV: number;
   optionPrice: number;
   optionLiquidityQuality?: number;
+  governorMult?: number;
 }): Promise<ReturnType<typeof resolveSeedQuantity>> {
   const exposure = await getSeedExposureSnapshot(params.accountNumber, params.symbol);
+  // Cash-soft governor: fade the seed toward the floor on a knife (margin is
+  // hard-blocked upstream, so it never fades here — factor stays 1). A missing mult
+  // (NaN) clamps to neutral downstream. Dark until STRATEGY_GOVERNOR_ENABLED.
+  const governorFactor =
+    params.accountType === "cash"
+      ? governorFactorForEnabled(Number(params.governorMult), "cash")
+      : 1;
   const sizing = resolveSeedQuantity({
     accountNLV: params.accountNLV,
     optionPrice: params.optionPrice,
     optionLiquidityQuality: params.optionLiquidityQuality,
+    governorFactor,
     accountType: params.accountType === "cash" ? "cash" : "margin",
     concentrationBasis: params.accountNLV,
     existingAccountExposure: exposure.existingAccountExposure,
@@ -363,6 +376,8 @@ async function computeLiveSeedSizing(params: {
       accountNLV: params.accountNLV,
       optionPrice: params.optionPrice,
       optionLiquidityQuality: sizing.optionLiquidityQuality,
+      governorMult: params.governorMult,
+      governorFactor,
       modelTargetPct: sizing.modelTargetPct,
       modelContracts: sizing.modelContracts,
       quantity: sizing.quantity,
@@ -415,6 +430,10 @@ async function trySpraySeed(params: {
   accountNumber: string;
   symbol: string;
   contractSymbol: string;
+  // dxLink streamer symbol for the chase's live bid/ask read. MUST be forwarded:
+  // the streamer can't resolve an OCC contract symbol, so without this the chase
+  // never gets a quote and the spray aborts as "no-quote" (see spray-buy.ts).
+  quoteSymbol?: string;
   side: "call" | "put";
   limitPrice: number;
   orderSource: string;
@@ -427,6 +446,7 @@ async function trySpraySeed(params: {
     accountNumber: params.accountNumber,
     symbol: params.symbol,
     contractSymbol: params.contractSymbol,
+    quoteSymbol: params.quoteSymbol,
     side: params.side,
     totalContracts: sprayContracts,
     limitPrice: params.limitPrice,
@@ -853,6 +873,7 @@ async function seedSymbol(
     accountNLV,
     optionPrice: numericLimitPrice,
     optionLiquidityQuality: candidate?.optionLiquidityQuality,
+    governorMult: options.governorMult,
   });
   const seedQuantity = sizing.quantity;
   const estimatedOrderCost = seedQuantity * numericLimitPrice * 100;
@@ -966,6 +987,7 @@ async function seedSymbol(
     accountNumber: resolvedAccountNumber,
     symbol: normalizedSymbol,
     contractSymbol: candidateSymbol,
+    quoteSymbol,
     side,
     limitPrice: numericLimitPrice,
     orderSource,

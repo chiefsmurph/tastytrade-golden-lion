@@ -90,32 +90,46 @@ export function getMarginDipTargetBoostMaxSpreadPct(): number {
   return parseEnvFraction("STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_SPREAD_PCT", Infinity);
 }
 
+// Cash analog of the margin wide-spread ceiling. Same semantics: off (Infinity)
+// unless STRATEGY_CASH_DIP_TARGET_BOOST_MAX_SPREAD_PCT is set to a positive
+// fraction.
+export function getCashDipTargetBoostMaxSpreadPct(): number {
+  return parseEnvFraction("STRATEGY_CASH_DIP_TARGET_BOOST_MAX_SPREAD_PCT", Infinity);
+}
+
 // Wide-spread suppression predicate (default off): true only when a KNOWN,
 // finite spread exceeds the configured ceiling. An unknown/absent spread, or an
 // unset ceiling, returns false — the boost degrades gracefully rather than
 // being silently killed by a missing quote.
 export function isDipBoostSuppressedByWideSpread(
   spreadFraction: number | null | undefined,
+  maxSpreadPct: number = getMarginDipTargetBoostMaxSpreadPct(),
 ): boolean {
-  const maxSpread = getMarginDipTargetBoostMaxSpreadPct();
-  if (!Number.isFinite(maxSpread)) return false;
+  if (!Number.isFinite(maxSpreadPct)) return false;
   if (spreadFraction == null || !Number.isFinite(spreadFraction)) return false;
-  return spreadFraction > maxSpread;
+  return spreadFraction > maxSpreadPct;
 }
 
-export function getMarginDipTargetBoostPct(
+// Shared dip-boost math for both accounts. The wrappers supply the account's
+// env-driven max boost and wide-spread ceiling; every other threshold (loss
+// band, boolean floor, bid-safety) is identical across margin and cash, so the
+// hard-won guards (bid-safety from the 2026-07-07 TE case, wide-spread
+// suppression) apply equally.
+// fallow-ignore-next-line complexity -- linear guard chain extracted verbatim from getMarginDipTargetBoostPct (DRY across margin+cash); unit-tested via both wrappers (risk-limits.test.ts). High CRAP is a coverage-attribution artifact for this private fn.
+function computeDipTargetBoostPct(
+  maxBoost: number,
+  maxSpreadPct: number,
   midReturnFraction: number,
   goodBooleanScore: number | null,
   spreadFraction?: number | null,
   bidReturnFraction?: number | null,
 ): number {
-  const maxBoost = parseEnvFraction("STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT", 0);
   if (maxBoost <= 0) return 0;
   if (goodBooleanScore == null || goodBooleanScore < DIP_BOOST_MIN_BOOLEAN_SCORE) {
     return 0;
   }
   // Don't press a "dip" that is really a blown-out spread (see comment above).
-  if (isDipBoostSuppressedByWideSpread(spreadFraction)) return 0;
+  if (isDipBoostSuppressedByWideSpread(spreadFraction, maxSpreadPct)) return 0;
 
   // Bid-safety gate: if the bid return is already within DIP_BOOST_BID_SAFETY_MARGIN
   // of the intraday stop-loss floor, the boost is suppressed. Averaging into a
@@ -148,4 +162,41 @@ export function getMarginDipTargetBoostPct(
       (DIP_BOOST_MAX_LOSS_FRACTION - DIP_BOOST_MIN_LOSS_FRACTION),
   );
   return maxBoost * depthRatio;
+}
+
+export function getMarginDipTargetBoostPct(
+  midReturnFraction: number,
+  goodBooleanScore: number | null,
+  spreadFraction?: number | null,
+  bidReturnFraction?: number | null,
+): number {
+  return computeDipTargetBoostPct(
+    parseEnvFraction("STRATEGY_MARGIN_DIP_TARGET_BOOST_MAX_PCT", 0),
+    getMarginDipTargetBoostMaxSpreadPct(),
+    midReturnFraction,
+    goodBooleanScore,
+    spreadFraction,
+    bidReturnFraction,
+  );
+}
+
+// Cash analog of the margin dip boost — lets the cash account raise its target
+// exposure on a genuine dip so manage-allocation can average down, instead of
+// being permanently pinned at the signal-gate ceiling. Off unless
+// STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT is set (e.g. 0.25 = up to +25% target
+// exposure at the deepest boosted loss). Same guards as margin.
+export function getCashDipTargetBoostPct(
+  midReturnFraction: number,
+  goodBooleanScore: number | null,
+  spreadFraction?: number | null,
+  bidReturnFraction?: number | null,
+): number {
+  return computeDipTargetBoostPct(
+    parseEnvFraction("STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT", 0),
+    getCashDipTargetBoostMaxSpreadPct(),
+    midReturnFraction,
+    goodBooleanScore,
+    spreadFraction,
+    bidReturnFraction,
+  );
 }

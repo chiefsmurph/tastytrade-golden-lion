@@ -104,7 +104,7 @@ test("transient failures get the short retry cooldown", () => {
 
 // The no-candidate / retry cooldowns live in module-level maps, so each test
 // below uses its own unique symbol to stay isolated. Defaults (env unset):
-// placed 10 min, no-candidate 2 h, retry 3 min.
+// placed 10 min, no-candidate 45 min, retry 3 min.
 const MIN = 60 * 1000;
 
 test("placed cooldown uses the per-path map and the standard 10 min window", () => {
@@ -119,43 +119,44 @@ test("placed cooldown uses the per-path map and the standard 10 min window", () 
   assert.equal(isAutoSeedCooldownActive(new Map(), "CD-PLACED", "ACC-1", now + 1), false);
 });
 
-test("no-chain cooldown is very long (6h), account-independent, and outlasts no-candidate", () => {
+test("no-chain cooldown is long (3h), account-independent, and outlasts no-candidate", () => {
   const map = new Map<string, number>();
   const now = 1_000_000_000;
 
   recordSeedOutcomeCooldown("no-chain", map, "CD-NOCHAIN", "ACC-1", now);
-  // Still blocking past the 2h no-candidate window — a name confirmed optionless
-  // once should be probed at most ~once per 6.5h seed session.
-  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 121 * MIN), true);
-  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 359 * MIN), true);
+  // Still blocking past the 45-min no-candidate window — a name confirmed
+  // optionless once is re-probed only ~twice per 6.5h seed session.
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 46 * MIN), true);
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 179 * MIN), true);
   // …for every account (chain absence is a property of the underlying)…
-  assert.equal(isAutoSeedCooldownActive(new Map(), "CD-NOCHAIN", "ACC-2", now + 359 * MIN), true);
-  // …and clears after 6 hours (conservative: not permanent, so a transient
-  // empty-chain fetch is re-probed next session rather than benched forever).
-  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 360 * MIN), false);
+  assert.equal(isAutoSeedCooldownActive(new Map(), "CD-NOCHAIN", "ACC-2", now + 179 * MIN), true);
+  // …and clears after 3 hours (conservative: not permanent, so a transient
+  // empty-chain fetch is re-probed later this session rather than benched forever).
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCHAIN", "ACC-1", now + 180 * MIN), false);
 });
 
-test("no-candidate cooldown is long (2h) and account-independent (after early session)", () => {
+test("no-candidate cooldown is 45 min and account-independent (after early session)", () => {
   const map = new Map<string, number>();
-  // Recorded at 10:00am local (past the 7:15am early-session window) so the full
-  // 2h cooldown applies. Local-time constructor matches the local getHours() the
+  // Recorded at 10:00am local (past the early-session window) so the full 45-min
+  // cooldown applies. Local-time constructor matches the local getHours() the
   // cooldown uses, keeping this deterministic regardless of the runner timezone.
   const now = new Date(2026, 0, 12, 10, 0, 0).getTime();
 
   recordSeedOutcomeCooldown("no-candidate", map, "CD-NOCAND", "ACC-1", now);
   // Blocks well past the placed window…
-  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 119 * MIN), true);
-  // …for every account (chain absence is a property of the underlying)…
-  assert.equal(isAutoSeedCooldownActive(new Map(), "CD-NOCAND", "ACC-2", now + 119 * MIN), true);
-  // …and clears after 2 hours.
-  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 120 * MIN), false);
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 44 * MIN), true);
+  // …for every account (account-independent: a margin miss suppresses cash too)…
+  assert.equal(isAutoSeedCooldownActive(new Map(), "CD-NOCAND", "ACC-2", now + 44 * MIN), true);
+  // …and clears after 45 minutes.
+  assert.equal(isAutoSeedCooldownActive(map, "CD-NOCAND", "ACC-1", now + 45 * MIN), false);
 });
 
-test("no-candidate cooldown is SHORT (15 min) when recorded in the early session", () => {
+test("no-candidate cooldown is SHORT (15 min) anywhere in the 6:30-8:00am gate ramp", () => {
   const map = new Map<string, number>();
-  // Recorded at 6:45am local — inside the 6:30-7:15am ramp where the spread gate
-  // loosens, so a fresh probe should be allowed after 15 min, not benched 2h.
-  const now = new Date(2026, 0, 12, 6, 45, 0).getTime();
+  // Recorded at 7:30am local — past the OLD 7:15am cutoff but still inside the
+  // 6:30-8:00am spread-gate ramp, so it should get the 15-min retry, not 45min.
+  // (This is the MBLY-7:16am class of case the window was extended to cover.)
+  const now = new Date(2026, 0, 12, 7, 30, 0).getTime();
 
   recordSeedOutcomeCooldown("no-candidate", map, "CD-EARLY", "ACC-1", now);
   assert.equal(isAutoSeedCooldownActive(map, "CD-EARLY", "ACC-1", now + 14 * MIN), true);

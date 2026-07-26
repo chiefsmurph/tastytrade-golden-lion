@@ -56,6 +56,10 @@ export interface SeedSizingInputs {
   regimeFavorability?: number;
   // 0..1, default neutral (1.0). Clamped to [0, 1].
   optionLiquidityQuality?: number;
+  // Add-governor knife factor, 0..1 (default neutral 1.0). Fades the seed toward
+  // the floor when the underlying is a falling knife; the account-aware posture
+  // (margin hard / cash soft) is resolved by the caller into this single number.
+  governorFactor?: number;
   // Optional band overrides (fractions of NLV). Default to the env-configured
   // floor/ceiling — passed explicitly only by tests / callers that already
   // resolved them.
@@ -107,8 +111,9 @@ export function computeSeedSizing(inputs: SeedSizingInputs): SeedSizingResult {
 
   const regimeFavorability = clampFavorabilityInput(inputs.regimeFavorability);
   const optionLiquidityQuality = clampFavorabilityInput(inputs.optionLiquidityQuality);
+  const governorFactor = clampFavorabilityInput(inputs.governorFactor);
 
-  const scaledPct = ceilingPct * regimeFavorability * optionLiquidityQuality;
+  const scaledPct = ceilingPct * regimeFavorability * optionLiquidityQuality * governorFactor;
   const modelTargetPct = Math.min(Math.max(scaledPct, floorPct), ceilingPct);
 
   const accountNLV = Number.isFinite(inputs.accountNLV) && inputs.accountNLV > 0

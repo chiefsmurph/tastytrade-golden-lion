@@ -3,7 +3,7 @@ import { SECRET_AUTO_SEED_ORDER_SOURCE } from "~/bot/order-sources";
 import { isWithinSecretAutoSeedWindow } from "~/strategy/seeding-windows";
 import { getCashAccountNumber, getMarginAccountNumber } from "~/core/default-account";
 import { SecretRegime, SecretSourcePosition, SecretTickerRecPick } from "./types";
-import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct } from "~/strategy/position-gate";
+import { shouldSeedMarginFromBooleans, countGoodBooleans, getBooleanSurplusPct, getGovernorMult, governorFactorForEnabled, getMarginGovernorMin } from "~/strategy/position-gate";
 import {
   CASH_ACCOUNT_SEED_MIN_DTE,
   CASH_ACCOUNT_SEED_MAX_DTE,
@@ -76,8 +76,11 @@ export function classifySeedOutcomeCooldown(result: {
 // The morning spread gate ramps 5%→30% across 6:30-8:00am PT (see
 // spread-thresholds.ts). A no-candidate failure at 6:35am (5% gate) deserves a
 // short retry so the bot can re-probe when the gate loosens at 6:45am (10%),
-// not a 2h bench that misses the entire open window.
-const EARLY_SESSION_END_MINUTE = 7 * 60 + 15; // 7:15am PT (45 min into session)
+// not a 45-min bench that misses the entire open window. The window ends where the
+// ramp ends (8:00am) — after that the gate holds at 30% and retrying no longer
+// benefits from a loosening threshold. (7:15am was too early: it benched names
+// that failed at the 20% level ~90s after the cutoff — e.g. MBLY 7/23 07:16.)
+const EARLY_SESSION_END_MINUTE = 8 * 60; // 8:00am PT — end of the spread-gate ramp
 const EARLY_SESSION_NO_CANDIDATE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
 
 function getEffectiveNoCandidateCooldownMs(attemptAt: number): number {
@@ -236,25 +239,27 @@ function getAutoSeedCooldownMs(): number {
 
 // Underlying has NO option chain at all (zero expirations anywhere) — it is not
 // optionable, a property that effectively never changes intraday and rarely
-// changes at all. Default 6h, which covers the whole 6:30am-1pm PT seed window
-// so a name confirmed optionless once is probed at most once per session.
+// changes at all. Default 3h: with the seed window ~6:30am-1pm PT, a name
+// confirmed optionless is re-probed about twice per session rather than once.
 //
-// Chosen 6h rather than "permanent" deliberately (conservative): the empty
+// Chosen 3h rather than "permanent" deliberately (conservative): the empty
 // chain COULD, in principle, be a transient upstream fetch failure that
-// returned `expirations: []` instead of a real "not optionable" answer. A 6h
+// returned `expirations: []` instead of a real "not optionable" answer. A 3h
 // bench that resets across restarts (module-level map) errs toward re-probing a
 // name that might become seedable, over permanently starving it — while still
 // eliminating the per-tick re-fetch this was built to stop.
 function getNoChainCooldownMs(): number {
-  return readCooldownMs("SECRET_AUTO_SEED_NO_CHAIN_COOLDOWN_MS", 6 * 60 * 60 * 1000);
+  return readCooldownMs("SECRET_AUTO_SEED_NO_CHAIN_COOLDOWN_MS", 3 * 60 * 60 * 1000);
 }
 
 // A chain exists but has no usable candidate (spread/quote/DTE-window miss).
-// Default 2h, not all-day: the seeding window is only 6:30am-1pm PT and
+// Default 45min, not all-day: the seeding window is only 6:30am-1pm PT and
 // small-cap option spreads/liquidity tighten as the session builds, so a
-// morning "no candidate" deserves ~3 retries within the window rather than 1.
+// morning "no candidate" gets re-probed several times within the window. Kept
+// deliberately short because this cooldown is account-independent (keyed by
+// symbol) — a margin miss on a tight spread gate suppresses the cash seed too.
 function getNoCandidateCooldownMs(): number {
-  return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 2 * 60 * 60 * 1000);
+  return readCooldownMs("SECRET_AUTO_SEED_NO_CANDIDATE_COOLDOWN_MS", 45 * 60 * 1000);
 }
 
 // Transient failures (buying power, closing-only, dry-run rejection).
@@ -342,6 +347,33 @@ export function isMarginSeedBlockedByPlateau(
   );
 }
 
+// Add-governor (margin = HARD): block the seed when the underlying knifes below
+// MARGIN_GOVERNOR_MIN — margin is leveraged and liquidates EOD, so it can't ride a
+// knife to recovery. The richer sibling of the plateau block; dark until enabled.
+export function isMarginSeedBlockedByGovernor(position: SecretSourcePosition): boolean {
+  return governorFactorForEnabled(getGovernorMult(position), "margin") === 0;
+}
+
+// The margin knife gates (plateau + governor), logged. Returns true if either
+// blocks the seed. Consolidated so the caller stays a single line.
+function marginSeedBlockedByKnife(position: SecretSourcePosition, symbol: string): boolean {
+  if (isMarginSeedBlockedByPlateau(position)) {
+    console.log(JSON.stringify({
+      scope: "secret-auto-seed-margin-plateau-block",
+      symbol, plateauScore: position.plateauScore, minPlateauScore: getMinPlateauScore(),
+    }));
+    return true;
+  }
+  if (isMarginSeedBlockedByGovernor(position)) {
+    console.log(JSON.stringify({
+      scope: "secret-auto-seed-margin-governor-block",
+      symbol, governorMult: getGovernorMult(position), marginGovernorMin: getMarginGovernorMin(),
+    }));
+    return true;
+  }
+  return false;
+}
+
 async function maybeAutoSeedSymbol(options: {
   symbol: string;
   side: "call" | "put";
@@ -351,6 +383,7 @@ async function maybeAutoSeedSymbol(options: {
   triggerReason?: string;
   goodBooleanScore?: number;
   booleanSurplusPct?: number;
+  governorMult?: number;
 }): Promise<void> {
   const now = Date.now();
   if (isAutoSeedCooldownActive(options.cooldownMap, options.symbol, options.accountNumber, now)) {
@@ -362,6 +395,7 @@ async function maybeAutoSeedSymbol(options: {
     const result = await seedSymbol(options.symbol, options.side, options.accountNumber, {
       orderSource: SECRET_AUTO_SEED_ORDER_SOURCE,
       priceMode: "mid",
+      governorMult: options.governorMult,
     });
     recordSeedAttempt(options.accountNumber, result);
     const cooldownKind = classifySeedOutcomeCooldown(result);
@@ -435,15 +469,7 @@ async function maybeAutoSeedMarginForPosition(options: {
     }
     return;
   }
-  if (isMarginSeedBlockedByPlateau(options.position)) {
-    console.log(
-      JSON.stringify({
-        scope: "secret-auto-seed-margin-plateau-block",
-        symbol: options.symbol,
-        plateauScore: options.position.plateauScore,
-        minPlateauScore: getMinPlateauScore(),
-      }),
-    );
+  if (marginSeedBlockedByKnife(options.position, options.symbol)) {
     return;
   }
   await maybeAutoSeedSymbol({
@@ -516,6 +542,7 @@ export async function maybeAutoSeedFromSecretPositions(
         triggerReason: "secret-positions-update: isQualityToBuy",
         goodBooleanScore,
         booleanSurplusPct,
+        governorMult: getGovernorMult(position),
       });
     }
 

@@ -7,8 +7,8 @@ import {
   getMarginAccountNumber,
   isReadOnlyAccount,
 } from "~/core/default-account";
-import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier, getRegimePostureMult } from "~/strategy/position-gate";
-import { getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
+import { computePositionGate, countGoodBooleans, getBooleanSurplusPct, getMarginTargetMultiplier, getCrossAccountThresholdMultiplier, getRegimePostureMult, governorFactorForEnabled } from "~/strategy/position-gate";
+import { getCashDipTargetBoostPct, getMarginDipTargetBoostPct } from "~/strategy/risk-limits";
 import {
   getEffectiveTotalCapital,
   getSpendableFundsForAccountType,
@@ -511,9 +511,13 @@ export async function buildRunCycleContext(
       // regimeMarginMult (down-only throttle) × dipBuyDeployMult (capped dip
       // lean-in). Margin only — cash has its own hold-side regime gates.
       const regimePostureMult = getRegimePostureMult(getCachedSecretRegime());
+      // Add-governor (margin = HARD): block the target when the underlying knifes
+      // below MARGIN_GOVERNOR_MIN — margin is leveraged and liquidates EOD, so it
+      // can't ride a knife to recovery. Dark until STRATEGY_GOVERNOR_ENABLED.
+      const marginGovernorFactor = governorFactorForEnabled(gate.governorMult, "margin");
       const marginMaxTargetPct = willBuyBlocked
         ? 0
-        : gate.maxTargetPct * multiplier * marginQualityFactor * regimePostureMult;
+        : gate.maxTargetPct * multiplier * marginQualityFactor * regimePostureMult * marginGovernorFactor;
       // ITM fallback eligibility: on low-priced/illiquid names the OTM strikes are
       // dead-quoted (100% spreads) while the ATM/ITM strike is tradeable. Permit
       // margin to fall back to ITM only on high conviction (buyWeight > 280) —
@@ -552,6 +556,8 @@ export async function buildRunCycleContext(
           cashMaxTargetPct: gate.maxTargetPct,
           multiplier,
           regimePostureMult,
+          governorMult: gate.governorMult,
+          marginGovernorFactor,
           marginMaxTargetPct,
           booleanSurplusPct,
           dipTargetBoostPct,
@@ -610,10 +616,28 @@ export async function buildRunCycleContext(
     const cashQualityFactor = cashBuyMult !== null && cashGateMult !== null
       ? Math.max(0.5, Math.min(1.0, (cashBuyMult * cashGateMult) / 4.0))
       : 1.0;
-    const cashGateMaxTargetPct = cashHardGateBlocked ? 0 : gate.maxTargetPct * cashQualityFactor;
+    // Add-governor (cash = SOFT): fade the target toward a probe when the
+    // underlying knifes, but never block — cash is ITM and holds overnight, so it
+    // can ride the knife to the next-day base. Dark until STRATEGY_GOVERNOR_ENABLED.
+    const cashGovernorFactor = governorFactorForEnabled(gate.governorMult, "cash");
+    const cashGateMaxTargetPct = cashHardGateBlocked
+      ? 0
+      : gate.maxTargetPct * cashQualityFactor * cashGovernorFactor;
 
     const scaledTargetAccountExposure =
       finalTargets.targetAccountExposure * cashGateMaxTargetPct;
+
+    // Cash dip boost (symmetric to margin): on a genuine mid-return dip, raise
+    // the target exposure so manage-allocation can average down instead of
+    // staying pinned at the gate ceiling. Off unless
+    // STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT is set; same bid-safety + wide-spread
+    // guards as margin, so it will NOT press a position near its stop-loss floor.
+    const dipTargetBoostPct = getCashDipTargetBoostPct(
+      midReturnPerc,
+      goodBooleanScore,
+      dipSpreadFraction,
+      bidReturnPerc,
+    );
 
     console.log(
       JSON.stringify({
@@ -629,8 +653,15 @@ export async function buildRunCycleContext(
         crossAccountAskReturnFraction,
         signals: gate.signals,
         strongStockYesPctThreshold: gate.strongStockYesPctThreshold,
+        governorMult: gate.governorMult,
+        cashGovernorFactor,
         maxTargetPct: cashGateMaxTargetPct,
         booleanSurplusPct,
+        dipTargetBoostPct,
+        askReturnPerc,
+        midReturnPerc,
+        bidReturnPerc,
+        dipSpreadFraction,
         originalTargetPct: finalTargets.targetAccountExposure,
         effectiveTargetPct: scaledTargetAccountExposure,
       }),
@@ -643,6 +674,7 @@ export async function buildRunCycleContext(
         targetAccountExposure: scaledTargetAccountExposure,
         maxTargetAccountExposure: cashGateMaxTargetPct,
         booleanSurplusPct,
+        dipTargetBoostPct,
         positionGate: gate,
       },
     };

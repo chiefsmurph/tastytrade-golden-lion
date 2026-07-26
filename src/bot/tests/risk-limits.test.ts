@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getCashDipTargetBoostMaxSpreadPct,
+  getCashDipTargetBoostPct,
   getMarginDipTargetBoostMaxSpreadPct,
   getMarginDipTargetBoostPct,
   isDipBoostSuppressedByWideSpread,
@@ -44,9 +46,57 @@ function withSpreadSuppressionEnv<T>(value: string | undefined, fn: () => T): T 
   }
 }
 
+function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
+  const previous = process.env[key];
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+}
+
 test("dip boost is off by default", () => {
   withBoostEnv(undefined, () => {
     assert.equal(getMarginDipTargetBoostPct(-0.1, 8), 0);
+  });
+});
+
+test("cash dip boost is off by default and independent of the margin knob", () => {
+  withEnv("STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT", undefined, () => {
+    // Enabling MARGIN must NOT enable cash — they are separate knobs.
+    withBoostEnv("0.25", () => {
+      assert.equal(getCashDipTargetBoostPct(-0.1, 8), 0, "margin knob does not enable cash");
+    });
+  });
+  // And enabling cash must not depend on the margin knob being set.
+  withBoostEnv(undefined, () => {
+    withEnv("STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT", "0.25", () => {
+      assert.ok(getCashDipTargetBoostPct(-0.1, 8) > 0, "cash knob enables cash on its own");
+    });
+  });
+});
+
+test("cash dip boost mirrors margin: conviction floor, mid-loss scaling, and shared guards", () => {
+  withEnv("STRATEGY_CASH_DIP_TARGET_BOOST_MAX_PCT", "0.25", () => {
+    // Conviction floor (booleans >= 4).
+    assert.equal(getCashDipTargetBoostPct(-0.1, 3), 0);
+    assert.ok(getCashDipTargetBoostPct(-0.1, 4) > 0);
+    // Scales with MID loss (2%->12% band), capped.
+    assert.equal(getCashDipTargetBoostPct(-0.02, 8), 0);
+    assert.ok(Math.abs(getCashDipTargetBoostPct(-0.07, 8) - 0.125) < 1e-9);
+    assert.equal(getCashDipTargetBoostPct(-0.3, 8), 0.25);
+    // Bid-safety gate (shared): bid within 10pts of the 30% stop floor -> no boost.
+    assert.equal(getCashDipTargetBoostPct(-0.05, 8, null, -0.21), 0);
+    assert.ok(getCashDipTargetBoostPct(-0.07, 8, null, -0.10) > 0);
+    // Wide-spread suppression uses the CASH ceiling, not the margin one.
+    withEnv("STRATEGY_CASH_DIP_TARGET_BOOST_MAX_SPREAD_PCT", "0.15", () => {
+      assert.equal(getCashDipTargetBoostMaxSpreadPct(), 0.15);
+      assert.equal(getCashDipTargetBoostPct(-0.07, 6, 0.18), 0, "wide spread suppresses");
+      assert.ok(getCashDipTargetBoostPct(-0.07, 6, 0.1) > 0, "tight spread passes");
+    });
   });
 });
 

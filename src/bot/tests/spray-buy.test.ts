@@ -40,6 +40,11 @@ class FakeBroker {
   orders: FakeOrder[] = [];
   placedCount = 0;
   cancelledIds: string[] = [];
+  // Every symbol the chase subscribed to for a live quote. The chase MUST read
+  // the dxLink streamer symbol (quoteSymbol), never the OCC contractSymbol —
+  // the streamer can't resolve OCC option symbols, so an OCC read gets no quote
+  // and the spray aborts as "no-quote".
+  quoteSymbolsRead: string[] = [];
   private nextId = 1;
 
   // How many orders are live (Received/Open) right now — the single-order
@@ -71,7 +76,10 @@ class FakeBroker {
         if (!o) return null;
         return { status: o.status, filledQuantity: o.filledQuantity };
       },
-      getBidAsk: async () => ({ bid: this.bid, ask: this.ask }),
+      getBidAsk: async (quoteSymbol) => {
+        this.quoteSymbolsRead.push(quoteSymbol);
+        return { bid: this.bid, ask: this.ask };
+      },
     };
   }
 
@@ -114,6 +122,34 @@ test("startSprayBuy places the first chasing order and reports the target", asyn
   assert.equal(result.scheduledSlices, 10, "reports the cumulative target");
   assert.ok(result.firstSliceOrderId, "a working order id is returned");
   assert.equal(broker.liveOrderCount(), 1, "exactly one live order");
+});
+
+test("chase subscribes to the streamer quoteSymbol, never the OCC contract symbol", async () => {
+  // Regression: the cash seed spray used to hand off only the OCC contractSymbol,
+  // so the chase subscribed to a symbol dxLink can't resolve → no quote → every
+  // spray aborted "no-quote" with zero fills. The chase must read quoteSymbol.
+  const broker = new FakeBroker();
+  await freshStart(broker); // quoteSymbol ".SG260731C3", contractSymbol "SG    260731C00003000"
+  broker.clock += 20_000;
+  await advanceSprays(broker.deps());
+  assert.ok(broker.quoteSymbolsRead.length > 0, "the chase read a live quote");
+  // Every read is the streamer symbol — so the chase never touched the OCC one.
+  assert.ok(
+    broker.quoteSymbolsRead.every((s) => s === ".SG260731C3"),
+    `chase must read the streamer symbol, never the OCC contract symbol; got: ${broker.quoteSymbolsRead.join(",")}`,
+  );
+});
+
+test("chase falls back to contractSymbol only when no streamer quoteSymbol is provided", async () => {
+  const broker = new FakeBroker();
+  await freshStart(broker, { quoteSymbol: undefined });
+  broker.clock += 20_000;
+  await advanceSprays(broker.deps());
+  assert.ok(broker.quoteSymbolsRead.length > 0, "the chase read a live quote");
+  assert.ok(
+    broker.quoteSymbolsRead.every((s) => s === "SG    260731C00003000"),
+    "with no streamer symbol the chase reads the OCC contract symbol as the last resort",
+  );
 });
 
 test("single-order invariant: never more than one live order across many cycles", async () => {

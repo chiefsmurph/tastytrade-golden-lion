@@ -11,11 +11,19 @@ export interface PositionGateSignals {
   strongStockYes: boolean;
   goodBooleanScore: number;
   allBooleansGood: boolean;
+  // Raw stock-yes proxy inputs — surfaced for logging so they can be validated against
+  // forward return later (currently unvalidated conviction proxies; see the gate audit).
+  // Optional: only computePositionGate populates them; test fixtures may omit them.
+  qualityToBuy?: boolean;
+  percentOfBalance?: number;
 }
 
 export interface PositionGateResult {
   signals: PositionGateSignals;
   maxTargetPct: number;
+  // 1 = underlying based (or signal absent), <1 = falling-knife throttle. Always
+  // computed for observability; only reduces maxTargetPct when the governor is on.
+  governorMult: number;
   strongStockYesPctThreshold: number;
   basicStockYesPctThreshold: number;
 }
@@ -79,6 +87,93 @@ export function getSingleYesMaxTargetPct(): number {
 
 export function getBasicYesMaxTargetPct(): number {
   return readEnvPct("STRATEGY_GATE_BASIC_YES_MAX_TARGET_PCT", 0.10);
+}
+
+// (b) 2026-07-24 — demote the unvalidated stock-yes proxies (isQualityToBuy / percentOfBalance).
+// When on, a stock-yes tier NOT backed by validated thesis (feed full buyFraction>=1.0, or a
+// real manual thesis >= GATE_PROXY_DEMOTE_THESIS_MIN) is capped at the basic ceiling — so the
+// proxies can't grant a large target on their own. Can ONLY reduce a non-thesis target; never
+// raises anything. Off by default. See docs/gl-gate-audit-alpha-vs-risk-2026-07-24.md.
+const GATE_PROXY_DEMOTE_THESIS_MIN = 4;
+function getGateProxyDemoteEnabled(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_GATE_PROXY_DEMOTE_ENABLED);
+}
+
+// ── Add-governor (2026-07-24) ────────────────────────────────────────────────
+// A knife brake on the buy target, ported from Alpaca's add-governor. GL kept
+// averaging option size into a falling-knife underlying (NEXT: -28% to -31% ×4)
+// while the thesis rollup, which persists as the price craters, held the target
+// high. The full mult (0.35–1.0, from the underlying's slope + plateau + afterFall)
+// is computed ONCE on the Alpaca position and sent over the feed as governorMult —
+// single source of truth. We read it and scale maxTargetPct: knife → throttle toward
+// the floor; based → full target restored ("buy big at the base"). If the feed hasn't
+// sent it (old feed / cold start), we fall back to a plateau-only ramp so GL degrades
+// gracefully instead of breaking. Dark-launch: computed + logged always, bites the
+// target only when STRATEGY_GOVERNOR_ENABLED is on.
+const PLATEAU_GOVERNOR_MIN = 35; // ≤ this = full knife (matches the feed's own buy gate)
+const PLATEAU_GOVERNOR_STABILIZED = 65; // ≥ this = fully based (matches the Alpaca governor)
+
+function getGovernorEnabled(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_GOVERNOR_ENABLED);
+}
+
+function getPlateauGovernorKnifeFloor(): number {
+  return readEnvPct("STRATEGY_PLATEAU_GOVERNOR_KNIFE_FLOOR", 0.4);
+}
+
+// Account-aware application of the knife mult. The mult itself (getGovernorMult) is
+// the shared underlying signal; each account applies it with its own risk posture:
+//   MARGIN — HARD: leverage + EOD liquidation can't ride a knife to recovery, so
+//     block entirely below MARGIN_GOVERNOR_MIN (return 0), taper above it.
+//   CASH   — SOFT: ITM + overnight hold CAN ride the knife to the next-day base, so
+//     never block; floor the throttle at CASH_GOVERNOR_FLOOR (a probe, not zero).
+// Returns a 0..1 factor to multiply the exposure target / seed size by. The ENABLED
+// check is the caller's — this is pure account math.
+export function getMarginGovernorMin(): number {
+  return readEnvPct("STRATEGY_MARGIN_GOVERNOR_MIN", 0.6);
+}
+
+export function getCashGovernorFloor(): number {
+  return readEnvPct("STRATEGY_CASH_GOVERNOR_FLOOR", 0.35);
+}
+
+export function governorFactorFor(
+  governorMult: number,
+  accountType: "margin" | "cash",
+): number {
+  if (accountType === "margin") {
+    return governorMult >= getMarginGovernorMin() ? governorMult : 0;
+  }
+  return Math.max(governorMult, getCashGovernorFloor());
+}
+
+// governorFactorFor gated by the enable flag: returns 1 (no-op) when the governor
+// is off, so callers stay branch-free. This is the form applied to live targets.
+export function governorFactorForEnabled(
+  governorMult: number,
+  accountType: "margin" | "cash",
+): number {
+  return getGovernorEnabled() ? governorFactorFor(governorMult, accountType) : 1;
+}
+
+// The governor mult applied to the target: prefer the FULL mult the Alpaca side
+// computed (slope + plateau + afterFall) and sent over the feed; fall back to a
+// plateau-only ramp when it's absent. Always ≤ 1 (the governor only ever throttles).
+export function getGovernorMult(position: SecretSourcePosition | undefined): number {
+  const passed = Number(position?.governorMult);
+  if (Number.isFinite(passed) && passed >= 0) return Math.min(passed, 1);
+  return getPlateauGovernorMult(position);
+}
+
+// Fallback ramp when the feed omits governorMult: 1.0 when based OR plateau absent
+// (never penalize on missing data), down to the knife floor at the knife line.
+export function getPlateauGovernorMult(position: SecretSourcePosition | undefined): number {
+  const plateau = Number(position?.plateauScore);
+  if (!Number.isFinite(plateau)) return 1;
+  const floor = getPlateauGovernorKnifeFloor();
+  const span = Math.max(1, PLATEAU_GOVERNOR_STABILIZED - PLATEAU_GOVERNOR_MIN);
+  const stabilization = Math.max(0, Math.min(1, (plateau - PLATEAU_GOVERNOR_MIN) / span));
+  return floor + (1 - floor) * stabilization;
 }
 
 export function getBothYesMaxTargetPct(): number {
@@ -291,6 +386,8 @@ export function computePositionGate(options: {
     strongStockYes,
     goodBooleanScore,
     allBooleansGood,
+    qualityToBuy,
+    percentOfBalance,
   };
 
   let maxTargetPct = 0;
@@ -306,12 +403,30 @@ export function computePositionGate(options: {
     maxTargetPct = getBasicYesMaxTargetPct();
   }
 
+  // (b) 2026-07-24 — demote the unvalidated stock-yes proxies: a tier not backed by
+  // validated thesis (feed full buyFraction>=1.0, or manual thesis >= the bar) is capped
+  // at the basic ceiling, so isQualityToBuy / percentOfBalance can't grant a large target
+  // on their own. Thesis-backed names are untouched; this only ever reduces. Off by default.
+  const thesisBacked =
+    allBooleansGood || goodBooleanScore >= GATE_PROXY_DEMOTE_THESIS_MIN;
+  if (getGateProxyDemoteEnabled() && !thesisBacked) {
+    maxTargetPct = Math.min(maxTargetPct, getBasicYesMaxTargetPct());
+  }
+
   // Each good boolean adds a fixed boost on top of the signal tier
   maxTargetPct = Math.min(maxTargetPct + goodBooleanScore * getBooleanBoostPct(), 1.0);
+
+  // Add-governor (2026-07-24): surface the shared knife mult (full mult from the
+  // Alpaca position, plateau-only fallback). NOT applied here — this gate is shared
+  // by both accounts, and the governor is account-aware (margin hard / cash soft), so
+  // it's applied downstream per account (run-cycle-context allocation, seed paths)
+  // via governorFactorFor. maxTargetPct stays raw. See getGovernorMult.
+  const governorMult = getGovernorMult(options.secretPosition);
 
   return {
     signals,
     maxTargetPct,
+    governorMult,
     strongStockYesPctThreshold: strongPctThreshold,
     basicStockYesPctThreshold: basicPctThreshold,
   };

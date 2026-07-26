@@ -36,6 +36,25 @@ test("rank of exactly 1 is treated as 0-1 scale (100)", () => {
   assert.equal(metrics?.ivRank, 100);
 });
 
+test("a genuinely low 0-1 rank scales to a low 0-100 value (0.012 -> 1.2)", () => {
+  const metrics = parseUnderlyingIvMetricsEntry({
+    "implied-volatility-index-rank": "0.012",
+  });
+  assert.ok(metrics);
+  assert.ok(Math.abs(metrics.ivRank - 1.2) < 1e-9);
+  assert.equal(metrics.rawIvRank, 0.012);
+});
+
+test("a rank just above 1 (>100%) is still scaled, not read as low (1.2 -> 120)", () => {
+  // Current IV printing above its trailing-year high can push rank slightly over
+  // 1.0; the old `<= 1` guard mis-read this as a bare 1.2% "low premium".
+  const metrics = parseUnderlyingIvMetricsEntry({
+    "implied-volatility-index-rank": "1.2",
+  });
+  assert.equal(metrics?.ivRank, 120);
+  assert.equal(metrics?.rawIvRank, 1.2);
+});
+
 test("missing, non-numeric, or absent entries yield null", () => {
   assert.equal(parseUnderlyingIvMetricsEntry({}), null);
   assert.equal(
@@ -61,7 +80,7 @@ test("IPC wrapper: trims and uppercases the symbol before lookup", async () => {
   const seenSymbols: string[] = [];
   const metrics = await getUnderlyingIvMetricsForIpc("  mara ", async (symbol) => {
     seenSymbols.push(symbol);
-    return { ivRank: 35.5, impliedVolatility: 0.9 };
+    return { ivRank: 35.5, rawIvRank: 0.355, impliedVolatility: 0.9 };
   });
 
   assert.deepEqual(seenSymbols, ["MARA"]);

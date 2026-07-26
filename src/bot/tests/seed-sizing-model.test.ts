@@ -156,3 +156,19 @@ test("clampFavorabilityInput: out-of-contract values collapse to neutral 1.0, in
   assert.equal(clampFavorabilityInput(0), 0); // a genuine 0 is honored (fades to floor)
   assert.equal(clampFavorabilityInput(0.6), 0.6);
 });
+
+test("governorFactor fades the seed toward the floor like any other favorability input", () => {
+  // neutral ceiling seed (both fav inputs 1) with an explicit floor/ceiling band
+  const full = computeSeedSizing({ accountNLV: 10000, optionPrice: 1, floorPct: 0.12, ceilingPct: 0.35 });
+  assert.ok(Math.abs(full.modelTargetPct - 0.35) < 1e-9);
+  // a cash-knife governorFactor (0.5) fades the target: 0.35 × 0.5 = 0.175, above the 0.12 floor
+  const knifed = computeSeedSizing({ accountNLV: 10000, optionPrice: 1, floorPct: 0.12, ceilingPct: 0.35, governorFactor: 0.5 });
+  assert.ok(Math.abs(knifed.modelTargetPct - 0.175) < 1e-9);
+  assert.ok(knifed.modelTargetPct < full.modelTargetPct);
+  // never below the floor — even a deep factor clamps up to the floor (cash never zeroes)
+  const deep = computeSeedSizing({ accountNLV: 10000, optionPrice: 1, floorPct: 0.12, ceilingPct: 0.35, governorFactor: 0.1 });
+  assert.ok(Math.abs(deep.modelTargetPct - 0.12) < 1e-9);
+  // absent/neutral factor is a no-op
+  const neutral = computeSeedSizing({ accountNLV: 10000, optionPrice: 1, floorPct: 0.12, ceilingPct: 0.35, governorFactor: 1 });
+  assert.ok(Math.abs(neutral.modelTargetPct - 0.35) < 1e-9);
+});
