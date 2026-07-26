@@ -1,3 +1,4 @@
+import { assertNotReadOnly } from "./read-only-accounts";
 import type {
   OrderRequest,
   TastytradeOrder,
@@ -103,6 +104,7 @@ export function createTypedOrderService(rawOrderService: RawOrderService): Typed
       orderId: number,
       replacementOrder: Partial<OrderRequest>,
     ) {
+      assertNotReadOnly(accountNumber);
       return (await rawOrderService.replaceOrder(
         accountNumber,
         orderId,
@@ -123,6 +125,9 @@ export function createTypedOrderService(rawOrderService: RawOrderService): Typed
       return (await rawOrderService.getOrders(accountNumber, queryParams)) as TastytradeOrder[];
     },
     async createOrder(accountNumber: string, order: OrderRequest) {
+      // Read-only guard FIRST — fail fast before we ever touch the broker (PR #27),
+      // then the 422 error-body logging around the actual order (main afc73e8).
+      assertNotReadOnly(accountNumber);
       try {
         return (await rawOrderService.createOrder(
           accountNumber,

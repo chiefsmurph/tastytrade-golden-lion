@@ -1,30 +1,13 @@
 import tastytradeApi from "./tastytrade-client";
 import type { TastytradeCustomerAccountResource } from "./types";
 
+// Read-only account primitives live in a dependency-free module so the broker
+// chokepoint can import them without cycling back through the Tastytrade client.
+// Re-exported here to preserve the existing import surface for current callers.
+export { isReadOnlyAccount } from "./read-only-accounts";
+
 function normalizeMarginOrCash(value: unknown): string {
   return String(value ?? "").trim().toLowerCase();
-}
-
-function normalizeAccountNumber(value: unknown): string {
-  return String(value ?? "").trim();
-}
-
-export function getReadOnlyAccountNumbers(): Set<string> {
-  const raw = process.env.BOT_READ_ONLY_ACCOUNTS?.trim();
-  if (!raw) {
-    return new Set();
-  }
-
-  return new Set(
-    raw
-      .split(",")
-      .map((part) => normalizeAccountNumber(part))
-      .filter((part) => part.length > 0),
-  );
-}
-
-export function isReadOnlyAccount(accountNumber: string): boolean {
-  return getReadOnlyAccountNumbers().has(normalizeAccountNumber(accountNumber));
 }
 
 let customerAccountsPromise: ReturnType<

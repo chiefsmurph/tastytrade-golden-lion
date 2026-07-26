@@ -56,3 +56,4 @@ coverage/
 
 # pulled read-only analysis data (regime sizing backtest)
 data-pull-regime/
+node_modules
