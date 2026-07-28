@@ -32,7 +32,7 @@ At a high level, each cycle follows this sequence:
 flowchart TD
     PM2["PM2 / supervisor"] -->|manages| Process
 
-    subgraph Process["tastytrade-golden-lion process"]
+    subgraph Process["tastytrade-silver-lynx process"]
         direction TB
         IPC["IPC Server\n(Unix socket)"]
         Sched["Market-Open Scheduler\n(optional)"]
@@ -68,8 +68,8 @@ Dependencies flow one way: `strategy` → `core`, `bot` → `core`, `bot` → `s
 ### 1. Clone and Install
 
 ```bash
-git clone <repo-url> ~/code/tastytrade-golden-lion
-cd ~/code/tastytrade-golden-lion
+git clone <repo-url> ~/code/tastytrade-silver-lynx
+cd ~/code/tastytrade-silver-lynx
 npm install
 ```
 
@@ -214,7 +214,7 @@ Or run the build:
 npm run start:build
 ```
 
-The server listens on a local Unix socket (default: `.tastytrade-golden-lion.sock`).
+The server listens on a local Unix socket (default: `.tastytrade-silver-lynx.sock`).
 
 In another terminal, send commands through IPC.
 
@@ -376,7 +376,7 @@ pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
-The config registers the app as `tastytrade-golden-lion`, runs `build/index.js` in fork mode with `autorestart: true`, and sets `BOT_RUN_ON_SCHEDULE=true` by default. Credentials and runtime overrides should be set in `.env` — PM2 inherits the process environment, so `.env` is still loaded via `dotenv` at startup.
+The config registers the app as `tastytrade-silver-lynx`, runs `build/index.js` in fork mode with `autorestart: true`, and sets `BOT_RUN_ON_SCHEDULE=true` by default. Credentials and runtime overrides should be set in `.env` — PM2 inherits the process environment, so `.env` is still loaded via `dotenv` at startup.
 
 To regenerate the startup hook so PM2 survives a reboot:
 
@@ -389,9 +389,9 @@ Common PM2 operations:
 
 ```bash
 pm2 status
-pm2 logs tastytrade-golden-lion
-pm2 restart tastytrade-golden-lion
-pm2 stop tastytrade-golden-lion
+pm2 logs tastytrade-silver-lynx
+pm2 restart tastytrade-silver-lynx
+pm2 stop tastytrade-silver-lynx
 ```
 
 ## Reusable IPC Client
@@ -405,7 +405,7 @@ const optionHealth = await sendIpcCommand(
   "strategy:getOptionHealthForSymbol",
   ["RUM", "call"],
   {
-    socketPath: "/absolute/path/to/tastytrade-golden-lion/.tastytrade-golden-lion.sock",
+    socketPath: "/absolute/path/to/tastytrade-silver-lynx/.tastytrade-silver-lynx.sock",
   },
 );
 ```

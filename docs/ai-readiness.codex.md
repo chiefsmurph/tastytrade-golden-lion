@@ -3,11 +3,11 @@
 ## A three-repository audit of Golden Lion, LawEngine, and Halsted Devices
 
 > **Audit snapshot:** 2026-07-23 CDT  
-> **Primary codebase:** `tastytrade-golden-lion` at commit `fafdc51`  
+> **Primary codebase:** `tastytrade-silver-lynx` at commit `fafdc51`  
 > **Reference repositories:** `LawEngine` and `halsted_devices`  
 > **Requested report location:** `/home/halsted/projects/chiefsmurph`  
 > **Important boundary:** the actual Golden Lion Git root is the nested
-> `tastytrade-golden-lion/` directory. This report is therefore outside the Git
+> `tastytrade-silver-lynx/` directory. This report is therefore outside the Git
 > repository, exactly as requested.
 
 This report answers two related questions:
@@ -124,7 +124,7 @@ permission to trade.
 ### Repositories inspected
 
 - Golden Lion:
-  [`tastytrade-golden-lion/`](tastytrade-golden-lion/)
+  [`tastytrade-silver-lynx/`](tastytrade-silver-lynx/)
 - LawEngine:
   [`../LawEngine/`](../LawEngine/)
 - Halsted Devices:
@@ -1088,7 +1088,7 @@ Start by adding control-plane files and enforcing boundaries around the existing
 folders. Migrate one vertical use case at a time.
 
 ```text
-tastytrade-golden-lion/
+tastytrade-silver-lynx/
 ├── AGENTS.md
 ├── CLAUDE.md                    # thin compatibility pointer only
 ├── README.md                    # product, setup, high-level architecture
@@ -2170,35 +2170,35 @@ with authority over real money.
 ### Golden Lion
 
 - Product and current hand-maintained config/IPC reference:
-  [`tastytrade-golden-lion/README.md`](tastytrade-golden-lion/README.md)
+  [`tastytrade-silver-lynx/README.md`](tastytrade-silver-lynx/README.md)
 - Empty agent front door:
-  [`tastytrade-golden-lion/AGENTS.md`](tastytrade-golden-lion/AGENTS.md)
+  [`tastytrade-silver-lynx/AGENTS.md`](tastytrade-silver-lynx/AGENTS.md)
 - Current Claude guidance:
-  [`tastytrade-golden-lion/CLAUDE.md`](tastytrade-golden-lion/CLAUDE.md)
+  [`tastytrade-silver-lynx/CLAUDE.md`](tastytrade-silver-lynx/CLAUDE.md)
 - Strategy prose:
-  [`tastytrade-golden-lion/docs/STRATEGY.v2.md`](tastytrade-golden-lion/docs/STRATEGY.v2.md)
+  [`tastytrade-silver-lynx/docs/STRATEGY.v2.md`](tastytrade-silver-lynx/docs/STRATEGY.v2.md)
 - IPC registry and lifecycle:
-  [`tastytrade-golden-lion/src/ipc-server.ts`](tastytrade-golden-lion/src/ipc-server.ts)
+  [`tastytrade-silver-lynx/src/ipc-server.ts`](tastytrade-silver-lynx/src/ipc-server.ts)
 - Account defaults/read-only set:
-  [`tastytrade-golden-lion/src/core/default-account.ts`](tastytrade-golden-lion/src/core/default-account.ts)
+  [`tastytrade-silver-lynx/src/core/default-account.ts`](tastytrade-silver-lynx/src/core/default-account.ts)
 - Direct purchase:
-  [`tastytrade-golden-lion/src/bot/purchase-symbol.ts`](tastytrade-golden-lion/src/bot/purchase-symbol.ts)
+  [`tastytrade-silver-lynx/src/bot/purchase-symbol.ts`](tastytrade-silver-lynx/src/bot/purchase-symbol.ts)
 - Direct manual close:
-  [`tastytrade-golden-lion/src/bot/close-symbol-position.ts`](tastytrade-golden-lion/src/bot/close-symbol-position.ts)
+  [`tastytrade-silver-lynx/src/bot/close-symbol-position.ts`](tastytrade-silver-lynx/src/bot/close-symbol-position.ts)
 - Seed path:
-  [`tastytrade-golden-lion/src/bot/seed-symbol.ts`](tastytrade-golden-lion/src/bot/seed-symbol.ts)
+  [`tastytrade-silver-lynx/src/bot/seed-symbol.ts`](tastytrade-silver-lynx/src/bot/seed-symbol.ts)
 - Secret auto-seed:
-  [`tastytrade-golden-lion/src/strategy/secret/secret-auto-seed.ts`](tastytrade-golden-lion/src/strategy/secret/secret-auto-seed.ts)
+  [`tastytrade-silver-lynx/src/strategy/secret/secret-auto-seed.ts`](tastytrade-silver-lynx/src/strategy/secret/secret-auto-seed.ts)
 - Startup config/deprecation/masking:
-  [`tastytrade-golden-lion/src/startup-config.ts`](tastytrade-golden-lion/src/startup-config.ts)
+  [`tastytrade-silver-lynx/src/startup-config.ts`](tastytrade-silver-lynx/src/startup-config.ts)
 - Current static-analysis receipt:
-  [`tastytrade-golden-lion/docs/fallow-audit-2026-07-22.md`](tastytrade-golden-lion/docs/fallow-audit-2026-07-22.md)
+  [`tastytrade-silver-lynx/docs/fallow-audit-2026-07-22.md`](tastytrade-silver-lynx/docs/fallow-audit-2026-07-22.md)
 - Competing current tracker:
-  [`tastytrade-golden-lion/docs/improvements/STATUS.md`](tastytrade-golden-lion/docs/improvements/STATUS.md)
+  [`tastytrade-silver-lynx/docs/improvements/STATUS.md`](tastytrade-silver-lynx/docs/improvements/STATUS.md)
 - Operations:
-  [`tastytrade-golden-lion/docs/OPERATIONS.md`](tastytrade-golden-lion/docs/OPERATIONS.md)
+  [`tastytrade-silver-lynx/docs/OPERATIONS.md`](tastytrade-silver-lynx/docs/OPERATIONS.md)
 - Runtime exclusion:
-  [`tastytrade-golden-lion/.gitignore`](tastytrade-golden-lion/.gitignore)
+  [`tastytrade-silver-lynx/.gitignore`](tastytrade-silver-lynx/.gitignore)
 
 ### LawEngine
 

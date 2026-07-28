@@ -264,7 +264,7 @@ export function startSecretSocketConnection(): void {
 // Never throws — logging must not touch the trading path. Messages sent before
 // the attemptAuth ack are queued (bounded) and flushed on the ack; with no
 // auth key configured, sends immediately as before.
-const SECRET_LOG_PREFIX = "tastytrade-golden-lion";
+const SECRET_LOG_PREFIX = "tastytrade-silver-lynx";
 
 function isSecretAuthConfigured(): boolean {
   return Boolean(process.env.SECRET_SOCKET_AUTH_KEY?.trim());

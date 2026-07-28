@@ -66,7 +66,7 @@ type IpcResponse = {
 
 const socketPath =
   process.env.CORE_IPC_SOCKET ||
-  path.join(process.cwd(), ".tastytrade-golden-lion.sock");
+  path.join(process.cwd(), ".tastytrade-silver-lynx.sock");
 
 const commandHandlers: Record<string, CommandHandler> = {
   "core:listCommands": async () => {

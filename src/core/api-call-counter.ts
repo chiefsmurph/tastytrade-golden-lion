@@ -74,12 +74,12 @@ export function rollCountsForDate(
 }
 
 // Directory contract: env API_CALL_COUNTS_DIR wins; the default resolves via
-// homedir expansion of ~/robinhood-playground/json/api-call-counts so it lands
+// homedir expansion of ~/golden-lion/json/api-call-counts so it lands
 // on /home/deploy/... on prod and the laptop's home locally.
 export function resolveApiCallCountsDir(): string {
   const fromEnv = process.env.API_CALL_COUNTS_DIR?.trim();
   if (fromEnv) return fromEnv;
-  return path.join(os.homedir(), "robinhood-playground", "json", "api-call-counts");
+  return path.join(os.homedir(), "golden-lion", "json", "api-call-counts");
 }
 
 let counts: ApiCallCounts | null = null;

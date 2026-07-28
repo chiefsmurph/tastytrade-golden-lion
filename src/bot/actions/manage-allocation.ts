@@ -393,7 +393,7 @@ function buildBuyToOpenOrder(
   price: number,
 ): OrderPayload {
   return {
-    source: "tastytrade-golden-lion",
+    source: "tastytrade-silver-lynx",
     "time-in-force": "Day",
     "order-type": "Limit",
     price: roundOrderPrice(price),

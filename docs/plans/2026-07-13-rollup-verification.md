@@ -41,7 +41,7 @@ data (and watch tomorrow morning) against this doc. Daily mechanics are in
 3. **Margin seeding bar** — seed logs should show the `thesisCount >= thesisMax` reasoning.
    4/4 seeds; anything less doesn't. If NO margin seeds fire for days, check whether 4/4 is
    realistically reachable intraday (tuning question, not a bug).
-4. **Notifications land** — `tastytrade-golden-lion INFO [...]` on the secret server stream +
+4. **Notifications land** — `tastytrade-silver-lynx INFO [...]` on the secret server stream +
    `(sent)` breadcrumbs in pm2. `(queued)` breadcrumbs that never flush = auth problem.
 5. **Ledger sanity** — `bot:getPnlLedger <acct> <date>`: `gateScoreAtClose` now on the 0–12
    scale; decision-type mix sane.

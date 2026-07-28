@@ -5,7 +5,7 @@
 > same system that emits `buyWeight` / `manualThesisCount` / `buyFraction` etc. to this repo).
 >
 > It is **their unsolicited pointers on how they would build an options system off of their own
-> signals** — a reference/proposal, not the current tastytrade-golden-lion architecture and not
+> signals** — a reference/proposal, not the current tastytrade-silver-lynx architecture and not
 > a spec we've agreed to. Read it as "here's how the people who own the signals would map them
 > onto options books." Everything below the `---` divider at the very bottom is *our*
 > annotation (questions back to them); everything above it is their message verbatim.

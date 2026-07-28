@@ -1,4 +1,4 @@
-# AGENTS.md — tastytrade-golden-lion
+# AGENTS.md — tastytrade-silver-lynx
 
 Automated options-trading engine for Tastytrade. **This system places real-money
 orders.** Treat every broker call, scheduler action, production config change, and
@@ -64,7 +64,7 @@ If two sources disagree, say so in your reply and fix the stale one in the same 
 3. Position-group keys are `UNDERLYING::side` (double colon: `::call`, `::put`, `::none`).
    `BOT_DO_NOT_TOUCH_GROUPS` needs the double colon or it silently no-ops.
 4. Never `pm2 kill` — it takes down every app the shared daemon manages, not just this one.
-   See `docs/OPERATIONS.md`; prefer `pm2 delete tastytrade-golden-lion` + start for this app alone.
+   See `docs/OPERATIONS.md`; prefer `pm2 delete tastytrade-silver-lynx` + start for this app alone.
 5. Config resolves via `readEnvPct` / `readEnvInt` / `toBooleanFlag`; a present-but-blank env
    var means "use the in-code default." Never `parseInt(x ?? "d")` — it NaNs on blank.
 6. Update the docs in the same commit as the code they describe.

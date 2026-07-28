@@ -1,7 +1,7 @@
 # Golden Lion Fallow and World-Class Readiness Audit
 
 **Audit date:** 2026-07-23  
-**Repository:** `tastytrade-golden-lion`  
+**Repository:** `tastytrade-silver-lynx`  
 **Audited HEAD:** `fafdc5189303f0545160b0d7006e6e3d6a37dfdd` (`main`, exactly matching `origin/main`)  
 **Fallow audit commit:** `4c9db5b4adec0dec5ddd81c9d6f13590ee961fec`  
 **Mode:** Read-only investigation plus this report; no trading source code, configuration, or user-owned work was changed  

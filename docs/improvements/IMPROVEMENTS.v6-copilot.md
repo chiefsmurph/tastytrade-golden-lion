@@ -81,9 +81,9 @@ The tail-read approach is the lowest-effort change and has zero effect on the wr
 
 ---
 
-### 6. `placeRouteOrders` hardcodes `source: "tastytrade-golden-lion"` — scheduled cycles, IPC buys, and seeds are indistinguishable in broker history
+### 6. `placeRouteOrders` hardcodes `source: "tastytrade-silver-lynx"` — scheduled cycles, IPC buys, and seeds are indistinguishable in broker history
 
-`placeRouteOrders` (`manage-allocation.ts`) always submits orders with `source: "tastytrade-golden-lion"`. Seed paths use distinct `orderSource` strings (`MARGIN_SEED_FROM_CASH_ORDER_SOURCE`, `SECRET_AUTO_SEED_ORDER_SOURCE`), but those flow through `seedSymbol` → its own order payload, not through `placeRouteOrders`. Regular allocation buys (scheduled cycle or `bot:purchaseSymbol` IPC call) are identical in the broker's order history. There is no way to post-hoc identify which orders came from the scheduler vs. a manual IPC purchase, and no run-to-order cross-reference (the run history records estimated order values, not broker order IDs for the buy side — buy-side `placedOrder: true` is recorded without order ID, unlike closes which capture it).
+`placeRouteOrders` (`manage-allocation.ts`) always submits orders with `source: "tastytrade-silver-lynx"`. Seed paths use distinct `orderSource` strings (`MARGIN_SEED_FROM_CASH_ORDER_SOURCE`, `SECRET_AUTO_SEED_ORDER_SOURCE`), but those flow through `seedSymbol` → its own order payload, not through `placeRouteOrders`. Regular allocation buys (scheduled cycle or `bot:purchaseSymbol` IPC call) are identical in the broker's order history. There is no way to post-hoc identify which orders came from the scheduler vs. a manual IPC purchase, and no run-to-order cross-reference (the run history records estimated order values, not broker order IDs for the buy side — buy-side `placedOrder: true` is recorded without order ID, unlike closes which capture it).
 
 Fix: thread `orderSource` (or a `cycleId`) through `manageAllocationForGroup` → `placeRouteOrders` and set it on the order payload. Also capture the returned order ID in `placeRouteOrders` and surface it in `AllocationRouteResult.orderId` alongside `orderResponse`, so run history can cross-reference to broker fills the way close orders already do.
 
@@ -129,7 +129,7 @@ Fix short-term: add a guard in `manageAllocationForGroup` and `closePosition` th
 
 ### 9. IPC server has no access control — any local user with socket access can place orders
 
-The Unix domain socket at `CORE_IPC_SOCKET` (defaulting to `.tastytrade-golden-lion.sock` in the process cwd) accepts any connection from any process with read/write access to the socket file. There is no authentication, no rate limiting, and no audit log on IPC commands. `bot:purchaseSymbol` and `bot:seedSymbol` will place real option orders for any caller.
+The Unix domain socket at `CORE_IPC_SOCKET` (defaulting to `.tastytrade-silver-lynx.sock` in the process cwd) accepts any connection from any process with read/write access to the socket file. There is no authentication, no rate limiting, and no audit log on IPC commands. `bot:purchaseSymbol` and `bot:seedSymbol` will place real option orders for any caller.
 
 On a single-user development machine this is low risk (file permissions = OS-level protection). On a shared server (VPS with multiple accounts), any user who can reach the file can trade.
 

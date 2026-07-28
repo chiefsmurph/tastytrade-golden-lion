@@ -78,7 +78,7 @@ export function buildClosingOrderPayload(
   const action = getClosingAction(snapshot.position);
 
   return {
-    source: source ?? "tastytrade-golden-lion",
+    source: source ?? "tastytrade-silver-lynx",
     "time-in-force": "Day",
     "order-type": "Limit",
     price: roundOrderPrice(price),

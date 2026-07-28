@@ -426,7 +426,7 @@ The July-1 refactor renamed ~30 vars; the boot log warns on obsolete names
   `strategy:debugSecretExecutionTargetForSymbol`,
   `strategy:getOptionHealthForSymbol`, `core:fetchOptionChainWithVolume`.
 - **Deploy:** push, then on the VPS pull → build → restart (PM2 process
-  `tastytrade-golden-lion`, id 5). See [reference_server_deploy] in memory /
+  `tastytrade-silver-lynx`, id 5). See [reference_server_deploy] in memory /
   `docs/OPERATIONS.md`.
 - **Audit trail:** every cycle appends NDJSON to `data/`; per-decision scopes
   (`margin-position-gate`, `cash-position-gate`, `liquidity-gate`,

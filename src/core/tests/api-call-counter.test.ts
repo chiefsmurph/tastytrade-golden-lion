@@ -131,7 +131,7 @@ test("hydrate: stale-day or malformed files are rejected", () => {
 
 // Directory resolution — cross-repo contract with the feed's reader.
 
-test("counts dir: env API_CALL_COUNTS_DIR wins, default is ~/robinhood-playground/json/api-call-counts", () => {
+test("counts dir: env API_CALL_COUNTS_DIR wins, default is ~/golden-lion/json/api-call-counts", () => {
   const previous = process.env.API_CALL_COUNTS_DIR;
   try {
     process.env.API_CALL_COUNTS_DIR = "/tmp/custom-counts";
@@ -140,7 +140,7 @@ test("counts dir: env API_CALL_COUNTS_DIR wins, default is ~/robinhood-playgroun
     delete process.env.API_CALL_COUNTS_DIR;
     assert.equal(
       resolveApiCallCountsDir(),
-      path.join(os.homedir(), "robinhood-playground", "json", "api-call-counts"),
+      path.join(os.homedir(), "golden-lion", "json", "api-call-counts"),
     );
   } finally {
     if (previous === undefined) delete process.env.API_CALL_COUNTS_DIR;

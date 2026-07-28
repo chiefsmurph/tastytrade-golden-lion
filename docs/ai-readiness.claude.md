@@ -1,7 +1,7 @@
 # The Golden Lion Blueprint
-### A three-repo teardown, and a canonical operating system for `tastytrade-golden-lion`
+### A three-repo teardown, and a canonical operating system for `tastytrade-silver-lynx`
 
-> **What this is.** Five AI auditors (Opus 4.8) spent ~470k tokens reading three repos end-to-end: your `tastytrade-golden-lion`, Stephen's `LawEngine` (a heavily agent-instrumented monorepo), and `halsted_devices` (a fleet-documentation repo). This document is the synthesis: an honest audit of where Golden Lion stands today, what the other two repos got right and wrong, what the industry converged on in 2025–2026, and a concrete, phased build plan — with ready-to-paste file drafts — to turn this repo into a canonical source of truth that any AI coding agent (Claude Code, Codex, Cursor) can work in *safely*.
+> **What this is.** Five AI auditors (Opus 4.8) spent ~470k tokens reading three repos end-to-end: your `tastytrade-silver-lynx`, Stephen's `LawEngine` (a heavily agent-instrumented monorepo), and `halsted_devices` (a fleet-documentation repo). This document is the synthesis: an honest audit of where Golden Lion stands today, what the other two repos got right and wrong, what the industry converged on in 2025–2026, and a concrete, phased build plan — with ready-to-paste file drafts — to turn this repo into a canonical source of truth that any AI coding agent (Claude Code, Codex, Cursor) can work in *safely*.
 >
 > **Why it matters here more than most repos:** this bot trades real money. For most codebases, stale docs cost time. Here, a stale doc already describes a **$200-per-seed safety cap that no longer exists**. That's the difference between "documentation debt" and "an agent confidently reasoning from a phantom safety net."
 
@@ -26,7 +26,7 @@
 
 ### 1.1 The system, in one paragraph
 
-`tastytrade-golden-lion` is a single-process TypeScript/ESM options-trading bot (~28.2k LOC, 141 source files of which 51 are tests) run under PM2 in fork mode, controlled through a Unix-socket IPC server (`node run <namespace:fn>`), talking to Tastytrade over OAuth2 REST plus dxLink quote streaming, with an optional Socket.IO "secret" signal feed. It runs a ~4-minute cycle per account: cancel live orders → advance sprays → build a full context snapshot → evaluate every `UNDERLYING::side` group → close first, then allocate → overnight reductions → cross-account seeds → append everything to NDJSON audit stores (`data/runs/`, `data/ledger/`, `data/day-reports/`). Strategy circuit breakers: EOD margin liquidation arms at 12:50 PM PT, dynamic take-profit blends 0.40→0.07 across the day, stops are bid-based (−30% intraday / −10% EOD). No database; all state is local files. Code health is gated by `fallow` (static analysis) at commit time — both via `.githooks/pre-commit` and Claude Code `PreToolUse` hooks.
+`tastytrade-silver-lynx` is a single-process TypeScript/ESM options-trading bot (~28.2k LOC, 141 source files of which 51 are tests) run under PM2 in fork mode, controlled through a Unix-socket IPC server (`node run <namespace:fn>`), talking to Tastytrade over OAuth2 REST plus dxLink quote streaming, with an optional Socket.IO "secret" signal feed. It runs a ~4-minute cycle per account: cancel live orders → advance sprays → build a full context snapshot → evaluate every `UNDERLYING::side` group → close first, then allocate → overnight reductions → cross-account seeds → append everything to NDJSON audit stores (`data/runs/`, `data/ledger/`, `data/day-reports/`). Strategy circuit breakers: EOD margin liquidation arms at 12:50 PM PT, dynamic take-profit blends 0.40→0.07 across the day, stops are bid-based (−30% intraday / −10% EOD). No database; all state is local files. Code health is gated by `fallow` (static analysis) at commit time — both via `.githooks/pre-commit` and Claude Code `PreToolUse` hooks.
 
 ### 1.2 What's already excellent (seriously)
 
@@ -76,7 +76,7 @@ Three repos, three documentation cultures, three very different failure modes.
 
 ### 2.1 Scorecard
 
-| Dimension | `tastytrade-golden-lion` | `LawEngine` | `halsted_devices` |
+| Dimension | `tastytrade-silver-lynx` | `LawEngine` | `halsted_devices` |
 |---|---|---|---|
 | Scale | ~28k LOC, 141 files | Very large monorepo, live DB, multi-repo ecosystem | ~9-machine fleet docs |
 | Entry point for agents | `CLAUDE.md` (good map, 2 dead refs) + **empty AGENTS.md** | 1,076-line / 64 KB `AGENTS.md` + thin `CLAUDE.md` stub | `README.md` + `AGENTS.md` with explicit read-order |
@@ -141,7 +141,7 @@ Everything below is scoped to *this* repo's size. Total new always-loaded contex
 **0.2 — Populate `AGENTS.md` (~45 min).** Here is a complete draft, grounded in the audit — paste, adjust, commit:
 
 ```markdown
-# tastytrade-golden-lion — Agent Guide
+# tastytrade-silver-lynx — Agent Guide
 
 Automated options-trading bot for Tastytrade. **This system places real-money
 orders.** Read SAFETY.md before changing anything in src/strategy/ or
@@ -275,7 +275,7 @@ That's ~50 lines of script, and it would have caught every stale-doc finding in 
 ### The target tree
 
 ```text
-tastytrade-golden-lion/
+tastytrade-silver-lynx/
 ├── AGENTS.md            ← ~60-line router (Phase 0) — the canonical brain
 ├── CLAUDE.md            ← @AGENTS.md + Claude-specific notes only
 ├── SAFETY.md            ← invariants + enforcement points + kill switches
@@ -328,4 +328,4 @@ Learned the hard way by the other two repos — and by the industry:
 
 ---
 
-*Prepared 2026-07-23 by Claude (Fable 5) with five Opus 4.8 sub-auditors, at Stephen's request, for the Chief Smurf himself. Audit basis: `tastytrade-golden-lion` @ `fafdc51`.*
+*Prepared 2026-07-23 by Claude (Fable 5) with five Opus 4.8 sub-auditors, at Stephen's request, for the Chief Smurf himself. Audit basis: `tastytrade-silver-lynx` @ `fafdc51`.*

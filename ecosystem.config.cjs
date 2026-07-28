@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "tastytrade-golden-lion",
+      name: "tastytrade-silver-lynx",
       cwd: __dirname,
       script: "./build/index.js",
       // Pin to the Node that evaluates this config (the pm2 CLI's own runtime,
