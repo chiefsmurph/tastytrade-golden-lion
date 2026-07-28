@@ -1,4 +1,4 @@
-# Tastytrade Golden Lion
+# Tastytrade Silver Lynx
 
 A production options execution engine for Tastytrade — automated, risk-gated, and fully inspectable.
 
@@ -6,7 +6,7 @@ The scheduler runs a full allocation and risk-management cycle at a configurable
 
 ## System Profile
 
-Golden Lion is built as an execution control plane, not just a script runner.
+Silver Lynx is built as an execution control plane, not just a script runner.
 
 - Deterministic run cycle: each cycle builds a full context snapshot, evaluates group-level strategy decisions, then executes allocation, close, and seed actions with explicit reasoning recorded for every step.
 - Execution quality controls: IV rank filtering and bid/ask spread checks gate every entry. Orders are routed across bid/mid/ask using configurable weights, where each route concedes a different amount of the spread: bid rests at the bid, mid concedes at most a few ticks, and ask starts at the midpoint and chases to the ask on a fast clock — no route pays the full spread instantly.

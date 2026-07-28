@@ -2,7 +2,7 @@ import { getPstDateString } from "./day-report-store";
 
 // Daily seed-rejection scoreboard.
 //
-// golden-lion's cash & margin seed logic rejects seed attempts for many reasons
+// silver-lynx's cash & margin seed logic rejects seed attempts for many reasons
 // (DTE-window-empty, no-chain, liquidity, cost, cooldown, gate) but the raw
 // skippedReason strings only surface in per-cycle pm2 logs — there was no
 // aggregate visibility, so a systematic rejection (e.g. both XXI and NXTC cash

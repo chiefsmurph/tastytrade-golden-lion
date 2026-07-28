@@ -6,11 +6,11 @@
  * (big ~25% on a "favorable" day, small ~5% on a "timid" day)?
  *
  * COUNTEREXAMPLE that prompted this: on 2026-07-20 the SG option seed
- * (golden-lion's clean winner, $0.98 -> $1.38, +41%) was placed while
+ * (silver-lynx's clean winner, $0.98 -> $1.38, +41%) was placed while
  * regimeMult=0.84 / dipBuyMult=1.00 -- a *timid/reduce* posture. Regime
  * scaling would have sized that winner SMALL.
  *
- * METHOD: golden-lion's own seeds are too few to measure, so we use the
+ * METHOD: silver-lynx's own seeds are too few to measure, so we use the
  * Alpaca STOCK bot's closed positions as a proxy population. For each buy
  * we join the regime state that was live at buy-time (parsed from the
  * SCANNED_REGIME_AOBM log line), then measure the forward return of that

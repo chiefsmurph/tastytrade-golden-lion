@@ -3,7 +3,7 @@ import * as path from "path";
 
 // Cross-cycle store for in-flight spray-buy RAMPS.
 //
-// golden-lion runs many short cycles per day (~4min each), so a multi-minute
+// silver-lynx runs many short cycles per day (~4min each), so a multi-minute
 // spray spans several cycles: it CANNOT live in a single run's memory. This
 // module owns the ramp + working-order state, persisted to disk (same pattern
 // as position-registry.ts) so a restart mid-spray resumes rather than

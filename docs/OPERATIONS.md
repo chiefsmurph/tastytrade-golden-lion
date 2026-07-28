@@ -70,7 +70,7 @@ The point: nearly every open strategy item in [improvements/STATUS.md](improveme
 
 ## Server / pm2 gotchas (learned 2026-07-05, the hard way)
 
-The deploy box runs **multiple pm2 apps under one daemon** — golden-lion is not alone. Rules that follow from that:
+The deploy box runs **multiple pm2 apps under one daemon** — silver-lynx is not alone. Rules that follow from that:
 
 - **Never `pm2 kill` casually** — it takes down *every* app the daemon manages, not just ours. Prefer `pm2 delete tastytrade-silver-lynx` + `pm2 start ecosystem.config.cjs` for our app alone.
 - **If the roster is ever lost**: `pm2 resurrect` restores from `~/.pm2/dump.pm2`. If a bad `pm2 save` overwrote it, the previous roster is in `~/.pm2/dump.pm2.bak` — copy it back and resurrect. Last resort: `ls ~/.pm2/logs/` is a complete roster of every app name that ever ran.

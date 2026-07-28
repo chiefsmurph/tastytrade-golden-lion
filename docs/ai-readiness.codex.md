@@ -1,18 +1,18 @@
 # Chief Smurf: Canonical AI-Ready Repository Blueprint
 
-## A three-repository audit of Golden Lion, LawEngine, and Halsted Devices
+## A three-repository audit of Silver Lynx, LawEngine, and Halsted Devices
 
 > **Audit snapshot:** 2026-07-23 CDT  
 > **Primary codebase:** `tastytrade-silver-lynx` at commit `fafdc51`  
 > **Reference repositories:** `LawEngine` and `halsted_devices`  
 > **Requested report location:** `/home/halsted/projects/chiefsmurph`  
-> **Important boundary:** the actual Golden Lion Git root is the nested
+> **Important boundary:** the actual Silver Lynx Git root is the nested
 > `tastytrade-silver-lynx/` directory. This report is therefore outside the Git
 > repository, exactly as requested.
 
 This report answers two related questions:
 
-1. How do the three repositories differ, and what should Golden Lion borrow or
+1. How do the three repositories differ, and what should Silver Lynx borrow or
    avoid from each one?
 2. What would a world-class repository and safety architecture look like if
    humans and coding agents are expected to work on a real-money trading system?
@@ -21,11 +21,11 @@ The short answer is:
 
 > **Borrow LawEngine's ownership, provenance, and machine-readable control-plane
 > ideas; borrow Halsted Devices' simple routing and explicit truth precedence;
-> preserve Golden Lion's compact codebase, tests, and operational evidence. Do
+> preserve Silver Lynx's compact codebase, tests, and operational evidence. Do
 > not copy LawEngine's documentation volume or Halsted Devices' use of Markdown
 > as a duplicated database.**
 
-Golden Lion is not a weak codebase. It is a fast-moving, domain-rich trading
+Silver Lynx is not a weak codebase. It is a fast-moving, domain-rich trading
 daemon with meaningful tests, structured operational evidence, and several
 thoughtful safety mechanisms. Its next problem is that the code has evolved
 faster than its repository contract. The result is a system that is increasingly
@@ -54,7 +54,7 @@ independent CI and release receipts
 
 ### What is already impressive
 
-Golden Lion already has the difficult ingredients:
+Silver Lynx already has the difficult ingredients:
 
 - A real TypeScript implementation of scheduling, account evaluation, option
   selection, order routing, quote streaming, restart recovery, reporting, and
@@ -97,7 +97,7 @@ The main issue is **authority and enforcement**:
 
 The most important recommendation is therefore:
 
-> **Do not expose Golden Lion's live-mutating commands to an AI agent until every
+> **Do not expose Silver Lynx's live-mutating commands to an AI agent until every
 > broker mutation passes through one default-off `ExecutionCoordinator` that
 > enforces mode, account, authorization, idempotency, concurrency, risk, and
 > audit policy.**
@@ -123,7 +123,7 @@ permission to trade.
 
 ### Repositories inspected
 
-- Golden Lion:
+- Silver Lynx:
   [`tastytrade-silver-lynx/`](tastytrade-silver-lynx/)
 - LawEngine:
   [`../LawEngine/`](../LawEngine/)
@@ -136,8 +136,8 @@ worktree state, and representative generated or historical artifacts.
 
 Three independent read-only audit lanes were used:
 
-- Golden Lion architecture, runtime, safety, persistence, and verification.
-- Golden Lion agent instructions, documentation drift, configuration, and IPC.
+- Silver Lynx architecture, runtime, safety, persistence, and verification.
+- Silver Lynx agent instructions, documentation drift, configuration, and IPC.
 - LawEngine and Halsted Devices pattern comparison.
 
 The requested Opus 4.8 model was not available in this environment. The audit
@@ -149,7 +149,7 @@ claims in the primary session.
 No broker, secret feed, scheduler, deployment, or production service was called.
 No `.env` file was read or modified.
 
-The following local checks were run against Golden Lion:
+The following local checks were run against Silver Lynx:
 
 | Check | Result |
 |---|---|
@@ -167,7 +167,7 @@ must prove that the supported runtime and locked dependency set work together.
 ### Important integrity note
 
 During the audit, a separate
-`GOLDEN_LION_AI_BLUEPRINT.md` appeared and continued changing in the outer
+`SILVER_LYNX_AI_BLUEPRINT.md` appeared and continued changing in the outer
 workspace. None of the delegated audit agents created it, and this audit did not
 modify or use it as evidence. It was preserved as concurrent user/external work.
 This report uses a distinct filename to avoid overwriting it.
@@ -180,7 +180,7 @@ Counts below are current working snapshots, not measures of product quality.
 The repositories serve very different purposes, so the important signal is the
 shape and maintenance burden, not which raw number is largest.
 
-| Measure | Golden Lion | LawEngine | Halsted Devices |
+| Measure | Silver Lynx | LawEngine | Halsted Devices |
 |---|---:|---:|---:|
 | Tracked files | 183 | 11,296 | 131 |
 | Markdown files | 27 | 3,592 | 84 |
@@ -193,7 +193,7 @@ shape and maintenance burden, not which raw number is largest.
 | Root `AGENTS.md` size | 0 bytes, untracked | 64,046 bytes / 1,076 lines | 9,751 bytes / 227 lines |
 | Root README size | 27,249 bytes / 437 lines | 81,676 bytes / 1,221 lines | 22,815 bytes / 433 lines |
 
-Golden Lion-specific measures:
+Silver Lynx-specific measures:
 
 | Measure | Current value |
 |---|---:|
@@ -222,13 +222,13 @@ hand-maintained inventories will drift unless generation and CI replace memory.
 
 ## 4. What each repository teaches
 
-## 4.1 Golden Lion
+## 4.1 Silver Lynx
 
 ### Strengths to preserve
 
 #### Compact, understandable product boundary
 
-Compared with LawEngine, Golden Lion is still small enough that one person or
+Compared with LawEngine, Silver Lynx is still small enough that one person or
 agent can form a useful system model without an indexing platform. Its root
 README provides a good runtime diagram and a helpful `core` / `bot` / `strategy`
 vocabulary.
@@ -396,7 +396,7 @@ LawEngine repeatedly asks:
 - Is this live, loaded, enabled, public, default, or merely present?
 - Is this a canonical statement, a proposal, or a dated receipt?
 
-That mindset is excellent for agents. Golden Lion should adopt it in a much
+That mindset is excellent for agents. Silver Lynx should adopt it in a much
 smaller form.
 
 #### Nearest-scope routing
@@ -405,7 +405,7 @@ LawEngine uses root guidance for cross-cutting rules and nearest-folder guidance
 for specialized areas. This matches how Codex discovers `AGENTS.md`: root first,
 then closer files override it.
 
-For Golden Lion, only a few nested guides are initially justified:
+For Silver Lynx, only a few nested guides are initially justified:
 
 - `src/strategy/AGENTS.md`
 - `src/bot/actions/AGENTS.md`
@@ -429,7 +429,7 @@ Its configuration guidance distinguishes:
 - Schema/hash/load-state observability.
 - Generated registry tables checked against code.
 
-This is exactly what Golden Lion needs for trading thresholds and capability
+This is exactly what Silver Lynx needs for trading thresholds and capability
 policy.
 
 #### Anti-drift and provenance discipline
@@ -444,13 +444,13 @@ LawEngine distinguishes:
 - Generated artifacts.
 
 It also expects dated receipts, hashes, explicit unverified claims, concrete
-restart points, and owner decisions. Golden Lion's existing production analyses
+restart points, and owner decisions. Silver Lynx's existing production analyses
 would become much more trustworthy under this model.
 
 #### Capability-promotion language
 
 LawEngine is careful not to infer “public/default” from “loaded” or “available.”
-The direct Golden Lion analogue is:
+The direct Silver Lynx analogue is:
 
 ```text
 implemented ≠ enabled
@@ -475,7 +475,7 @@ fits by itself and leaves almost no project-instruction budget for nested files.
 The official Codex default is 32 KiB, making it nonportable without custom
 configuration.
 
-Golden Lion should target roughly 100–150 lines and under 12 KiB at the root.
+Silver Lynx should target roughly 100–150 lines and under 12 KiB at the root.
 
 #### Documentation indexes became databases
 
@@ -521,7 +521,7 @@ The core organizing idea is simple:
 - Cross-fleet facts belong at root.
 - Update the owner first, then dependent summaries.
 
-Golden Lion should imitate this with subsystem ownership:
+Silver Lynx should imitate this with subsystem ownership:
 
 - Strategy truth belongs with strategy.
 - Execution truth belongs with execution.
@@ -535,7 +535,7 @@ Halsted Devices clearly says live observations beat older current-state files,
 which beat older audits and root summaries. It also requires confidence-qualified
 wording when facts are not freshly verified.
 
-Golden Lion needs the same distinction among:
+Silver Lynx needs the same distinction among:
 
 - Current observed runtime state.
 - Intended code behavior.
@@ -553,12 +553,12 @@ The strongest device runbooks specify:
 
 Its scoped instructions also tell agents not to scan corpora, archives,
 dependencies, dumps, or generated artifacts by default. That is a very useful
-pattern for keeping Golden Lion agents out of runtime data and stale archives.
+pattern for keeping Silver Lynx agents out of runtime data and stale archives.
 
 #### Clear secret boundaries
 
 Device instructions distinguish public routing material from private keys.
-Golden Lion should similarly distinguish versioned policy from credentials,
+Silver Lynx should similarly distinguish versioned policy from credentials,
 account identifiers, refresh tokens, socket keys, and live runtime state.
 
 ### Patterns not to copy
@@ -569,7 +569,7 @@ IPs, roles, aliases, and services are repeated across root docs, device docs,
 networking docs, and current-state notes. The root quick-fleet table visibly
 duplicates both EAP and NUC rows.
 
-Golden Lion should not store configuration and command inventories as repeated
+Silver Lynx should not store configuration and command inventories as repeated
 Markdown tables. Generate them from registries.
 
 #### Stable files with stale dates are cognitively expensive
@@ -598,7 +598,7 @@ ensures that repeated facts agree.
 
 ---
 
-## 5. The canonical-source-of-truth model Golden Lion needs
+## 5. The canonical-source-of-truth model Silver Lynx needs
 
 A single linear “this file always wins” list is not enough. Different claim
 types need different owners.
@@ -686,7 +686,7 @@ docs/incidents/2026/07/INC-2026-07-06-*.md
 
 for immutable history.
 
-This avoids both Golden Lion's competing live trackers and Halsted Devices'
+This avoids both Silver Lynx's competing live trackers and Halsted Devices'
 mutable content under stale dated names.
 
 ## 5.4 One owner per value
@@ -1212,14 +1212,14 @@ be reviewed with the owner, placed inside the **actual Git root**, and committed
 Keep it concise; link to owned documents instead of copying volatile facts.
 
 ```markdown
-# AGENTS.md — Tastytrade Golden Lion
+# AGENTS.md — Tastytrade Silver Lynx
 
 Updated: YYYY-MM-DD
 Scope: repository root
 
 ## Mission and safety
 
-Golden Lion is a TypeScript options-trading service that can place real orders.
+Silver Lynx is a TypeScript options-trading service that can place real orders.
 Treat every broker mutation, scheduler action, production configuration change,
 and deployment as a high-impact operation.
 
@@ -2112,7 +2112,7 @@ changes behavior, and should state whether it is safe to deploy independently.
 
 ## 20. Final assessment
 
-Golden Lion's core advantage is not its current folder names. It is the
+Silver Lynx's core advantage is not its current folder names. It is the
 combination of:
 
 - Fast domain learning.
@@ -2155,10 +2155,10 @@ That is the best of all three repositories:
   state, receipts.
 - **Halsted Devices:** simple boundaries, live-fact precedence, exact runbooks,
   bounded scans.
-- **Golden Lion:** compactness, tests, domain intelligence, structured evidence,
+- **Silver Lynx:** compactness, tests, domain intelligence, structured evidence,
   and rapid iteration.
 
-If the P0 safety and reproducibility work lands first, Golden Lion can become a
+If the P0 safety and reproducibility work lands first, Silver Lynx can become a
 very strong agent-maintained repository without becoming a documentation
 monolith. More importantly, it can gain AI leverage without confusing AI access
 with authority over real money.
@@ -2167,7 +2167,7 @@ with authority over real money.
 
 ## Appendix A — key evidence pointers
 
-### Golden Lion
+### Silver Lynx
 
 - Product and current hand-maintained config/IPC reference:
   [`tastytrade-silver-lynx/README.md`](tastytrade-silver-lynx/README.md)

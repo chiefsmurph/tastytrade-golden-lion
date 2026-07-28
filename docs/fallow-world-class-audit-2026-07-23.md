@@ -1,4 +1,4 @@
-# Golden Lion Fallow and World-Class Readiness Audit
+# Silver Lynx Fallow and World-Class Readiness Audit
 
 **Audit date:** 2026-07-23  
 **Repository:** `tastytrade-silver-lynx`  
@@ -11,7 +11,7 @@
 
 ## 1. Executive decision
 
-Golden Lion has a stronger foundation than its Fallow letter grade implies:
+Silver Lynx has a stronger foundation than its Fallow letter grade implies:
 
 - A clean, isolated Node 24 environment passes TypeScript, the production bundle, and all **51 test files / 472 tests**.
 - Fresh coverage is **65.00% statements/lines, 82.47% branches, and 67.82% functions**.

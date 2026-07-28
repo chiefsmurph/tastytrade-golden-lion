@@ -4,7 +4,7 @@
 
 ## Why this exists
 
-Question raised: *golden-lion should only seed options when the RH bot is down on a name
+Question raised: *silver-lynx should only seed options when the RH bot is down on a name
 (`daytradeScore < -75` / underwater) — "wait for the drop."* Investigating it surfaced a
 **recent, high-sample backtest** that already answers most of it, so this doc records the
 finding, audits GL's live gates against it, and proposes the actual change list.

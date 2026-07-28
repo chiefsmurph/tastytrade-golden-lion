@@ -1,4 +1,4 @@
-# Golden Lion — Trading Strategy (V2)
+# Silver Lynx — Trading Strategy (V2)
 
 **Status:** current as of 2026-07-14. This is the authoritative, top-to-bottom
 description of how the engine decides what to trade, how much, and when. It
@@ -17,7 +17,7 @@ override (see §12). Where production runs a non-default value, it is called out
 
 ## 1. Philosophy
 
-Golden Lion is an execution *control plane*, not a signal generator. It takes a
+Silver Lynx is an execution *control plane*, not a signal generator. It takes a
 universe of names (positions already open, plus an optional external signal
 feed) and, every N minutes during market hours, answers three questions per
 position group:

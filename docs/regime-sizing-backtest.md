@@ -17,7 +17,7 @@ SCANNED_REGIME_AOBM mkt=<marketReturn%> z=<breadth z> regimeMult=<x> dipBuyMult=
 
 ## The counterexample that prompted this
 
-On 2026-07-20 the SG option seed — golden-lion's one clean winner, the $6 call
+On 2026-07-20 the SG option seed — silver-lynx's one clean winner, the $6 call
 $0.98 → $1.38, **+41%** — was placed while `regimeMult=0.84` / `dipBuyMult=1.00`,
 i.e. a **timid/reduce** posture. Regime-scaling would have sized that winner
 *small*. We need to know whether that is a fluke or the rule before wiring
@@ -25,7 +25,7 @@ regime into sizing.
 
 ## Method
 
-golden-lion's own seeds are too few to measure, so we use the Alpaca **stock**
+silver-lynx's own seeds are too few to measure, so we use the Alpaca **stock**
 bot's `closedPositions` as a proxy population. For each buy we join the regime
 state that was live at buy-time (nearest `SCANNED_REGIME_AOBM` tick ≤ the buy
 timestamp, within 20 min) and compute the forward return (position's
