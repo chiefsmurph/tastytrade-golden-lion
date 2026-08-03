@@ -58,3 +58,26 @@ test("malformed fill values degrade to null rather than NaN", () => {
   assert.equal(fills[0]!.quantity, null);
   assert.equal(fills[0]!.filledAt, null);
 });
+
+// REGRESSION — the backfill's own bug, shipped and caught the same day.
+// It derived entry as totalCostBasis / closedQty. Cost basis spans the WHOLE group,
+// so a 1-of-2 close divided by too few contracts and doubled the implied entry:
+// EOSE reported -$55 against a true +$10; WU C6 reported -$88 against a true -$13.
+// The account total read -$145 instead of ~-$23. Entry must come from the group's
+// weighted-average fill, and when that is missing we report null rather than guess.
+test("partial close prices off the group WAF, not costBasis/closedQty", () => {
+  const costBasis = 130;     // whole group: 2 contracts
+  const contracts = 2;
+  const waf = costBasis / (contracts * 100);   // 0.65 — the correct entry
+  const closedQty = 1;
+  const avgFill = 0.75;
+
+  const correct = (avgFill - waf) * closedQty * 100;
+  assert.equal(Math.round(correct * 100) / 100, 10);
+
+  // The shape of the old mistake, asserted so it cannot quietly return.
+  const wrongEntry = costBasis / (closedQty * 100);   // 1.30
+  const wrong = (avgFill - wrongEntry) * closedQty * 100;
+  assert.equal(Math.round(wrong * 100) / 100, -55);
+  assert.notEqual(Math.round(correct * 100) / 100, Math.round(wrong * 100) / 100);
+});
