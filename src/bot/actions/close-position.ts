@@ -12,6 +12,7 @@ import {
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
 import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById, type OrderPayload } from "./order-utils";
+import { toBooleanFlag } from "~/core/env-utils";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
 const CLOSE_TICK_INTERVAL_MS = 30_000;
@@ -65,17 +66,56 @@ function getMinTickSize(referencePrice: number): number {
   return referencePrice < 3 ? 0.05 : 0.1;
 }
 
+/**
+ * Opt-in floor: stop a NON-URGENT sell chase at the midpoint instead of conceding
+ * all the way to the bid.
+ *
+ * Walking to the bid exists to GUARANTEE THE CLEAR, which is the right trade when
+ * something forces the exit — EOD liquidation or a stop. It is a poor one when
+ * nothing does: on a wide spread it hands the market maker the entire half-spread on
+ * a position being closed for profit. 2026-08-03: EOSE bid 0.730 / mid 0.775 / ask
+ * 0.820 filled 0.750; WU C6 bid 0.600 / mid 0.650 / ask 0.700 filled 0.620.
+ *
+ * DEFAULT OFF, deliberately. The tick-chase was separately broken until that same
+ * day — waitForOrderFillById never waited, so the ladder reached the bid within ~1s
+ * of posting. With the chase now genuinely resting at ask and mid, this floor may be
+ * unnecessary. Enable only after a session's fills show closes STILL ending at the
+ * bid; otherwise it is redundant risk.
+ *
+ * Never applies when isUrgentClose: an unfilled hard-risk close is a far worse
+ * outcome than a conceded spread, and the EOD path must still clear.
+ */
+function isMidFloorEnabled(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_CLOSE_MID_FLOOR_ENABLED ?? false);
+}
+
+/** How far down a SELL chase may walk. See isMidFloorEnabled for the rationale. */
+function getSellEdgePrice(
+  bid: number,
+  midpoint: number,
+  isUrgentClose: boolean,
+): number {
+  const bidEdge = bid > 0 ? bid : midpoint;
+  if (isUrgentClose || !isMidFloorEnabled()) return bidEdge;
+
+  // Math.max, not an unconditional midpoint: on a crossed or stale quote mid can sit
+  // at or BELOW the bid, and floating the floor above a reachable price would just
+  // mean never filling. Taking the max falls through to the bid in that case.
+  return Math.max(midpoint, bidEdge);
+}
+
 function getEdgePrice(
   action: string,
   bid: number,
   ask: number,
   midpoint: number,
+  isUrgentClose = false,
 ): number {
   if (action.startsWith("Buy")) {
     return ask > 0 ? ask : midpoint;
   }
 
-  return bid > 0 ? bid : midpoint;
+  return getSellEdgePrice(bid, midpoint, isUrgentClose);
 }
 
 // Where the chase STARTS. A sell posts HIGH (toward the ask) and walks down to
@@ -506,6 +546,7 @@ export async function closePosition(
       snapshot.currentBidPrice,
       snapshot.currentAskPrice,
       midpointPrice,
+      isUrgentClose,
     );
     // Start high (toward the ask) and walk down to the edge (bid) — the tick size
     // spans the FULL start→edge range so the walk still completes in maxTickMoves.
