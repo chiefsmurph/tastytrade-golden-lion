@@ -93,8 +93,12 @@ async function getClosedPositionsTodayForAccount(
     realizedPnlPct: number | null;
     // set when the row was reconciled from the broker rather than the cycle snapshot
     backfilled?: boolean;
-    // contracts filled for this underlying in the same cycle — the cost-basis divisor
-    groupFillQty?: number;
+    // The group's weighted-average FILL price, i.e. our per-contract cost basis.
+    // Carried so the backfill can price a recovered fill the same way the cycle-time
+    // path does. Deriving entry from totalCostBasis / closedQty is WRONG: cost basis
+    // covers the whole group, so a partial close divides by too few contracts and
+    // inflates the implied entry (a 1-of-2 close doubled it).
+    groupWeightedFill?: number;
   }[] = [];
 
   for (const entry of todayEntries) {
@@ -172,7 +176,10 @@ async function getClosedPositionsTodayForAccount(
         realizedPnlDollars,
         realizedPnlPct,
         backfilled: false,
-        groupFillQty: totalFillQtyBySymbol.get(sym) ?? undefined,
+        groupWeightedFill:
+          matchingGroup?.legWeightedFills?.[closeOrder.symbol] ??
+          matchingGroup?.weightedAverageFill ??
+          undefined,
       });
     }
   }
@@ -205,17 +212,15 @@ async function getClosedPositionsTodayForAccount(
         close.closedAt = fills[0]?.filledAt ?? null;
         close.backfilled = true;
 
-        // Same entry-price basis the cycle-time path uses: cost basis is for the
-        // whole group, so divide by the group's contract count, not this order's.
-        const cb = close.totalCostBasis;
-        if (cb != null && cb > 0) {
-          const entry = cb / (close.groupFillQty && close.groupFillQty > 0
-            ? close.groupFillQty * 100
-            : qty * 100);
-          if (entry > 0) {
-            close.realizedPnlDollars = (avg - entry) * qty * 100;
-            close.realizedPnlPct = (avg - entry) / entry;
-          }
+        // Price it off the group's weighted-average fill — the same basis the
+        // cycle-time path uses. If that is unavailable we leave realized P&L NULL
+        // rather than guess: deriving entry from totalCostBasis / closedQty is wrong
+        // for a partial close (cost basis spans the whole group), and a confidently
+        // wrong P&L is worse than an admitted gap.
+        const entry = close.groupWeightedFill;
+        if (entry != null && entry > 0) {
+          close.realizedPnlDollars = (avg - entry) * qty * 100;
+          close.realizedPnlPct = (avg - entry) / entry;
         }
       } catch {
         // Leave the row untouched — an unreachable broker must not corrupt a report.
