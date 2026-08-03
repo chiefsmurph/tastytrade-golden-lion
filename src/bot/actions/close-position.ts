@@ -13,6 +13,7 @@ import {
 } from "~/strategy/spread-thresholds";
 import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById, type OrderPayload } from "./order-utils";
 import { toBooleanFlag } from "~/core/env-utils";
+import { getCachedSecretRegime } from "~/strategy/secret";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
 const CLOSE_TICK_INTERVAL_MS = 30_000;
@@ -60,6 +61,9 @@ export interface ClosePositionDependencies {
   // overnight-reduction sells with a distinct source so the cancel sweep can
   // protect them from being cancelled between cycles.
   orderSource?: string;
+  // Live market regime, for the mid-floor stand-down. Injected (rather than imported
+  // at the call site) because ES module exports are read-only and cannot be stubbed.
+  getRegime?: () => { crashRegime?: boolean } | null | undefined;
 }
 
 function getMinTickSize(referencePrice: number): number {
@@ -89,19 +93,59 @@ function isMidFloorEnabled(): boolean {
   return toBooleanFlag(process.env.STRATEGY_CLOSE_MID_FLOOR_ENABLED ?? false);
 }
 
+/**
+ * Should the mid floor stand down for market reasons?
+ *
+ * ONLY a crashRegime disqualifies it. That is deliberately narrower than gating on
+ * regimeMarginMult >= 1.0, which sounds reasonable and is nearly useless in practice:
+ * sampled live on 2026-08-03 the posture multiplier had median 0.740 and cleared 1.0
+ * in 7 of 144 samples, so a floor gated that way would stand down ~95% of the time
+ * and never meaningfully run.
+ *
+ * A mild down-regime (0.74) is not a reason to hand the market maker the whole
+ * spread — that is precisely when the spread costs most. A crash is: there, clearing
+ * beats price, and an unfilled close compounds.
+ *
+ * Fails toward TODAY'S BEHAVIOUR: no feed, no regime, or an unreadable one all count
+ * as "stand down" (walk to the bid). The feed is optional by design, so the floor
+ * must never depend on it being up in order for positions to clear.
+ */
+function shouldStandDownForRegime(
+  getRegime: () => { crashRegime?: boolean } | null | undefined,
+): boolean {
+  try {
+    const regime = getRegime();
+    if (!regime) return true;
+    return regime.crashRegime === true;
+  } catch {
+    return true;
+  }
+}
+
+/** All three conditions that must hold for the mid floor to bind. */
+function midFloorApplies(
+  isUrgentClose: boolean,
+  getRegime: () => { crashRegime?: boolean } | null | undefined,
+): boolean {
+  return (
+    !isUrgentClose && isMidFloorEnabled() && !shouldStandDownForRegime(getRegime)
+  );
+}
+
 /** How far down a SELL chase may walk. See isMidFloorEnabled for the rationale. */
 function getSellEdgePrice(
   bid: number,
   midpoint: number,
   isUrgentClose: boolean,
+  getRegime: () => { crashRegime?: boolean } | null | undefined,
 ): number {
   const bidEdge = bid > 0 ? bid : midpoint;
-  if (isUrgentClose || !isMidFloorEnabled()) return bidEdge;
-
   // Math.max, not an unconditional midpoint: on a crossed or stale quote mid can sit
   // at or BELOW the bid, and floating the floor above a reachable price would just
   // mean never filling. Taking the max falls through to the bid in that case.
-  return Math.max(midpoint, bidEdge);
+  return midFloorApplies(isUrgentClose, getRegime)
+    ? Math.max(midpoint, bidEdge)
+    : bidEdge;
 }
 
 function getEdgePrice(
@@ -110,12 +154,13 @@ function getEdgePrice(
   ask: number,
   midpoint: number,
   isUrgentClose = false,
+  getRegime: () => { crashRegime?: boolean } | null | undefined = getCachedSecretRegime,
 ): number {
   if (action.startsWith("Buy")) {
     return ask > 0 ? ask : midpoint;
   }
 
-  return getSellEdgePrice(bid, midpoint, isUrgentClose);
+  return getSellEdgePrice(bid, midpoint, isUrgentClose, getRegime);
 }
 
 // Where the chase STARTS. A sell posts HIGH (toward the ask) and walks down to
@@ -547,6 +592,7 @@ export async function closePosition(
       snapshot.currentAskPrice,
       midpointPrice,
       isUrgentClose,
+      dependencies.getRegime ?? getCachedSecretRegime,
     );
     // Start high (toward the ask) and walk down to the edge (bid) — the tick size
     // spans the FULL start→edge range so the walk still completes in maxTickMoves.

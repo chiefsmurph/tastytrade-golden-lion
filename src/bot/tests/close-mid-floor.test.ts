@@ -46,9 +46,16 @@ function makeEvaluation(bid: number, ask: number): PositionGroupEvaluation {
   } as unknown as PositionGroupEvaluation;
 }
 
-async function runChase(opts: { urgent: boolean; floorEnabled: boolean }) {
+async function runChase(opts: {
+  urgent: boolean;
+  floorEnabled: boolean;
+  // undefined = no feed at all (the optional-feed case)
+  regime?: { crashRegime?: boolean } | null;
+}) {
   const prior = process.env.STRATEGY_CLOSE_MID_FLOOR_ENABLED;
   process.env.STRATEGY_CLOSE_MID_FLOOR_ENABLED = opts.floorEnabled ? "true" : "false";
+  // default to a benign (non-crash) regime so existing cases exercise the floor
+  const stub = opts.regime === undefined ? { crashRegime: false } : opts.regime;
 
   const placed: Placed[] = [];
   let nextId = 1;
@@ -68,10 +75,12 @@ async function runChase(opts: { urgent: boolean; floorEnabled: boolean }) {
       isUrgentClose: opts.urgent,
       forceThroughSpreadGate: true,
       accountType: "cash",
+      getRegime: () => stub,
     });
   } finally {
     if (prior === undefined) delete process.env.STRATEGY_CLOSE_MID_FLOOR_ENABLED;
     else process.env.STRATEGY_CLOSE_MID_FLOOR_ENABLED = prior;
+
   }
   return placed.map((p) => p.limitPrice).filter((n) => Number.isFinite(n));
 }
@@ -114,4 +123,38 @@ test("floor ON but URGENT: still reaches the bid — a hard-risk close must clea
     Math.abs(lowest - 0.73) < 1e-6,
     `urgent closes must ignore the floor and reach the bid 0.73, got ${lowest}`,
   );
+});
+
+test("floor ON but CRASH regime: stands down and reaches the bid", async () => {
+  const rungs = await runChase({
+    urgent: false,
+    floorEnabled: true,
+    regime: { crashRegime: true },
+  });
+  const lowest = Math.min(...rungs);
+  assert.ok(
+    Math.abs(lowest - 0.73) < 1e-6,
+    `a crash regime must stand the floor down and clear at the bid, got ${lowest}`,
+  );
+});
+
+test("floor ON but NO FEED: stands down — never depend on an optional feed to clear", async () => {
+  const rungs = await runChase({ urgent: false, floorEnabled: true, regime: null });
+  const lowest = Math.min(...rungs);
+  assert.ok(
+    Math.abs(lowest - 0.73) < 1e-6,
+    `absent regime must fail toward today's behaviour (walk to bid), got ${lowest}`,
+  );
+});
+
+test("floor ON, mild down-regime is NOT a crash: floor still holds at mid", async () => {
+  // regimeMarginMult sat at 0.740 median on 2026-08-03. That is an ordinary down
+  // tape, not a crash, and is exactly when conceding the spread costs most.
+  const rungs = await runChase({
+    urgent: false,
+    floorEnabled: true,
+    regime: { crashRegime: false },
+  });
+  const lowest = Math.min(...rungs);
+  assert.ok(lowest > 0.73 + 1e-9, `should not reach the bid, got ${lowest}`);
 });
