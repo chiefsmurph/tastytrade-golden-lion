@@ -156,7 +156,36 @@ type GetOrderFn = (
   orderId: number,
 ) => Promise<{ status?: string } | null | undefined>;
 
-const LIVE_ORDER_STATUSES = ["Pending", "Open", "Pending Cancel"];
+// Statuses that mean "this order is still working, keep waiting".
+//
+// This list was missing every status tastytrade actually assigns a freshly-placed
+// order — Received, Routed, In Flight, Live — and carried "Pending"/"Open", which
+// the broker does not use for a new order. The consequence was severe and silent:
+// waitForOrderFillById treats an unrecognised status as terminal and returns false
+// IMMEDIATELY, so the close tick-chase concluded "didn't fill" about a second after
+// posting, dropped a rung, and repeated. A chase designed to rest 30s per rung over
+// 10 moves (~5 minutes) burned through its whole ladder in ~1 second and landed on
+// the BID essentially every time — handing the market maker the full spread on
+// every close. Observed 2026-08-03: EOSE posted 0.82 / 0.77 / 0.73 within one
+// second and filled at the bid rung; two of three sells that morning filled below
+// mid for that reason.
+//
+// It also explains why fills went missing from the run history: the chase returned
+// before the broker reported the fill, so the cycle recorded fills: [].
+//
+// Kept identical to LIVE_STATUSES in actions/spray-buy.ts, which had the correct
+// set all along. The bot's own tests corroborate it — spray-buy.test.ts models a
+// newly placed order as status "Received".
+const LIVE_ORDER_STATUSES = [
+  "Received",
+  "Routed",
+  "In Flight",
+  "Live",
+  "Pending",
+  "Open",
+  "Pending Cancel",
+  "Cancel Requested",
+];
 
 // Polls a single order by id (not the full order list) until it fills or the
 // timeout lapses. A missing order (404) counts as NOT filled — the previous

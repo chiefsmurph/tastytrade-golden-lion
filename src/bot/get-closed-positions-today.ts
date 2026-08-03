@@ -8,8 +8,70 @@ function getDateInPst(isoTimestamp: string): string {
   });
 }
 
+export type CloseFill = {
+  fillPrice: number | null;
+  quantity: number | null;
+  filledAt: string | null;
+};
+
+/** Fetch one order from the broker. Injected so tests need no network. Internal —
+ *  callers pass a plain function, so this name never needs to leave the module. */
+type GetOrderForBackfill = (
+  accountNumber: string,
+  orderId: number,
+) => Promise<{ legs?: { fills?: Record<string, unknown>[] }[] } | null | undefined>;
+
+/**
+ * Pull the fills off a broker order response.
+ *
+ * WHY THIS IS NEEDED AT READ TIME
+ * run-cycle's mapCloseOrdersForRunHistory reads fills from the order-PLACEMENT
+ * response, which by definition has none — the limit order has only just been
+ * created. Nothing ever revisits the entry, so a close that fills seconds later is
+ * recorded permanently as `fills: []` with null realized P&L. On 2026-08-03 that hid
+ * 2 of 3 fills and understated the day's realized P&L.
+ *
+ * The cycle cannot wait around for a fill, so reconciliation belongs here: this is a
+ * reporting query, not a hot path, and asking the broker is the only source of truth.
+ */
+/**
+ * Numeric field -> number | null. Guards the null/"" case explicitly because
+ * Number(null) is 0, which would silently turn "the broker told us nothing" into
+ * "zero contracts" — a quantity of 0 reads as a real value downstream.
+ */
+function numericOrNull(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** One broker fill row -> our shape. Split out so the mapper below stays trivial. */
+function toCloseFill(raw: Record<string, unknown>): CloseFill {
+  const at = String(raw["filled-at"] ?? "").trim();
+  return {
+    fillPrice: numericOrNull(raw["fill-price"]),
+    quantity: numericOrNull(raw.quantity),
+    filledAt: at || null,
+  };
+}
+
+export function extractFillsFromOrder(order: unknown): CloseFill[] {
+  const legs = (order as { legs?: unknown })?.legs;
+  if (!Array.isArray(legs)) return [];
+  return legs.flatMap((leg) => {
+    const fills = (leg as { fills?: unknown })?.fills;
+    return Array.isArray(fills)
+      ? fills.map((f) => toCloseFill(f as Record<string, unknown>))
+      : [];
+  });
+}
+
 // fallow-ignore-next-line complexity
-async function getClosedPositionsTodayForAccount(accountNumber: string, todayDate: string) {
+async function getClosedPositionsTodayForAccount(
+  accountNumber: string,
+  todayDate: string,
+  getOrder?: GetOrderForBackfill,
+) {
   // 200 covers a full trading day at default 4-min intervals
   const entries = await getRecentRunHistory(200, accountNumber);
   const todayEntries = entries.filter((e) => getDateInPst(e.timestamp) === todayDate);
@@ -29,6 +91,10 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
     totalCostBasis: number | null;
     realizedPnlDollars: number | null;
     realizedPnlPct: number | null;
+    // set when the row was reconciled from the broker rather than the cycle snapshot
+    backfilled?: boolean;
+    // contracts filled for this underlying in the same cycle — the cost-basis divisor
+    groupFillQty?: number;
   }[] = [];
 
   for (const entry of todayEntries) {
@@ -105,7 +171,55 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
         totalCostBasis: matchingGroup?.totalCostBasis ?? null,
         realizedPnlDollars,
         realizedPnlPct,
+        backfilled: false,
+        groupFillQty: totalFillQtyBySymbol.get(sym) ?? undefined,
       });
+    }
+  }
+
+  // ── Reconcile fills the cycle could not have seen ──────────────────────────
+  // Any placed close with an orderId but no fills was recorded before the broker
+  // reported one. Ask the broker now and recompute realized P&L from the answer.
+  // Best-effort: a failed lookup leaves the row exactly as it was, so this can only
+  // add information, never lose it.
+  const needsBackfill = rawCloses.filter(
+    (c) => c.orderId && c.fills.length === 0 && c.avgFillPrice == null,
+  );
+  if (needsBackfill.length && getOrder) {
+    for (const close of needsBackfill) {
+      try {
+        const numericId = Number(close.orderId);
+        if (!Number.isFinite(numericId)) continue;
+        const order = await getOrder(accountNumber, numericId);
+        const fills = extractFillsFromOrder(order);
+        if (!fills.length) continue;
+
+        const qty = fills.reduce((s, f) => s + (Number(f.quantity) || 0), 0);
+        if (qty <= 0) continue;
+        const avg =
+          fills.reduce((s, f) => s + (Number(f.fillPrice) || 0) * (Number(f.quantity) || 0), 0) /
+          qty;
+
+        close.fills = fills;
+        close.avgFillPrice = avg;
+        close.closedAt = fills[0]?.filledAt ?? null;
+        close.backfilled = true;
+
+        // Same entry-price basis the cycle-time path uses: cost basis is for the
+        // whole group, so divide by the group's contract count, not this order's.
+        const cb = close.totalCostBasis;
+        if (cb != null && cb > 0) {
+          const entry = cb / (close.groupFillQty && close.groupFillQty > 0
+            ? close.groupFillQty * 100
+            : qty * 100);
+          if (entry > 0) {
+            close.realizedPnlDollars = (avg - entry) * qty * 100;
+            close.realizedPnlPct = (avg - entry) / entry;
+          }
+        }
+      } catch {
+        // Leave the row untouched — an unreachable broker must not corrupt a report.
+      }
     }
   }
 
@@ -148,21 +262,37 @@ async function getClosedPositionsTodayForAccount(accountNumber: string, todayDat
   };
 }
 
-async function getClosedPositionsToday(args: string[]): Promise<unknown> {
+/**
+ * Default broker lookup for the fill backfill. Imported lazily so this module stays
+ * importable (and testable) without a broker session.
+ */
+const defaultGetOrder: GetOrderForBackfill = async (accountNumber, orderId) => {
+  const { default: tastytradeApi } = await import("~/core/tastytrade-client");
+  return tastytradeApi.orderService.getOrder(accountNumber, orderId) as ReturnType<
+    GetOrderForBackfill
+  >;
+};
+
+async function getClosedPositionsToday(
+  args: string[],
+  getOrder: GetOrderForBackfill = defaultGetOrder,
+): Promise<unknown> {
   const [accountNumberArg] = args;
   const accountNumber = accountNumberArg?.trim() || null;
   const today = getPstDateString();
 
   if (accountNumber) {
-    return getClosedPositionsTodayForAccount(accountNumber, today);
+    return getClosedPositionsTodayForAccount(accountNumber, today, getOrder);
   }
 
   const accountNumbers = await getManagedAccountNumbers();
   if (accountNumbers.length === 1) {
-    return getClosedPositionsTodayForAccount(accountNumbers[0], today);
+    return getClosedPositionsTodayForAccount(accountNumbers[0], today, getOrder);
   }
 
-  return Promise.all(accountNumbers.map((acc) => getClosedPositionsTodayForAccount(acc, today)));
+  return Promise.all(
+    accountNumbers.map((acc) => getClosedPositionsTodayForAccount(acc, today, getOrder)),
+  );
 }
 
 export default getClosedPositionsToday;
