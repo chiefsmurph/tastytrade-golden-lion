@@ -12,16 +12,64 @@ import {
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
 import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById, type OrderPayload } from "./order-utils";
-import { toBooleanFlag } from "~/core/env-utils";
+import { readEnvInt, toBooleanFlag } from "~/core/env-utils";
 import { getCachedSecretRegime } from "~/strategy/secret";
 
 const CLOSE_TICK_CHASE_ENABLED = true;
-const CLOSE_TICK_INTERVAL_MS = 30_000;
+const DEFAULT_CLOSE_TICK_INTERVAL_MS = 30_000;
 // Hard-risk closes (EOD liquidation, stop-loss) chase every 10s instead of 30s
 // so a full 10-move chase completes in ~100s, not ~5 minutes — a chase that
 // starts at 12:58 must finish before the 1:00 PM PT options close.
-const URGENT_CLOSE_TICK_INTERVAL_MS = 10_000;
+const DEFAULT_URGENT_CLOSE_TICK_INTERVAL_MS = 10_000;
 const MAX_CLOSE_TICK_MOVES = 10;
+
+// Hard bound on the configurable dwell. See the budget arithmetic below for why a
+// large value is not simply "more patient" — it can stall the whole cycle.
+const MAX_CONFIGURABLE_TICK_INTERVAL_MS = 120_000;
+
+/**
+ * How long each rung rests before the chase concedes one tick.
+ *
+ * WHY THIS IS THE ONLY USEFUL LEVER
+ * MAX_CLOSE_TICK_MOVES is already 10, but the ladder is bounded by TICK
+ * GRANULARITY, not by that count: getCloseTickSize floors the step at
+ * getMinTickSize (0.05 under $3). A typical option here has a 10c spread, so only
+ * TWO moves fit — ask, mid, bid — and raising the move count adds nothing. Observed
+ * 2026-08-03: EOSE ask 0.930 / mid 0.880 / bid 0.830 chased in 2 moves, 63 seconds.
+ * To wait longer you must dwell longer.
+ *
+ * BUDGET — read before raising this
+ * The chase BLOCKS the cycle (run-cycle awaits executePositionEvaluations awaits
+ * closePosition), the cycle runs every ~4 minutes, and overnight-position-reduction
+ * closes run SEQUENTIALLY in a for-loop (unlike the main close path, which is
+ * Promise.all and therefore parallel). So the worst case is roughly:
+ *
+ *     dwell x movesAvailable x sequentialReductionsThisCycle
+ *
+ * At 30s x 2 moves that is 60s per close — comfortable. At 150s (the "5 minute
+ * chase" shape) two sequential reductions would overrun the 4-minute cycle and stall
+ * everything behind them. 60-90s is the range that buys real patience while still
+ * fitting. Capped at 120s for that reason.
+ *
+ * Also worth weighing: a profit-target close has ALREADY met its target at the BID
+ * (currentReturn is bid-based), so waiting longer risks giving back a locked-in gain
+ * to chase half a spread. Patience is not free on that path.
+ */
+function getCloseTickIntervalMs(): number {
+  return readEnvInt(
+    "STRATEGY_CLOSE_TICK_INTERVAL_MS",
+    DEFAULT_CLOSE_TICK_INTERVAL_MS,
+    (n) => n >= 1_000 && n <= MAX_CONFIGURABLE_TICK_INTERVAL_MS,
+  );
+}
+
+function getUrgentCloseTickIntervalMs(): number {
+  return readEnvInt(
+    "STRATEGY_CLOSE_URGENT_TICK_INTERVAL_MS",
+    DEFAULT_URGENT_CLOSE_TICK_INTERVAL_MS,
+    (n) => n >= 1_000 && n <= MAX_CONFIGURABLE_TICK_INTERVAL_MS,
+  );
+}
 
 export interface ClosePositionResult {
   accountNumber: string;
@@ -501,8 +549,8 @@ export async function closePosition(
     dependencies.tickChaseEnabled ?? CLOSE_TICK_CHASE_ENABLED;
   const isUrgentClose = dependencies.isUrgentClose ?? false;
   const tickIntervalMs = isUrgentClose
-    ? dependencies.urgentTickIntervalMs ?? URGENT_CLOSE_TICK_INTERVAL_MS
-    : dependencies.tickIntervalMs ?? CLOSE_TICK_INTERVAL_MS;
+    ? dependencies.urgentTickIntervalMs ?? getUrgentCloseTickIntervalMs()
+    : dependencies.tickIntervalMs ?? getCloseTickIntervalMs();
   const maxTickMoves = Math.max(
     0,
     dependencies.maxTickMoves ?? MAX_CLOSE_TICK_MOVES,
