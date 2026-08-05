@@ -1,5 +1,6 @@
 export type ProgrammaticAction = "MANAGE_ALLOCATION" | "CLOSE_POSITION";
 import type { PositionGateResult } from "./position-gate";
+import type { ScaleOutContext } from "./scale-out";
 import { EOD_ARMED_MINUTE } from "./spread-thresholds";
 import { readEnvInt } from "~/core/env-utils";
 
@@ -10,6 +11,13 @@ export interface ExecutionStrategy {
   // Hard-risk closes (EOD liquidation, stop-loss floors) chase fast and cross
   // to the bid on the final tick; take-profit closes keep the slow chase.
   isUrgentClose?: boolean;
+  // Partial take-profit (scale-out): fraction of the position to close on this
+  // trip (0..1). Absent/undefined ⇒ full close. The execution dispatcher turns
+  // a <1 value into a maxQuantityToClose and marks the group as "scaled".
+  closeFraction?: number;
+  // Scaled runner that is holding its remainder: skip further adds so it simply
+  // rides to its higher target / breakeven ratchet. Honored by the dispatcher.
+  suppressAdds?: boolean;
 }
 
 export interface ExecutionTargets {
@@ -146,6 +154,36 @@ function getTimeInMinutes(currentTime: Date): number {
   return currentTime.getHours() * 60 + currentTime.getMinutes();
 }
 
+// Runner decision for a group whose first tranche was already scaled out. The
+// base take-profit no longer applies: ride to a higher target, protect at
+// breakeven (never let a winner become a loser), else hold and suppress adds.
+// Extracted so the branch set stays out of the main engine and is unit-testable.
+function evaluateScaledRunner(
+  currentReturn: number,
+  dynamicTakeProfitTarget: number,
+  scaleOut: ScaleOutContext,
+): ExecutionStrategy {
+  const runnerTarget = dynamicTakeProfitTarget * scaleOut.runnerTargetMultiple;
+  if (currentReturn >= runnerTarget) {
+    return {
+      action: "CLOSE_POSITION",
+      reason: `Runner target reached (${(currentReturn * 100).toFixed(2)}% >= ${(runnerTarget * 100).toFixed(2)}%) - close remaining runner`,
+    };
+  }
+  if (currentReturn <= 0) {
+    return {
+      action: "CLOSE_POSITION",
+      reason: `Runner breakeven ratchet (${(currentReturn * 100).toFixed(2)}% <= 0%) - lock the scaled-out remainder`,
+      isUrgentClose: true,
+    };
+  }
+  return {
+    action: "MANAGE_ALLOCATION",
+    reason: `Scaled runner riding (${(currentReturn * 100).toFixed(2)}%, target ${(runnerTarget * 100).toFixed(2)}%) - holding remainder, no adds`,
+    suppressAdds: true,
+  };
+}
+
 /**
  * Main Institutional Decision Engine
  * Tracks the state targets of the portfolio. If the action is MANAGE_ALLOCATION,
@@ -154,6 +192,7 @@ function getTimeInMinutes(currentTime: Date): number {
 export function evaluateTradingStrategy(
   metrics: PositionMetrics,
   accountType: StrategyAccountType = "unknown",
+  scaleOut?: ScaleOutContext,
 ): ExecutionStrategy {
   const { currentBidPrice, weightedAverageFill, currentTime, lastActionTime } = metrics;
 
@@ -176,12 +215,23 @@ export function evaluateTradingStrategy(
     };
   }
 
-  // Take Profit Target Gate
+  // Take Profit / Scale-Out Gate
   const dynamicTakeProfitTarget = getDynamicTakeProfitTarget(currentTime);
+
+  // Scaled runner: the base target is superseded (see evaluateScaledRunner).
+  // EOD margin liquidation above still flattens margin runners before this.
+  if (scaleOut?.enabled && scaleOut.alreadyScaled) {
+    return evaluateScaledRunner(currentReturn, dynamicTakeProfitTarget, scaleOut);
+  }
+
   if (currentReturn >= dynamicTakeProfitTarget) {
+    const scaling = scaleOut?.enabled === true;
     return {
       action: "CLOSE_POSITION",
-      reason: `Profit target reached (${(currentReturn * 100).toFixed(2)}% >= ${(dynamicTakeProfitTarget * 100).toFixed(2)}%) - close position and lock in gains`
+      reason: scaling
+        ? `Profit target reached (${(currentReturn * 100).toFixed(2)}% >= ${(dynamicTakeProfitTarget * 100).toFixed(2)}%) - scaling out ${(scaleOut!.fraction * 100).toFixed(0)}%, letting the rest run`
+        : `Profit target reached (${(currentReturn * 100).toFixed(2)}% >= ${(dynamicTakeProfitTarget * 100).toFixed(2)}%) - close position and lock in gains`,
+      ...(scaling ? { closeFraction: scaleOut!.fraction } : {}),
     };
   }
 
@@ -450,8 +500,9 @@ export function averageExecutionTargets(
 export function buildExecutionStrategy(
   metrics: PositionMetrics,
   accountType: StrategyAccountType = "unknown",
+  scaleOut?: ScaleOutContext,
 ): ExecutionStrategy {
-  return evaluateTradingStrategy(metrics, accountType);
+  return evaluateTradingStrategy(metrics, accountType, scaleOut);
 }
 
 function roundToTwoDecimals(value: number): number {

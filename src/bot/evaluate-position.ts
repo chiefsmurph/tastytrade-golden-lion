@@ -8,6 +8,8 @@ import {
   PositionMetrics,
   StrategyAccountType,
 } from "~/strategy/evaluate-trading-strategy";
+import { getScaleOutConfig, type ScaleOutContext } from "~/strategy/scale-out";
+import { isScaled } from "./actions/scale-out-store";
 
 export interface PositionQuoteSnapshot {
   position: CurrentPosition;
@@ -27,6 +29,10 @@ export interface PositionGroupEvaluation {
   secretBuyWeight?: number | null;
   strategy: ExecutionStrategy;
   executionTargets?: ExecutionTargets;
+  // Scale-out context used to build `strategy` this cycle. Passed to the close
+  // dispatcher so the execution-time recovery re-check applies the same runner
+  // logic (otherwise a stateless re-check would skip a runner's breakeven exit).
+  scaleOutContext?: ScaleOutContext;
   currentReturn: number;
 }
 
@@ -197,7 +203,19 @@ export async function evaluatePositionGroup(
     positions.map((position) => createPositionQuoteSnapshot(position)),
   );
   const metrics = buildAggregateMetrics(positionSnapshots, currentTime);
-  const strategy = buildExecutionStrategy(metrics, accountType);
+  const groupKey = buildGroupKey(
+    getUnderlyingSymbolForPosition(positions[0]),
+    getGroupSideForPositions(positions),
+  );
+  // Partial take-profit runner state. Only touch the store when scale-out is
+  // enabled for this account type (cash-only in v1) — otherwise this stays a
+  // no-op and the strategy behaves exactly as before.
+  const scaleConfig = getScaleOutConfig(accountType);
+  const alreadyScaled = scaleConfig.enabled
+    ? await isScaled(accountType, groupKey, metrics.weightedAverageFill)
+    : false;
+  const scaleOutContext: ScaleOutContext = { ...scaleConfig, alreadyScaled };
+  const strategy = buildExecutionStrategy(metrics, accountType, scaleOutContext);
   const currentReturn =
     metrics.weightedAverageFill > 0
       ? (metrics.currentBidPrice - metrics.weightedAverageFill) /
@@ -205,15 +223,13 @@ export async function evaluatePositionGroup(
       : 0;
 
   return {
-    groupKey: buildGroupKey(
-      getUnderlyingSymbolForPosition(positions[0]),
-      getGroupSideForPositions(positions),
-    ),
+    groupKey,
     underlyingSymbol: getUnderlyingSymbolForPosition(positions[0]),
     positions,
     positionSnapshots,
     metrics,
     strategy,
+    scaleOutContext,
     currentReturn,
   };
 }

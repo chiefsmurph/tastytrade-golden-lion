@@ -178,6 +178,32 @@ runs these gates **in order**; the first match wins:
 > interact — a position entered near the spread limit can be born close to
 > triggered. See [project_stop_loss_spread_coupling] in memory.
 
+### 6a. Partial take-profit + runner (scale-out) — *added 2026-08-04, cash-only*
+
+Optional, **default OFF** (`STRATEGY_PARTIAL_SCALE_OUT_ENABLED`). When enabled it
+replaces the all-or-nothing take-profit (gate 2) for the **cash** account only
+(cash holds overnight, so "let the rest run" is real; margin flattens at 12:50):
+
+- **First trip to the target** → close only `STRATEGY_SCALE_OUT_FRACTION`
+  (default **50%**) instead of 100%, and mark the group *scaled* in a persisted
+  store ([scale-out-store.ts](../src/bot/actions/scale-out-store.ts), keyed per
+  account + `UNDERLYING::side`, WAF-stamped as a re-entry guard).
+- **The runner** (already scaled) ignores the base target and instead:
+  - closes at a **higher target** = dynamic target ×
+    `STRATEGY_SCALE_OUT_RUNNER_TARGET_MULTIPLE` (default **1.5×**), or
+  - closes (urgent) on a **breakeven ratchet** if bid-return drops **≤ 0%** —
+    never let a winner become a loser, or
+  - otherwise **holds and suppresses further adds** so the runner just rides
+    (this also keeps its WAF — and the scaled flag — stable).
+- The store is cleared on a full close and pruned each cycle to the set of open
+  groups, so a re-entry starts fresh. The execution-time recovery re-check in
+  `closePosition` is passed the same scale-out context, so a runner's
+  breakeven/target exit isn't mistaken for a "recovered" position and skipped.
+
+Rollout: build is default-off; enable via the server `.env` flag after
+validating expectancy on the live cash book. Instant kill switch: set
+`STRATEGY_PARTIAL_SCALE_OUT_ENABLED=false` and restart.
+
 ---
 
 ## 7. Signal gating — the position gate

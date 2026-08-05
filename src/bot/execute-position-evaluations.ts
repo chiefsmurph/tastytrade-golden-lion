@@ -14,6 +14,8 @@ import {
   getTimeOfDayExecutionTargets,
 } from "~/strategy/evaluate-trading-strategy";
 import { closePosition, ClosePositionResult } from "./actions/close-position";
+import { markScaled, clearScaled, pruneOpenGroups } from "./actions/scale-out-store";
+import { computeScaleOutMaxQuantity } from "~/strategy/scale-out";
 import { recordPositionClosed } from "./position-registry";
 import {
   selectManageEvaluationsByBuyingPower,
@@ -41,6 +43,16 @@ import {
 } from "./order-sources";
 import { isOvernightPosition } from "./position-registry";
 import { isInOvernightReductionWindow } from "~/strategy/overnight-reduction";
+
+// Total option contracts across a group's snapshots — used to turn a scale-out
+// closeFraction into an absolute maxQuantityToClose (and to decide whether a
+// partial is even possible: a 1-lot can't be split, so it fully closes).
+function getGroupContractCount(evaluation: PositionGroupEvaluation): number {
+  return evaluation.positionSnapshots.reduce(
+    (sum, snapshot) => sum + Math.abs(Number(snapshot.position.quantity) || 0),
+    0,
+  );
+}
 
 export interface CancelOrderResult {
   cancelled: boolean;
@@ -282,7 +294,10 @@ export async function executePositionEvaluations(
   const currentTime = evaluations[0]?.metrics.currentTime ?? new Date();
 
   const manageEvaluationCandidates = actionableEvaluations.filter(
-    (evaluation) => evaluation.strategy.action === "MANAGE_ALLOCATION",
+    (evaluation) =>
+      evaluation.strategy.action === "MANAGE_ALLOCATION" &&
+      // A scaled runner holds its remainder — don't generate a buy plan for it.
+      evaluation.strategy.suppressAdds !== true,
   );
 
   // During the overnight reduction window (7:30–11:30 AM), skip adding to overnight
@@ -321,8 +336,14 @@ export async function executePositionEvaluations(
       )
     : (
         await Promise.all(
-          actionableCloseEvaluations.map((evaluation) =>
-            closePosition(
+          actionableCloseEvaluations.map((evaluation) => {
+            // Scale-out: a closeFraction < 1 closes only part of the group and
+            // leaves a runner (undefined ⇒ full close; a 1-lot can't split).
+            const maxQuantityToClose = computeScaleOutMaxQuantity(
+              evaluation.strategy.closeFraction,
+              getGroupContractCount(evaluation),
+            );
+            return closePosition(
               accountNumber,
               evaluation,
               {
@@ -330,9 +351,13 @@ export async function executePositionEvaluations(
                 // the bid; take-profit closes keep the slow chase.
                 isUrgentClose: evaluation.strategy.isUrgentClose === true,
                 accountType: accountMarginOrCash === "unknown" ? undefined : accountMarginOrCash,
+                // Same context that built the decision, so the execution-time
+                // recovery re-check applies the runner logic consistently.
+                scaleOut: evaluation.scaleOutContext,
+                ...(maxQuantityToClose !== undefined ? { maxQuantityToClose } : {}),
               },
-            ),
-          ),
+            );
+          }),
         )
       ).flat();
 
@@ -367,6 +392,41 @@ export async function executePositionEvaluations(
         evaluation.positions[0]?.["created-at"],
       );
     }
+  }
+
+  // Scale-out store maintenance: after a partial take-profit that placed, mark
+  // the group so its remainder is treated as a runner next cycle; after a full
+  // close, clear the flag; and prune flags for groups that are no longer open so
+  // a re-entry starts fresh. Skipped in read-only mode (no real closes) and when
+  // the account type is unknown; the store itself is only ever written for
+  // scale-out-eligible (cash) groups. Best-effort — never blocks the cycle.
+  if (!readOnly && accountMarginOrCash !== "unknown") {
+    for (const evaluation of actionableCloseEvaluations) {
+      const placed = closeOrders.some(
+        (order) =>
+          order.underlyingSymbol === evaluation.underlyingSymbol &&
+          order.placedOrder,
+      );
+      if (!placed) continue;
+      const wasPartialScaleOut =
+        computeScaleOutMaxQuantity(
+          evaluation.strategy.closeFraction,
+          getGroupContractCount(evaluation),
+        ) !== undefined;
+      if (wasPartialScaleOut) {
+        await markScaled(
+          accountMarginOrCash,
+          evaluation.groupKey,
+          evaluation.metrics.weightedAverageFill,
+        );
+      } else {
+        await clearScaled(accountMarginOrCash, evaluation.groupKey);
+      }
+    }
+    await pruneOpenGroups(
+      accountMarginOrCash,
+      new Set(evaluations.map((evaluation) => evaluation.groupKey)),
+    );
   }
 
   let budget = buildInitialBudget(
