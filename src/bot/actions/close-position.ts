@@ -315,12 +315,28 @@ function getSpreadPct(bidPrice: number, askPrice: number): number {
 
 export function shouldSkipClosePositionForMorningSpread(
   evaluation: PositionGroupEvaluation,
+  isUrgentClose = false,
 ): { skippedReason?: string; shouldSkip: boolean } {
   const currentTime = evaluation.metrics.currentTime;
 
   // EOD closes must execute regardless of spread — a skipped liquidation
   // leaves margin exposure held overnight.
   if (getTimeInMinutes(currentTime) >= EOD_ARMED_MINUTE) {
+    return { shouldSkip: false };
+  }
+
+  // Stop-loss / hard-risk closes must clear regardless of spread. The position has
+  // crossed its bid-return floor and MUST exit — and the same blowout that tripped
+  // the stop is what widened the spread, so gating here re-traps the very exit the
+  // stop exists to force. Observed twice: LCID 2026-07-02 and again 2026-08-05, a
+  // bid stop past -40% sat un-sellable through 8+ cycles purely because its own
+  // spread exceeded the 30% cap, escaping only by luck when it happened to bounce.
+  // Only NON-urgent closes (take-profit / manage) should wait for a tighter spread —
+  // there the half-spread cost is real and nothing forces the exit. isUrgentClose is
+  // set by the strategy for exactly the EOD + intraday/eod stop-loss floors (see
+  // evaluate-trading-strategy.ts), so this decouples the close-side spread gate from
+  // the stop-loss without loosening the gate for discretionary closes.
+  if (isUrgentClose) {
     return { shouldSkip: false };
   }
 
@@ -567,7 +583,7 @@ export async function closePosition(
 
   const morningSpreadGate = dependencies.forceThroughSpreadGate
     ? { shouldSkip: false as const }
-    : shouldSkipClosePositionForMorningSpread(evaluation);
+    : shouldSkipClosePositionForMorningSpread(evaluation, isUrgentClose);
   if (morningSpreadGate.shouldSkip) {
     return evaluation.positionSnapshots.map((snapshot) => ({
       accountNumber,

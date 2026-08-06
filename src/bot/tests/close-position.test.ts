@@ -118,6 +118,30 @@ test("shouldSkipClosePositionForMorningSpread still gates a losing wide-spread c
   assert.match(result.skippedReason ?? "", /Morning spread gate active/);
 });
 
+test("shouldSkipClosePositionForMorningSpread bypasses the gate for an urgent (stop-loss) close — LCID 2026-08-05", () => {
+  // The exact wide-spread losing shape that trapped LCID: crossed the bid stop with
+  // a spread past the 30% cap. A discretionary close should still wait (gated), but a
+  // stop-loss close (isUrgentClose) MUST clear — gating it is the coupling that let
+  // the -44% stop sit un-sellable through 8+ cycles.
+  const evaluation = buildEvaluation("2026-06-25T07:46:00", {
+    metrics: {
+      currentAskPrice: 0.56,
+      currentBidPrice: 0.42,
+      currentTime: new Date("2026-06-25T07:46:00"),
+      lastActionTime: new Date("2026-06-25T05:30:00"),
+      weightedAverageFill: 0.61,
+    },
+  });
+
+  // non-urgent: still gated (unchanged behavior)
+  assert.equal(shouldSkipClosePositionForMorningSpread(evaluation).shouldSkip, true);
+  // stop-loss driven: bypasses the gate so the exit clears
+  assert.equal(
+    shouldSkipClosePositionForMorningSpread(evaluation, true).shouldSkip,
+    false,
+  );
+});
+
 test("shouldSkipClosePositionForMorningSpread never blocks closes at or after 12:55 EOD liquidation", () => {
   // Production shape from margin.ndjson: 55%+ spread blocked the 12:55 liquidation
   const evaluation = buildEvaluation("2026-06-25T12:55:00", {
