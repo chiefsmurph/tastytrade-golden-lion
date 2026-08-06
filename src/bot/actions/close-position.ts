@@ -6,6 +6,7 @@ import {
   evaluateTradingStrategy,
   getDynamicTakeProfitTarget,
 } from "~/strategy/evaluate-trading-strategy";
+import type { ScaleOutContext } from "~/strategy/scale-out";
 import {
   EOD_ARMED_MINUTE,
   EOD_FORCED_CLOSE_MINUTE,
@@ -112,6 +113,10 @@ export interface ClosePositionDependencies {
   // Live market regime, for the mid-floor stand-down. Injected (rather than imported
   // at the call site) because ES module exports are read-only and cannot be stubbed.
   getRegime?: () => { crashRegime?: boolean } | null | undefined;
+  // Scale-out context for the execution-time recovery re-check. Must match what
+  // built the original decision, or a scaled runner's breakeven/target exit
+  // would be seen as "recovered" (MANAGE_ALLOCATION) and wrongly skipped.
+  scaleOut?: ScaleOutContext;
 }
 
 function getMinTickSize(referencePrice: number): number {
@@ -504,6 +509,7 @@ function hasStrategyRecoveredAtExecution(
   evaluation: PositionGroupEvaluation,
   snapshot: PositionQuoteSnapshot,
   accountType: StrategyAccountType,
+  scaleOut?: ScaleOutContext,
 ): boolean {
   const isEodForcedClose =
     getTimeInMinutes(evaluation.metrics.currentTime) >= EOD_FORCED_CLOSE_MINUTE;
@@ -520,6 +526,7 @@ function hasStrategyRecoveredAtExecution(
       lastActionTime: evaluation.metrics.lastActionTime,
     },
     accountType,
+    scaleOut,
   );
 
   if (freshStrategy.action !== "MANAGE_ALLOCATION") {
@@ -620,6 +627,7 @@ export async function closePosition(
         evaluation,
         snapshot,
         dependencies.accountType ?? "unknown",
+        dependencies.scaleOut,
       )
     ) {
       results.push({
