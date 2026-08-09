@@ -18,7 +18,11 @@ import {
 import { getMarginSeedConfig, getCashSeedFromMarginConfig } from "~/strategy/seed-decision";
 import { getSeedSizingFloorPct, getSeedSizingCeilingPct } from "~/strategy/seed-sizing-model";
 import { getMarginMaxTotalUtilization } from "~/strategy/seed-sizing-live";
-import { getIntradayStopLossFloor } from "~/strategy/evaluate-trading-strategy";
+import {
+  getIntradayStopLossFloor,
+  getStopLossMidConfirmFloor,
+  isStopLossMidConfirmEnabled,
+} from "~/strategy/evaluate-trading-strategy";
 import { getSprayBuyConfigSnapshot } from "~/bot/actions/spray-buy";
 
 export interface EnvNameFinding {
@@ -157,6 +161,12 @@ export function getStartupConfigSnapshot(
       minOpenInterest: getMinOpenInterest(),
       phantomQuoteGuardEnabled: isPhantomQuoteGuardEnabled(),
       intradayStopLossFloor: getIntradayStopLossFloor(),
+      // Both stop-side risk switches, resolved, so "is the mid confirmation armed?"
+      // is answerable from the boot log rather than by reading the server .env.
+      stopLossMidConfirmEnabled: isStopLossMidConfirmEnabled(),
+      stopLossMidConfirmFloor: getStopLossMidConfirmFloor(
+        getIntradayStopLossFloor(),
+      ),
       minIvRankPct: getMinIvRankPct(),
       marginTargetCallDelta: getMarginTargetCallDelta(),
       marginMaxBuyExposurePct: getMarginMaxBuyExposurePct(),

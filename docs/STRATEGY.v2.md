@@ -169,14 +169,52 @@ runs these gates **in order**; the first match wins:
 3. **Cooldown** — < 10 minutes since this group's last action → hold (no new
    order this cycle).
 4. **Intraday stop** — *before* the account cutoff, if bid-return ≤ **−30%**
-   (`STRATEGY_INTRADAY_STOP_LOSS_PCT`), close (urgent).
+   (`STRATEGY_INTRADAY_STOP_LOSS_PCT`), close (urgent). Optionally requires the
+   **midpoint** to confirm — see §6b.
 5. **EOD stop** — *at/after* the cutoff, if bid-return ≤ **−10%**
-   (`STRATEGY_EOD_STOP_LOSS_PCT`), close (urgent).
+   (`STRATEGY_EOD_STOP_LOSS_PCT`), close (urgent). Never consults the midpoint.
 6. Otherwise → **`MANAGE_ALLOCATION`** (proceed to sizing/buying).
 
 > **Known coupling:** the entry spread ceiling and the bid-based −30% stop
 > interact — a position entered near the spread limit can be born close to
 > triggered. See [project_stop_loss_spread_coupling] in memory.
+
+### 6b. Intraday stop: midpoint confirmation — *added 2026-08-08, default OFF*
+
+`STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM` (default `false`) adds a second condition
+to gate 4 only: the midpoint return must ALSO be ≤ −`STRATEGY_STOP_LOSS_MID_CONFIRM_PCT`
+(default **20**, clamped to the intraday floor). It is an extra condition on the
+trigger, **not** a change of basis — the floor is still read against the bid.
+
+**Why.** Over every close in the run ledger 2026-07-06 → 2026-08-07 (n=80 unique
+closes, 34 of them stops) the realized fill came in a median **8.2pp of entry
+ABOVE** the bid the stop triggered on (mean +14.5pp) and 2.7pp BELOW the midpoint;
+median absolute error against realized was 11.6pp for the bid and **5.4pp** for the
+midpoint. The bid is biased, not merely noisy — and the bias is account-shaped
+(mid-minus-bid gap: cash 16.7pp, margin 7.6pp), so one shared floor trips the cash
+book at roughly half the drawdown it trips margin at. **22 of the 25** intraday
+stops in the window (cash 21 of 24) were not under −30% at the midpoint. Limit
+case: PTON 2026-08-07 stopped on a −63.05% bid against a +136.45% ask (145.9%
+spread) and realized −5.4%.
+
+**Why a confirmation rather than a basis switch.** A pure mid-basis stop at the
+same floor is the same rule as "bid AND mid both under the floor" (mid ≥ bid on any
+uncrossed quote) and fires on only **3 of 25**, deferring 22 whose median realized
+was −19.2% — it would sit through genuinely broken positions. A spread ceiling on
+the trigger discriminates worse: capping at 50% defers 11 with median realized
+−12.1%. The separate, shallower mid floor fires on **16 of 25** and defers 9 whose
+median realized was −7.1%.
+
+Deferral returns `MANAGE_ALLOCATION` with `suppressAdds: true` — a quote the stop
+was just told not to trust must not be averaged down into either. Every unusable
+quote (one-sided, crossed, no cost basis) **fires** the stop: the confirmation may
+only ever suppress on evidence.
+
+**Known cost, in the data:** TDOC 2026-07-30 showed a −5.8% midpoint and booked
+−25.0%. That is 1 of the 9 deferrals in the window. Scope is deliberately the
+intraday floor only — the EOD floor has n=9, a shallow floor where the same gap
+means something different, and deferring an exit minutes from the close is a
+materially worse trade than deferring one at 9am.
 
 ### 6a. Partial take-profit + runner (scale-out) — *added 2026-08-04, cash-only*
 
@@ -374,6 +412,25 @@ overnight-hold accumulation is unguarded (different exit semantics).
   they chase fast and cross to the bid on the final tick. Take-profit closes keep
   the slow chase.
 
+**Final-rung re-quote** (`STRATEGY_CLOSE_REQUOTE_BEFORE_FINAL_TICK`, default OFF).
+Every price in the chase descends from the **cycle-start** bid/ask snapshot, and the
+ladder then dwells 10s (urgent) to 30s (normal) per rung — so the rung meant to
+guarantee the clear is routinely priced off a quote minutes old. Enabled, the chase
+pulls one live quote immediately before its last rung ("last" = the move budget
+running out, or the next step landing on the edge, whichever comes first) and
+re-prices that rung. The refreshed edge is **monotone**: a sell edge may only move
+DOWN, a buy edge only UP — chasing a market that ran away is the point, retracting a
+concession already made would risk the unfilled hard-risk close the urgent path
+exists to prevent. Any unusable answer (no quote, no bid, a throwing lookup) leaves
+the stale ladder untouched.
+
+Evidence: over the run ledger 2026-07-06 → 2026-08-07, **7 of 80** closes filled
+BELOW the bid quoted at the deciding cycle (ERIC 0.350 → 0.200, WEN 1.075 → 0.650,
+WEN 0.340 → 0.280, JOBY 0.182 → 0.160, ACHR 0.199 → 0.180, WEN 0.340 → 0.300,
+WEN 0.900 → 0.800) for **126.6pp of entry**, and 4 filled above the quoted ask. Those
+7 had a **median spread of 14.2%** and spanned 5 decision types and both urgency
+classes — a staleness problem, not a wide-spread one, and no spread gate catches it.
+
 ---
 
 ## 10. IV environment
@@ -429,6 +486,9 @@ Key knobs referenced above (default in parens):
 | `STRATEGY_MARGIN_MAX_ENTRY_SPREAD_PCT` | shared (prod 0.10) | tighter margin entry ceiling |
 | `STRATEGY_INTRADAY_STOP_LOSS_PCT` | 30 | pre-cutoff bid-return stop |
 | `STRATEGY_EOD_STOP_LOSS_PCT` | 10 | post-cutoff bid-return stop |
+| `STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM` | false | intraday stop also needs the midpoint (§6b) |
+| `STRATEGY_STOP_LOSS_MID_CONFIRM_PCT` | 20 | that midpoint floor, clamped to the intraday floor |
+| `STRATEGY_CLOSE_REQUOTE_BEFORE_FINAL_TICK` | false | re-quote before the chase's last rung (§9) |
 | `STRATEGY_MARGIN_MAX_TARGET_DTE` | 7 | margin DTE cap |
 | `STRATEGY_CASH_MIN_TARGET_DTE` | 7 | cash DTE floor |
 | `STRATEGY_MARGIN_MAX_TARGET_MULTIPLIER` | 1.33 | margin gate scale-up |

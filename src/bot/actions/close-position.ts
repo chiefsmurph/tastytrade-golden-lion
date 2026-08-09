@@ -121,6 +121,12 @@ export interface ClosePositionDependencies {
   // built the original decision, or a scaled runner's breakeven/target exit
   // would be seen as "recovered" (MANAGE_ALLOCATION) and wrongly skipped.
   scaleOut?: ScaleOutContext;
+  // Live quote lookup for the final-rung re-quote (see
+  // isCloseRequoteBeforeFinalTickEnabled). Injected for the same reason getRegime is.
+  getBidAsk?: (
+    symbol: string,
+    timeoutMs: number,
+  ) => Promise<{ ask?: number; bid?: number } | null>;
 }
 
 function getMinTickSize(referencePrice: number): number {
@@ -218,6 +224,112 @@ function getEdgePrice(
   }
 
   return getSellEdgePrice(bid, midpoint, isUrgentClose, getRegime);
+}
+
+// How long to wait for the final-rung re-quote. Deliberately shorter than the 3000ms
+// the cycle-start snapshot uses: this runs inside the chase, and a quote that has not
+// arrived by now is not a fresher price than the one already in hand.
+const REQUOTE_TIMEOUT_MS = 1_500;
+
+/**
+ * STRATEGY_CLOSE_REQUOTE_BEFORE_FINAL_TICK — pull a live quote immediately before the
+ * chase posts its LAST rung, and price that rung off the fresh quote.
+ *
+ * WHY. Every price in this file descends from `snapshot.currentBidPrice` /
+ * `currentAskPrice`, which are a CYCLE-START snapshot. The chase then walks a ladder
+ * that dwells 10s (urgent) to 30s (normal) per rung, so the final rung — the one that
+ * is supposed to guarantee the clear by crossing to the bid — is routinely priced off
+ * a quote minutes old. When the market has moved away in that window the position
+ * simply does not clear, and the close carries into later cycles that re-price it
+ * lower and lower.
+ *
+ * The ledger 2026-07-06 → 2026-08-07 shows the damage: of 80 unique closes, 7 filled
+ * BELOW the bid quoted at the deciding cycle (ERIC 0.350 → 0.200, WEN 1.075 → 0.650,
+ * WEN 0.340 → 0.280, JOBY 0.182 → 0.160, ACHR 0.199 → 0.180, WEN 0.340 → 0.300,
+ * WEN 0.900 → 0.800) for 126.6pp of entry, and 4 filled above the quoted ask. Those 7
+ * had a MEDIAN SPREAD OF 14.2% and spread across 5 decision types and both urgency
+ * classes — so this is a staleness problem, not a wide-spread problem, and no spread
+ * gate would have caught it.
+ *
+ * DEFAULT OFF. It adds one broker quote call per close leg and can move a live limit
+ * price, both of which deserve a deliberate switch-on.
+ */
+function isCloseRequoteBeforeFinalTickEnabled(): boolean {
+  return toBooleanFlag(
+    process.env.STRATEGY_CLOSE_REQUOTE_BEFORE_FINAL_TICK ?? false,
+  );
+}
+
+/** dxLink streamer symbol, never the OCC symbol — an OCC lookup returns no quote. */
+function getQuoteLookupSymbol(position: PositionQuoteSnapshot["position"]): string {
+  return (
+    (position["streamer-symbol"] as string | undefined) ||
+    (position["quote-symbol"] as string | undefined) ||
+    position.symbol
+  );
+}
+
+/**
+ * Re-derive the chase edge from a fresh quote, or return undefined to keep the stale
+ * one. Undefined on every unusable answer (no quote, no bid, non-finite) — a failed
+ * re-quote must leave the ladder exactly as it is today.
+ *
+ * The refreshed edge is MONOTONE: a sell edge may only move DOWN, a buy edge only UP.
+ * That is the asymmetry that makes this safe to arm. Moving the edge toward the market
+ * is the entire point — it is what lets the last rung actually reach a market that has
+ * run away. Moving it back the other way would retract a concession the chase already
+ * made and risk the one outcome the urgent path exists to prevent: an unfilled
+ * hard-risk close. Price improvement in that direction is the exchange's job anyway —
+ * a resting sell below the bid fills AT the bid.
+ */
+function toPositivePrice(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** The chase edge a live quote implies, or 0 when the quote cannot supply one. */
+function getEdgePriceFromQuote(
+  orderAction: string,
+  quote: { ask?: number; bid?: number } | null | undefined,
+  isUrgentClose: boolean,
+  getRegime: () => { crashRegime?: boolean } | null | undefined,
+): number {
+  const { ask, bid } = quote ?? {};
+  const freshBid = toPositivePrice(bid);
+  const freshAsk = toPositivePrice(ask);
+  const midpoint = getMidpointPrice(freshBid, freshAsk);
+  if (!(midpoint > 0)) return 0;
+
+  return toPositivePrice(
+    getEdgePrice(
+      orderAction,
+      freshBid,
+      freshAsk,
+      midpoint,
+      isUrgentClose,
+      getRegime,
+    ),
+  );
+}
+
+function refreshEdgePriceFromQuote(
+  orderAction: string,
+  staleEdgePrice: number,
+  quote: { ask?: number; bid?: number } | null | undefined,
+  isUrgentClose: boolean,
+  getRegime: () => { crashRegime?: boolean } | null | undefined,
+): number | undefined {
+  const freshEdge = getEdgePriceFromQuote(
+    orderAction,
+    quote,
+    isUrgentClose,
+    getRegime,
+  );
+  if (freshEdge <= 0) return undefined;
+
+  return orderAction.startsWith("Buy")
+    ? Math.max(staleEdgePrice, freshEdge)
+    : Math.min(staleEdgePrice, freshEdge);
 }
 
 // Where the chase STARTS. A sell posts HIGH (toward the ask) and walks down to
@@ -385,6 +497,9 @@ interface CloseTickChaseParams {
   createOrder: NonNullable<ClosePositionDependencies["createOrder"]>;
   cancelOrder: NonNullable<ClosePositionDependencies["cancelOrder"]>;
   checkOrderFilled: NonNullable<ClosePositionDependencies["checkOrderFilled"]>;
+  // Optional live re-price of the edge, consulted ONCE, immediately before the final
+  // rung. Absent ⇒ the chase walks the cycle-start ladder exactly as it always has.
+  refreshEdgePrice?: (staleEdgePrice: number) => Promise<number | undefined>;
 }
 
 // Walks the limit price from startPrice toward edgePrice, re-placing the order
@@ -430,6 +545,31 @@ async function placeCloseOrder(
   }
 }
 
+// Is the step about to be taken the LAST rung of this chase? "Last" is whichever
+// comes first: the move budget running out, or the next step landing on the edge —
+// a tight spread reaches the edge in two moves, so keying only off the move count
+// would never fire on the closes that motivated the re-quote.
+function isLastRungAhead(
+  params: Pick<
+    CloseTickChaseParams,
+    "isUrgentClose" | "orderAction" | "tickSize"
+  >,
+  currentPrice: number,
+  currentEdgePrice: number,
+  isFinalTickMove: boolean,
+): boolean {
+  if (isFinalTickMove) return true;
+  const provisionalPrice = advanceClosePrice(
+    params.orderAction,
+    currentPrice,
+    currentEdgePrice,
+    params.tickSize,
+    params.isUrgentClose,
+    isFinalTickMove,
+  );
+  return pricesAreEqual(provisionalPrice, currentEdgePrice);
+}
+
 // The option-close tick-chase state machine the PR-27 refactor pulled out of
 // closePosition: cancel → place → fill-check → advance, up to MAX_CLOSE_TICK_MOVES,
 // with urgent-close special-casing plus a rejection break that keeps a 422 from
@@ -457,9 +597,12 @@ async function runCloseTickChase(
     createOrder,
     cancelOrder,
     checkOrderFilled,
+    refreshEdgePrice,
   } = params;
 
   let currentPrice = startPrice;
+  let currentEdgePrice = edgePrice;
+  let hasRefreshedEdge = false;
   let tickMoveCount = 0;
   let activeOrderId: string | undefined;
   let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
@@ -494,7 +637,7 @@ async function runCloseTickChase(
       break;
     }
 
-    if (pricesAreEqual(currentPrice, edgePrice)) {
+    if (pricesAreEqual(currentPrice, currentEdgePrice)) {
       break;
     }
 
@@ -506,13 +649,27 @@ async function runCloseTickChase(
       break;
     }
 
+    const isFinalTickMove = tickMoveCount + 1 >= maxTickMoves;
+
+    if (
+      refreshEdgePrice &&
+      !hasRefreshedEdge &&
+      isLastRungAhead(params, currentPrice, currentEdgePrice, isFinalTickMove)
+    ) {
+      hasRefreshedEdge = true;
+      const refreshed = await refreshEdgePrice(currentEdgePrice);
+      if (refreshed !== undefined) {
+        currentEdgePrice = refreshed;
+      }
+    }
+
     currentPrice = advanceClosePrice(
       orderAction,
       currentPrice,
-      edgePrice,
+      currentEdgePrice,
       tickSize,
       isUrgentClose,
-      tickMoveCount + 1 >= maxTickMoves,
+      isFinalTickMove,
     );
     tickMoveCount += 1;
   }
@@ -587,6 +744,12 @@ export async function closePosition(
   );
   let remainingToClose = dependencies.maxQuantityToClose ?? Infinity;
   const orderSource = dependencies.orderSource;
+  const getRegime = dependencies.getRegime ?? getCachedSecretRegime;
+  const getBidAsk =
+    dependencies.getBidAsk ??
+    ((symbol: string, timeoutMs: number) =>
+      tastytradeApi.johnsService.getBidAskForSymbol(symbol, timeoutMs));
+  const requoteBeforeFinalTick = isCloseRequoteBeforeFinalTickEnabled();
 
   const morningSpreadGate = dependencies.forceThroughSpreadGate
     ? { shouldSkip: false as const }
@@ -671,7 +834,7 @@ export async function closePosition(
       snapshot.currentAskPrice,
       midpointPrice,
       isUrgentClose,
-      dependencies.getRegime ?? getCachedSecretRegime,
+      getRegime,
     );
     // Start high (toward the ask) and walk down to the edge (bid) — the tick size
     // spans the FULL start→edge range so the walk still completes in maxTickMoves.
@@ -702,6 +865,28 @@ export async function closePosition(
       createOrder,
       cancelOrder,
       checkOrderFilled,
+      refreshEdgePrice: requoteBeforeFinalTick
+        ? async (staleEdgePrice: number) => {
+            let quote: { ask?: number; bid?: number } | null = null;
+            try {
+              quote = await getBidAsk(
+                getQuoteLookupSymbol(snapshot.position),
+                REQUOTE_TIMEOUT_MS,
+              );
+            } catch {
+              // A quote lookup that throws leaves the stale edge in place — the
+              // chase must never fail to post its last rung because of it.
+              return undefined;
+            }
+            return refreshEdgePriceFromQuote(
+              orderAction,
+              staleEdgePrice,
+              quote,
+              isUrgentClose,
+              getRegime,
+            );
+          }
+        : undefined,
     });
 
     // Fetch final order state to capture fills for JSONL — createOrder response
