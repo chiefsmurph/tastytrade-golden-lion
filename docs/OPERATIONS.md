@@ -19,7 +19,11 @@ Ordered by "if this is wrong, stop and fix before reading further" — same phil
 
 ### 3. What did we make or lose, and why? (3 min)
 
-- `node run bot:getPnlLedger <ACCOUNT> <today>` per account — the `byDecisionType` rollup is the day in one glance: how much came from take-profits vs. was given back to stops vs. EOD liquidations vs. overnight reductions.
+- `node --import tsx src/tools/realized-pnl.ts <YYYY-MM-DD>` — **the authoritative window figure.** It is built from the broker transaction ledger, so it is the only source that sees expirations and commissions. Read its trailing lines before quoting any number:
+  - the **NET** blended % is the headline; the **gross (pre-fee)** line beside it shows how much of the result is fees (opening ≈ $1/contract, closing ≈ $0.12 — material at this book's premium sizes).
+  - the **reconciliation** line must balance. `still open` legs are positions the window has not resolved; `closes w/o open in window` means the cost basis predates the start date — widen the window before concluding anything. Neither is dropped silently any more; that is exactly what let an expired-worthless contract vanish from the report before 2026-08-08.
+  - equity rows appear in their own bucket and are excluded from the options P&L. This bot trades options only, so anything in that bucket is manual activity.
+- `node run bot:getPnlLedger <ACCOUNT> <today>` per account — the `byDecisionType` rollup is the day in one glance: how much came from take-profits vs. was given back to stops vs. EOD liquidations vs. overnight reductions. This is a *decision-attribution* view, not a complete P&L — it only sees closes the cycle observed.
 - Spot-check 1–2 ledger rows against broker fill history (the ledger misses closes that fill after the chase's final re-fetch — known gap until confirmed-fill tracking lands, v5 code #3). If a broker fill has no ledger row, note it; a pattern means the gap is material.
 - `node run bot:getDayTrend` — unrealized drift vs. yesterday's baseline for what's still held (cash overnights).
 
@@ -42,6 +46,8 @@ One line in a running note (date · net realized $ · decision-type mix · incid
 The point: nearly every open strategy item in [improvements/STATUS.md](improvements/STATUS.md) says "tune from distributions." After ~10 trading days the ledger and logs contain those distributions. Block 1–2 hours and answer these **from data, not intuition** — each question names its data source.
 
 ### P&L attribution (source: `data/ledger/*.ndjson`)
+
+> Read these files through `bot:getPnlLedger`, not with your own parser. Rows written before 2026-08-08 scaled non-option (equity) symbols by the ×100 contract multiplier, and the reader repairs that on the way out. A hand-rolled `jq` sum over the raw NDJSON will still be 100× off on those rows.
 
 1. **Which decision types make money?** Sum `realizedPnlDollars` by `decisionType`. If stops dominate losses far beyond what take-profits capture, the stop design (grace period, mid-based floor — v4 #5) moves to the front of the queue.
 2. **Take-profit timing**: distribution of `closeHourPst` and `realizedPnlPct` on take-profits — are winners sold at ~8% that kept running (case for scale-out, v4 #8, and min-hold-time, v6 #14)?

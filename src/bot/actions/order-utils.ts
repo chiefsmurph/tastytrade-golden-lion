@@ -130,6 +130,29 @@ export function inferOptionSide(symbol: string): "call" | "put" | null {
 // OCC option symbol: 6-char padded root, YYMMDD expiration, C/P, strike ×1000
 const OCC_OPTION_SYMBOL_PATTERN = /^.{6}(\d{6})[CP]\d{8}$/;
 
+/**
+ * True only for a well-formed 21-character OCC contract symbol
+ * ("AAPL  260619C00100000"). Deliberately positive-matching: a plain equity
+ * ticker ("SNWV") and an empty/garbled symbol both answer false.
+ */
+export function isOccOptionSymbol(symbol: string): boolean {
+  return OCC_OPTION_SYMBOL_PATTERN.test(String(symbol ?? ""));
+}
+
+/**
+ * Contracts/shares -> dollars multiplier for a per-unit price.
+ *
+ * REGRESSION GUARD: the realized-P&L paths used to hard-code ×100. Both managed
+ * accounts also carry manually-traded EQUITY rows (a bare ticker, side "none"),
+ * and those were being inflated 100× — one row read as roughly a hundred times
+ * its true loss and dominated the window total. An option contract still gets
+ * ×100 because `isOccOptionSymbol` matches the full OCC shape; anything that is
+ * not an option contract is priced per share.
+ */
+export function getContractMultiplier(symbol: string): number {
+  return isOccOptionSymbol(symbol) ? 100 : 1;
+}
+
 export function getOccExpirationDate(symbol: string): Date | null {
   const match = OCC_OPTION_SYMBOL_PATTERN.exec(symbol);
   if (!match) return null;
