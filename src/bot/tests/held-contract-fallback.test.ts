@@ -7,7 +7,10 @@ import {
   isNoFittingSeedCandidateReason,
   isSeedEligibleEvaluation,
 } from "../run-cycle-seed";
+import { localTimeAt } from "./test-clock";
 import type { PositionGroupEvaluation } from "../evaluate-position";
+
+const AT_1000 = localTimeAt(10, 0);
 
 function occSymbol(root: string, yymmdd: string, strike: string): string {
   return `${root.padEnd(6, " ")}${yymmdd}C${strike}`;
@@ -30,14 +33,15 @@ function buildEvaluation(
     metrics: {
       currentAskPrice: snapshots[0]?.ask ?? 0,
       currentBidPrice: snapshots[0]?.bid ?? 0,
-      currentTime: new Date(),
-      lastActionTime: new Date(),
+      // Pinned weekday mid-morning — these gates read the clock with getHours().
+      currentTime: AT_1000,
+      lastActionTime: AT_1000,
       weightedAverageFill: 1,
     },
     positionSnapshots: snapshots.map((snapshot) => ({
       currentAskPrice: snapshot.ask,
       currentBidPrice: snapshot.bid,
-      lastActionTime: new Date(),
+      lastActionTime: AT_1000,
       position: {
         "account-number": "ACC-1",
         "instrument-type": "Option",

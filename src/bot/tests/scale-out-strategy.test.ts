@@ -10,15 +10,16 @@ import {
   getScaleOutConfig,
   type ScaleOutContext,
 } from "~/strategy/scale-out";
+import { localTimeAt, minutesBefore } from "./test-clock";
 
 // At 06:30 the dynamic take-profit target is exactly 0.40, so the runner target
-// (×1.5) is 0.60 — convenient fixed anchors for these cases.
+// (×1.5) is 0.60 — convenient fixed anchors for these cases. 06:30 is LOCAL:
+// getDynamicTakeProfitTarget blends on getHours()/getMinutes().
 function metricsWithReturn(returnPct: number) {
-  const currentTime = new Date();
-  currentTime.setHours(6, 30, 0, 0);
+  const currentTime = localTimeAt(6, 30);
   // 11 min ago → past the 10-min cooldown (irrelevant to take-profit/runner
   // branches, which run before cooldown, but keeps the fallthrough clean).
-  const lastActionTime = new Date(currentTime.getTime() - 11 * 60 * 1000);
+  const lastActionTime = minutesBefore(currentTime, 11);
   return {
     currentBidPrice: 1 + returnPct,
     currentAskPrice: 1 + returnPct,
@@ -37,9 +38,7 @@ const CTX = (over: Partial<ScaleOutContext>): ScaleOutContext => ({
 });
 
 test("06:30 dynamic target is 0.40 (anchor for these tests)", () => {
-  const t = new Date();
-  t.setHours(6, 30, 0, 0);
-  assert.equal(getDynamicTakeProfitTarget(t), 0.4);
+  assert.equal(getDynamicTakeProfitTarget(localTimeAt(6, 30)), 0.4);
 });
 
 test("scale-out DISABLED → unchanged full close at target (no closeFraction)", () => {

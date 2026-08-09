@@ -9,6 +9,7 @@ import {
 } from "../actions/manage-allocation";
 import type { PositionGroupEvaluation } from "../evaluate-position";
 import type { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
+import { localTimeAt } from "./test-clock";
 
 const baseTargets: ExecutionTargets = {
   targetDTE: 21,
@@ -46,7 +47,7 @@ function buildEvaluation(
       {
         currentAskPrice: 1.2,
         currentBidPrice: 1.0,
-        lastActionTime: new Date(),
+        lastActionTime: currentTime,
         position: {
           "account-number": "ACC-1",
           "instrument-type": "Option",
@@ -272,14 +273,6 @@ test("margin ITM fallback: does NOT retry when marginItmFallbackEligible is not 
   // held-contract fallback / skip instead).
   assert.notEqual(result.candidateSymbol, "ERIC  260717C00008000");
 });
-
-// Helper: build a Date at a specific HH:MM in local time (matches how
-// getTimeInMinutes interprets currentTime throughout the strategy engine).
-function localTimeAt(hours: number, minutes: number, seconds = 0): Date {
-  const d = new Date();
-  d.setHours(hours, minutes, seconds, 0);
-  return d;
-}
 
 // isTooCloseToAccumulationCutoff unit tests
 
