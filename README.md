@@ -137,6 +137,12 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 
 - `STRATEGY_INTRADAY_STOP_LOSS_PCT` — Intraday bid-return loss floor before the bot cuts off accumulation. Defaults to `30`.
 - `STRATEGY_EOD_STOP_LOSS_PCT` — End-of-day bid-return loss floor after the accumulation cutoff. Defaults to `10`.
+- `STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM` — Require the **midpoint** to also be under water before the *intraday* bid stop fires. Defaults to `false`, which is exactly today's bid-only behavior. Measured over the run ledger 2026-07-06 → 2026-08-07 (n=80 closes, 34 of them stops), the realized fill landed a median 8.2pp of entry *above* the bid the stop triggered on and 2.7pp *below* the midpoint — the bid is a biased estimator of what a position is worth, and the bias is roughly twice as large on cash (mid-minus-bid gap 16.7pp) as on margin (7.6pp). 22 of the 25 intraday stops in that window would not have fired on a −30% midpoint. Only the intraday floor consults this; the EOD floor never does.
+- `STRATEGY_STOP_LOSS_MID_CONFIRM_PCT` — How far under water the midpoint must be for that confirmation, as an integer percent. Defaults to `20`. Clamped to `STRATEGY_INTRADAY_STOP_LOSS_PCT`, so it can never be deeper than the bid floor it qualifies. At the default it keeps 16 of the 25 measured stops and defers 9 whose median realized was −7.1%.
+
+### Strategy: Close Execution
+
+- `STRATEGY_CLOSE_REQUOTE_BEFORE_FINAL_TICK` — Pull a live quote immediately before the close tick-chase posts its **last** rung, and price that rung off the fresh quote instead of the cycle-start snapshot. Defaults to `false`, which walks exactly today's ladder and never makes the extra quote call. Rationale: every price in the chase descends from a cycle-start bid/ask, and the ladder then dwells 10s (urgent) to 30s (normal) per rung, so the rung that is meant to guarantee the clear is routinely priced off a quote minutes old. Over the run ledger 2026-07-06 → 2026-08-07, 7 of 80 closes filled *below* the bid quoted at the deciding cycle (126.6pp of entry, at a median spread of only 14.2%) and 4 filled above the quoted ask. The refreshed edge is monotone — a sell edge may only move **down**, a buy edge only up — so it can chase a market that ran away but can never retract a concession the chase already made. Any unusable answer (no quote, no bid, a lookup that throws) leaves the stale ladder in place.
 
 ### Strategy: Position Sizing and Exposure
 

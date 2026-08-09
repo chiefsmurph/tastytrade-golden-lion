@@ -2,7 +2,7 @@ export type ProgrammaticAction = "MANAGE_ALLOCATION" | "CLOSE_POSITION";
 import type { PositionGateResult } from "./position-gate";
 import type { ScaleOutContext } from "./scale-out";
 import { EOD_ARMED_MINUTE } from "./spread-thresholds";
-import { readEnvInt } from "~/core/env-utils";
+import { readEnvInt, toBooleanFlag } from "~/core/env-utils";
 
 // Unified return structure containing target state goals for the execution loop
 export interface ExecutionStrategy {
@@ -47,6 +47,9 @@ export function getNoBuyCutoffMinute(accountType: StrategyAccountType): number {
 
 // Both stop floors compare against currentBidPrice (bid return), not mid.
 // Tune them relative to what the position looks like at the bid, not the midpoint.
+// (The intraday floor can additionally require the midpoint to agree before it
+// fires — see isStopLossMidConfirmEnabled below. That is an extra condition on the
+// trigger, not a change of basis: this floor is still read against the bid.)
 export function getIntradayStopLossFloor(): number {
   const raw = process.env.STRATEGY_INTRADAY_STOP_LOSS_PCT?.trim();
   if (!raw) return 0.30;
@@ -59,6 +62,145 @@ export function getEodStopLossFloor(): number {
   if (!raw) return 0.10;
   const parsed = Number(raw) / 100;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.10;
+}
+
+const DEFAULT_STOP_LOSS_MID_CONFIRM_FLOOR = 0.20;
+
+/**
+ * STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM — require the MIDPOINT to agree before the
+ * intraday bid stop fires.
+ *
+ * WHY. The stop compares currentBidPrice to the cost basis, and on this book the bid
+ * is not a price anyone trades at. Measured over every close in the run ledger
+ * 2026-07-06 → 2026-08-07 (n=80 unique closes, 34 of them stop closes): the realized
+ * fill came in a MEDIAN 8.2pp of entry ABOVE the bid the stop triggered on (mean
+ * +14.5pp), while it came in 2.7pp BELOW the midpoint (mean −3.5pp). Median absolute
+ * error against realized: bid 11.6pp, mid 5.4pp. Across all 80 closes the midpoint is
+ * the closer estimator in 46 (58%), |err| 4.8pp vs 7.3pp. So the midpoint is roughly
+ * twice as good a description of what the position is actually worth, and the bid is
+ * BIASED, not merely noisy.
+ *
+ * The bias is account-shaped, which is what makes one shared floor wrong: the
+ * mid-minus-bid gap is a mean 16.7pp of entry on cash and 7.6pp on margin, so an
+ * identical −30% rule trips the cash book at roughly half the drawdown it trips the
+ * margin book at. 22 of the 25 intraday stops in the window (cash 21 of 24) would not
+ * have fired on a −30% MIDPOINT. The extreme: PTON 2026-08-07 stopped on a −63.05%
+ * bid against a +136.45% ask (145.9% spread) and realized −5.4%.
+ *
+ * WHY A CONFIRMATION AND NOT A BASIS SWITCH. A pure mid-basis stop at the same floor
+ * is the same rule as "bid AND mid both under the floor" (mid >= bid whenever the
+ * quote is not crossed), and it is far too blunt: it fires on 3 of the 25 and defers
+ * 22, whose median realized was −19.2% — it would sit through genuinely broken
+ * positions (NEXT −35.1%, VG −32.9%, TE −31.8%). A spread ceiling on the trigger
+ * discriminates worse still: capping at 50% defers 11 whose median realized was
+ * −12.1%. Requiring the midpoint to clear a SEPARATE, shallower floor fires on 16 of
+ * 25 and defers 9 whose median realized was −7.1% and median mid −6.2% — i.e. it
+ * removes the phantom triggers and keeps every deep one.
+ *
+ * DEFAULT OFF. Enabling it is a real risk change: it stops selling positions the bot
+ * sells today. The n above is 25 intraday stops over one month, enough to establish
+ * the measurement bias and nowhere near enough to price the tail of holding on.
+ *
+ * SCOPE: the intraday floor only. The EOD floor (−10%) is deliberately untouched —
+ * n=9 there, its floor is shallow enough that the same gap means something different,
+ * and deferring an exit minutes from the close is a materially worse trade than
+ * deferring one at 9am.
+ */
+export function isStopLossMidConfirmEnabled(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM ?? false);
+}
+
+/**
+ * STRATEGY_STOP_LOSS_MID_CONFIRM_PCT — how far under water the MIDPOINT must also be
+ * before the intraday bid stop is allowed to fire. Integer percent, same convention
+ * as the floors above (`20` ⇒ mid return must be <= −20%).
+ *
+ * Clamped to the intraday floor: a confirmation floor deeper than the bid floor would
+ * make the bid trigger dead weight and silently turn this into a pure mid stop at a
+ * floor nobody wrote down.
+ */
+export function getStopLossMidConfirmFloor(intradayFloor: number): number {
+  const raw = process.env.STRATEGY_STOP_LOSS_MID_CONFIRM_PCT?.trim();
+  const parsed = raw ? Number(raw) / 100 : DEFAULT_STOP_LOSS_MID_CONFIRM_FLOOR;
+  const floor =
+    Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : DEFAULT_STOP_LOSS_MID_CONFIRM_FLOOR;
+  return Math.min(floor, intradayFloor);
+}
+
+/**
+ * Midpoint return vs cost basis, or null when no honest midpoint exists.
+ *
+ * Every null case FAILS TOWARD TODAY'S BEHAVIOUR (the stop fires): a one-sided quote
+ * has no midpoint, a crossed quote's "midpoint" is below the bid and would defer a
+ * stop on arithmetic rather than on evidence, and a position with no cost basis has a
+ * meaningless return on any basis. The confirmation may only ever SUPPRESS a trigger
+ * on a quote good enough to argue with.
+ */
+function hasArguableQuote(metrics: PositionMetrics): boolean {
+  const { currentBidPrice, currentAskPrice, weightedAverageFill } = metrics;
+  // ask >= bid > 0 subsumes "ask is present"; a crossed or one-sided book fails it.
+  return weightedAverageFill > 0 && currentBidPrice > 0 && currentAskPrice >= currentBidPrice;
+}
+
+function getMidReturn(metrics: PositionMetrics): number | null {
+  if (!hasArguableQuote(metrics)) return null;
+  const { currentBidPrice, currentAskPrice, weightedAverageFill } = metrics;
+  const midpoint = (currentBidPrice + currentAskPrice) / 2;
+  return (midpoint - weightedAverageFill) / weightedAverageFill;
+}
+
+interface StopLossMidConfirmation {
+  defer: boolean;
+  midFloor: number;
+  midReturn?: number;
+}
+
+/** Should a bid trigger that has already cleared `intradayFloor` be held back? */
+function evaluateStopLossMidConfirmation(
+  metrics: PositionMetrics,
+  intradayFloor: number,
+): StopLossMidConfirmation {
+  const midFloor = getStopLossMidConfirmFloor(intradayFloor);
+  if (!isStopLossMidConfirmEnabled()) {
+    return { defer: false, midFloor };
+  }
+
+  const midReturn = getMidReturn(metrics);
+  if (midReturn == null) {
+    return { defer: false, midFloor };
+  }
+
+  return { defer: midReturn > -midFloor, midFloor, midReturn };
+}
+
+/**
+ * The intraday floor's verdict once the BID trigger has already cleared. Split out
+ * of the engine so the deferral branch is readable next to the close it replaces.
+ */
+function resolveIntradayStop(
+  metrics: PositionMetrics,
+  currentReturn: number,
+  intradayFloor: number,
+): ExecutionStrategy {
+  const midConfirmation = evaluateStopLossMidConfirmation(metrics, intradayFloor);
+  if (midConfirmation.defer) {
+    // Hold, and suppress adds while holding. Falling through to a plain
+    // MANAGE_ALLOCATION would let the allocator average down on the same quote
+    // the stop was just told not to trust — the honest reading of a disputed
+    // quote is "do nothing", not "do the opposite".
+    return {
+      action: "MANAGE_ALLOCATION",
+      reason: `Stop-loss deferred by mid confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% but mid ${((midConfirmation.midReturn ?? 0) * 100).toFixed(2)}% > -${(midConfirmation.midFloor * 100).toFixed(0)}%) - holding, no adds`,
+      suppressAdds: true,
+    };
+  }
+  return {
+    action: "CLOSE_POSITION",
+    reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered`,
+    isUrgentClose: true,
+  };
 }
 
 function getScheduleTailPoints(
@@ -248,11 +390,7 @@ export function evaluateTradingStrategy(
   // Absolute Risk Floor Check
   const intradayFloor = getIntradayStopLossFloor();
   if (timeInMinutes < accumulationCutoffMinute && currentReturn <= -intradayFloor) {
-    return {
-      action: "CLOSE_POSITION",
-      reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered`,
-      isUrgentClose: true
-    };
+    return resolveIntradayStop(metrics, currentReturn, intradayFloor);
   }
 
   // 4. BLOCK ALL NEW ACCUMULATION PAST THE ACCOUNT-SPECIFIC CUTOFF
