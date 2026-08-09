@@ -38,7 +38,11 @@ export interface DebugSecretExecutionTargetPayload {
     goodBooleanScore: number;
     thesisMax: number;
     booleanSurplusPct: number;
-    wouldSeedMargin: boolean;
+    // Renamed from `wouldSeedMargin` 2026-08-08: the full-feed-thesis predicate
+    // stopped being the margin auto-seed decision when that gate was removed
+    // (see evaluateMarginSeedThesisGate), and a debug surface that answers a
+    // question it is no longer being asked is worse than no answer.
+    fullFeedThesis: boolean;
     positionGate: PositionGateResult;
   } | null;
   symbol: string;
@@ -82,7 +86,7 @@ export function buildDebugSecretExecutionTargetPayload(
         goodBooleanScore: countGoodBooleans(secretPosition),
         thesisMax: THESIS_MAX,
         booleanSurplusPct: getBooleanSurplusPct(countGoodBooleans(secretPosition)),
-        wouldSeedMargin: shouldSeedMarginFromBooleans(secretPosition),
+        fullFeedThesis: shouldSeedMarginFromBooleans(secretPosition),
         positionGate: computePositionGate({
           crossAccountAskReturnFraction: null,
           secretPosition,

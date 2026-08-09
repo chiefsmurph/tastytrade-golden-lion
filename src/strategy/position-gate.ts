@@ -270,10 +270,18 @@ export function countGoodBooleans(position: SecretSourcePosition | undefined): n
   return 0;
 }
 
-// Margin seed — the highest-conviction action, so the bar is "everything
-// passing": thesisCount >= thesisMax (thesisMax is in the payload for exactly
-// this; today that's 4/4, and the bar tracks the feed if it grows its flag
-// set). Missing/invalid rollup = no seed — unknown thesis is not conviction.
+// "Everything passing" on the FEED's automated rollup: thesisCount >= thesisMax
+// (thesisMax is in the payload for exactly this; today that's 4/4, and the bar
+// tracks the feed if it grows its flag set). Missing/invalid rollup = false —
+// unknown thesis is not conviction.
+//
+// NOTE (2026-08-08): this is no longer a *block* on the feed-driven margin
+// auto-seed — that gate measured backwards and was removed (see
+// evaluateMarginSeedThesisGate in ~/strategy/secret/secret-auto-seed). Two live
+// consumers remain, and neither hard-blocks on it alone: getSeedDecision uses
+// it as the FULL-thesis leg of an OR (`fullFeedThesis || manualScore >= bar`),
+// and the auto-seed path records it into the sticky day memory that now only
+// classifies the new relief/pass log lines.
 export function shouldSeedMarginFromBooleans(
   position: SecretSourcePosition | undefined,
 ): boolean {
