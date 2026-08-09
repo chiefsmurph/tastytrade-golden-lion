@@ -24,8 +24,16 @@ one-way dependencies `bot → strategy → core`:
 - Code-health gate: `fallow` runs via `.githooks/pre-commit` and `.claude/hooks/fallow-gate.sh`.
   A **fail verdict blocks `git commit` and `git push`.** New findings block; inherited ones don't.
   Don't add `fallow-ignore` without an explanatory comment.
+- **Run `npm run test:coverage` before committing.** `.fallowrc.json` reads coverage from
+  `coverage/coverage-final.json`, which is **gitignored** — a fresh clone or worktree has none, so
+  fallow falls back to `"coverage_source":"estimated"` (0% assumed) and CRAP = `CC²·(1−cov)³+CC`
+  inflates into blocking findings on well-tested code. On any `"exceeded":"crap"` finding, check
+  `coverage_source` *before* touching the code: `"estimated"` means the score is an artifact, not
+  a verdict. Note the gate blocks the whole shell command, so generate coverage in a separate
+  invocation from the commit.
 - `npm test && npm run typecheck` must pass before any commit. Report the exact failing
   command and root cause if not — never claim a pass from historical output or source test counts.
+  **State the timezone with any result** — see non-negotiable 7.
 
 ## Permission tiers
 
@@ -48,7 +56,8 @@ data; treat implemented code as promoted to live.
 | Task touches…                         | Read first                                              |
 |---------------------------------------|---------------------------------------------------------|
 | `src/strategy/` or `src/bot/actions/` | `docs/STRATEGY.v2.md` (authoritative strategy reference) |
-| Ops, PM2, crash-loops, logs, deploy   | `docs/OPERATIONS.md`                                     |
+| Ops, PM2, crash-loops, logs, deploy   | `docs/OPERATIONS.md` (deploy runbook + rollback)          |
+| Writing or fixing any test            | `src/bot/tests/test-clock.ts` (why fixtures must pin time)|
 | Env vars / tuning                     | `.env.example` (closest to code) + README env list      |
 | Anything else                         | `README.md`, then `CLAUDE.md`                            |
 
@@ -65,9 +74,22 @@ If two sources disagree, say so in your reply and fix the stale one in the same 
    `BOT_DO_NOT_TOUCH_GROUPS` needs the double colon or it silently no-ops.
 4. Never `pm2 kill` — it takes down every app the shared daemon manages, not just this one.
    See `docs/OPERATIONS.md`; prefer `pm2 delete tastytrade-silver-lynx` + start for this app alone.
-5. Config resolves via `readEnvPct` / `readEnvInt` / `toBooleanFlag`; a present-but-blank env
-   var means "use the in-code default." Never `parseInt(x ?? "d")` — it NaNs on blank.
-6. Update the docs in the same commit as the code they describe.
+5. Config resolves via `readEnvPct` / `readEnvInt` / `readEnvBool` / `toBooleanFlag`; a
+   present-but-blank env var means "use the in-code default." Never `parseInt(x ?? "d")` — it
+   NaNs on blank. For a **default-true** flag never write `toBooleanFlag(process.env.X ?? true)`:
+   `??` only fires on null/undefined, so a blank `X=` reaches `toBooleanFlag("")` and reads as
+   **false**, silently shipping the feature off while the code says it's on. Use
+   `readEnvBool(key, fallback)`.
+6. Update the docs in the same commit as the code they describe. **The docs are load-bearing:**
+   `STRATEGY.v2 §6d` once specified the stop-persistence gate in *evaluations* rather than
+   *cycles*, the code implemented that faithfully, and the feature was a no-op that passed 605
+   tests. When something measures as doing nothing, read its spec before its implementation.
+7. **Tests must pin the clock.** The engine reads time-of-day off the **local** clock
+   (`getTimeInMinutes`, `getMorningSpreadThresholdPct`, `isRegularSessionByLocalClock`), so a
+   fixture built from a `...Z` literal or a bare `new Date()` makes the suite's verdict a function
+   of where and when it runs. Use `src/bot/tests/test-clock.ts`; one time base per fixture. Verify
+   at more than one `TZ`, and judge a change by **diffing failing sets at the same TZ** — never by
+   an absolute pass count.
 
 When sources conflict on a safety question, stop the live-mutating work, report it, and use
 the stricter interpretation until the owner reconciles it.

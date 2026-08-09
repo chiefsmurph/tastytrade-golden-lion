@@ -74,6 +74,52 @@ The point: nearly every open strategy item in [improvements/STATUS.md](improveme
 14. Re-read the daily one-liners from step 5 — recurring "weird" notes are the discovery backlog for the next improvements pass.
 15. Reconcile: STATUS.md AFTER-MONDAY items whose data question is now answered move to "build"; anything two weeks of data didn't touch probably wasn't worth tracking — cut or demote it.
 
+## Deploy (sequence verified 2026-08-09)
+
+Markets closed is the right time — it buys a full session to watch the boot before the next open.
+Run from a shell where `node -v` says v24 (see the node-version gotcha below).
+
+```bash
+ssh contabo-vps
+cd ~/tastytrade-silver-lynx
+git rev-parse HEAD          # WRITE THIS DOWN — it is the rollback point
+git pull --ff-only
+npm run build               # esbuild, ~80ms. NEVER `npm install` here.
+pm2 restart tastytrade-silver-lynx --update-env
+```
+
+**Chain the steps so a failed build can never reach the restart** (`pull && build && restart`).
+A broken build that restarts anyway leaves a *worse* state than not deploying at all.
+
+**Never `npm install` on the server** — it aborts the next pull. A dependency change is its own
+deliberate, verified event, not a side effect of a deploy.
+
+### Verify — a green CI run is NOT evidence of a deploy
+
+Check **both**; either alone can lie:
+
+| Check | Command | Why |
+|---|---|---|
+| HEAD moved | `git log --oneline -1` | a CI "deploy" can silently not land |
+| Process restarted | `pm2 list` → uptime ~0s | a pull without a restart leaves the OLD code running |
+
+Then confirm it actually booted:
+
+- ⚠️ **Log filenames carry the pm2 id**: `~/.pm2/logs/tastytrade-silver-lynx-out-9.log` and
+  `-error-9.log`. The plain `tastytrade-silver-lynx-out.log` *also exists and is empty*, so tailing
+  it reads as "the bot produced no output" on a perfectly healthy boot. Check the id-suffixed file.
+- A clean boot ends with the full IPC command roster, then `[secret] socket connected`.
+- Compare the **error log's last-write time** to the restart time. Entries older than the restart
+  are pre-existing, not new breakage — `ls -lt ~/.pm2/logs/` makes this obvious at a glance.
+- `startup-config.ts` warns on obsolete env names; **no warning block = no config drift**.
+
+### Rollback
+
+```bash
+cd ~/tastytrade-silver-lynx
+git reset --hard <pre-deploy-sha> && npm run build && pm2 restart tastytrade-silver-lynx
+```
+
 ## Server / pm2 gotchas (learned 2026-07-05, the hard way)
 
 The deploy box runs **multiple pm2 apps under one daemon** — silver-lynx is not alone. Rules that follow from that:
