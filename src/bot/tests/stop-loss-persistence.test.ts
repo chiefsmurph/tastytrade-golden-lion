@@ -71,8 +71,10 @@ const DEEP_BID_SHALLOW_MID: Quote = { weightedAverageFill: 1.0, bid: 0.5, ask: 1
 // bid -60% / mid -55%: both sides of the book agree the contract has collapsed.
 const COLLAPSE: Quote = { weightedAverageFill: 1.0, bid: 0.4, ask: 0.5 };
 
-const OPENING_CYCLE = { priorConsecutiveTriggers: 0 };
-const ONE_PRIOR = { priorConsecutiveTriggers: 1 };
+// Counts are INCLUSIVE of the cycle being evaluated (see StopPersistenceContext),
+// so a position's opening cycle is 1 and "one prior cycle plus this one" is 2.
+const OPENING_CYCLE = { observedConsecutiveCycles: 1 };
+const ONE_PRIOR = { observedConsecutiveCycles: 2 };
 
 test("no persistence context ⇒ the gate is inert (execution re-check must not undo a confirmed stop)", () => {
   withEnv(DEFAULTS, () => {
@@ -161,7 +163,7 @@ test("STRATEGY_STOP_LOSS_PERSIST_CYCLES=3 needs three, and blank/invalid falls b
     );
     assert.equal(
       evaluateTradingStrategy(metricsFor(REAL_STOP), "cash", undefined, {
-        priorConsecutiveTriggers: 2,
+        observedConsecutiveCycles: 3,
       }).action,
       "CLOSE_POSITION",
     );

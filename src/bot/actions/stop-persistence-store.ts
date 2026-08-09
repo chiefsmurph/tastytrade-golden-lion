@@ -59,14 +59,34 @@ function getStreakWindowMs(): number {
 /**
  * Minimum spacing between two observations that may ADVANCE the streak.
  *
- * getPositionEvaluations is called several times inside one cycle (run-cycle
- * context, the seeding pass, the allocation budget), and each call re-evaluates
+ * getPositionEvaluations is called 5-6 times inside one cycle (run-cycle context
+ * x3, the seeding pass x2, the allocation budget), and each call re-evaluates
  * every group. Without this, a single cycle would satisfy a 2-cycle requirement
  * on its own and the gate would be a no-op. Repeat observations inside the window
  * re-affirm the existing streak without incrementing it.
  */
 function getStreakAdvanceMinMs(): number {
   return getRunIntervalMs() / 2;
+}
+
+/**
+ * Does `row` already record the cycle being evaluated right now, rather than an
+ * earlier one?
+ *
+ * This is the ONE definition of "same cycle", and it is deliberately shared by
+ * both sides of the counter:
+ *   - the WRITE (nextRow) must not advance the streak for a repeat observation;
+ *   - the READ (getObservedStopCycles) must not count this cycle a second time.
+ *
+ * They were allowed to disagree once already, and it cost the whole feature: the
+ * write debounced correctly and held the streak at 1, while the consumer added 1
+ * unconditionally, so evaluation #2 of the very same cycle reached "2 of 2" and
+ * the stop fired on the single quote persistence exists to reject. The gate
+ * delayed by one EVALUATION, not by one CYCLE. Keep both callers on this one
+ * predicate.
+ */
+function isSameCycleAsRow(row: StopStreakRow, now: number): boolean {
+  return now - row.atMs < getStreakAdvanceMinMs();
 }
 
 function keyFor(accountType: StrategyAccountType, groupKey: string): string {
@@ -129,10 +149,21 @@ function isUsableRow(
 }
 
 /**
- * Consecutive prior evaluations where this group's stop trigger held, or 0 when
- * there is no usable history (fresh group, re-entry, stale row, unreadable store).
+ * How many consecutive DISTINCT cycles this group's stop trigger will have held
+ * once the evaluation happening at `now` is counted — i.e. the answer is already
+ * INCLUSIVE of the current cycle, and is never less than 1.
+ *
+ * The inclusiveness is the whole point of the signature. Handing the caller a
+ * "prior" count invites `prior + 1`, and that is only correct on the FIRST
+ * evaluation of a cycle; on the 2nd through 6th it counts the same cycle twice.
+ * Only the store knows which of those it is (it holds `atMs`), so the store does
+ * the arithmetic and the consumer does none.
+ *
+ * Returns 1 when there is no usable history — a fresh group, a re-entry at a new
+ * cost basis, a row from before a gap, or an unreadable store. That is the safe
+ * direction: 1 defers a 2-cycle stop rather than firing it early.
  */
-export async function getStopStreak(
+export async function getObservedStopCycles(
   accountType: StrategyAccountType,
   groupKey: string,
   currentWaf: number,
@@ -141,10 +172,16 @@ export async function getStopStreak(
   try {
     const data = await readStore();
     const row = data[keyFor(accountType, groupKey)];
-    if (!isUsableRow(row, currentWaf, now)) return 0;
-    return Math.max(0, Number(row.streak) || 0);
+    if (!isUsableRow(row, currentWaf, now)) return 1;
+    const recordedCycles = Math.max(0, Math.trunc(Number(row.streak)) || 0);
+    // Already counted this cycle (a repeat evaluation) => the recorded count IS
+    // the observed count. A genuinely earlier cycle => this one is the next.
+    return Math.max(
+      1,
+      isSameCycleAsRow(row, now) ? recordedCycles : recordedCycles + 1,
+    );
   } catch {
-    return 0;
+    return 1;
   }
 }
 
@@ -157,7 +194,7 @@ function nextRow(
 ): StopStreakRow {
   // Re-affirmation inside the same cycle keeps BOTH the streak and its timestamp,
   // so the next real cycle is still measured from the first sighting.
-  if (prior && now - prior.atMs < getStreakAdvanceMinMs()) {
+  if (prior && isSameCycleAsRow(prior, now)) {
     return { ...prior, waf };
   }
   return {

@@ -293,7 +293,7 @@ still read on the bid — deliberately out of scope.
 
 `STRATEGY_STOP_LOSS_PERSIST_CYCLES` (**default 2**; `1` restores fire-on-the-first-
 print) requires the gate-4 trigger — bid floor cleared *and* midpoint confirmed — to
-hold on the immediately preceding evaluation of the same group before it closes.
+hold on the immediately preceding **cycle** of the same group before it closes.
 
 **Why.** The bad triggers are single-print artifacts, not descriptions of the
 position. **5 of the 5 stops with full-day quote history fired on ONE cycle out of
@@ -310,7 +310,14 @@ a real stop and removes the artifacts.
   stamped with the cost basis + cycle clock. A streak is ignored when the row is
   older than the streak window (restart / overnight / re-open) or when the cost
   basis has drifted (a re-entry). Repeat evaluations *inside* one cycle re-affirm
-  without advancing — `getPositionEvaluations` runs several times per cycle.
+  without advancing — `getPositionEvaluations` runs 5-6 times per cycle
+  (run-cycle-context ×3, run-cycle-seed ×2, allocation-budget). Both sides of the
+  counter enforce that: the write refuses to advance a streak twice inside
+  `getStreakAdvanceMinMs`, and the read (`getObservedStopCycles`) returns a count
+  that already INCLUDES the current cycle, so no caller can reconstruct it with a
+  `+ 1` and count the same cycle twice. They share one `isSameCycleAsRow`
+  predicate deliberately — when they disagreed, the gate delayed by one
+  *evaluation* rather than one cycle and the whole feature was a no-op.
 - **Reset** is immediate and total: the first evaluation where the trigger does not
   hold deletes the row, so confirmation is genuinely consecutive. A mid-confirmation
   deferral does **not** count as held, so a phantom bid cannot arm a stop over time.

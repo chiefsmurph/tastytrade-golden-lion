@@ -6,7 +6,7 @@ import * as path from "path";
 
 import {
   clearStopStreak,
-  getStopStreak,
+  getObservedStopCycles,
   recordStopTrigger,
 } from "~/bot/actions/stop-persistence-store";
 
@@ -14,6 +14,11 @@ import {
 // temp BOT_DATA_DIR rather than a mocked fs, because every bug this store can have
 // is a bug about what actually landed on disk: a leaked streak fires a stop a cycle
 // early, a dropped one holds a real stop open.
+//
+// getObservedStopCycles is INCLUSIVE of the cycle being evaluated, so a fresh group
+// reads 1 (this cycle), not 0. Every read below is written in the order production
+// uses — observe, then record — because the ordering is what makes "has this cycle
+// already been counted?" answerable at all.
 
 const CYCLE_MS = 4 * 60 * 1000;
 const T0 = Date.UTC(2026, 7, 8, 16, 30, 0);
@@ -41,22 +46,26 @@ async function withStore<T>(run: () => Promise<T>): Promise<T> {
 test("a triggering group's streak grows one per cycle and resets the moment it stops", async () => {
   await withStore(async () => {
     const group = "CLSK::call";
-    assert.equal(await getStopStreak("cash", group, 1.17, T0), 0, "fresh group");
+    assert.equal(
+      await getObservedStopCycles("cash", group, 1.17, T0),
+      1,
+      "a fresh group is on cycle 1 of its own streak, not 0",
+    );
 
     await recordStopTrigger("cash", group, true, 1.17, T0);
-    assert.equal(await getStopStreak("cash", group, 1.17, T0 + CYCLE_MS), 1);
+    assert.equal(await getObservedStopCycles("cash", group, 1.17, T0 + CYCLE_MS), 2);
 
     await recordStopTrigger("cash", group, true, 1.17, T0 + CYCLE_MS);
-    assert.equal(await getStopStreak("cash", group, 1.17, T0 + 2 * CYCLE_MS), 2);
+    assert.equal(await getObservedStopCycles("cash", group, 1.17, T0 + 2 * CYCLE_MS), 3);
 
     // The trigger stops holding (the position recovered) — start over, not decay.
     await recordStopTrigger("cash", group, false, 1.17, T0 + 2 * CYCLE_MS);
-    assert.equal(await getStopStreak("cash", group, 1.17, T0 + 3 * CYCLE_MS), 0);
+    assert.equal(await getObservedStopCycles("cash", group, 1.17, T0 + 3 * CYCLE_MS), 1);
 
     await recordStopTrigger("cash", group, true, 1.17, T0 + 3 * CYCLE_MS);
     assert.equal(
-      await getStopStreak("cash", group, 1.17, T0 + 4 * CYCLE_MS),
-      1,
+      await getObservedStopCycles("cash", group, 1.17, T0 + 4 * CYCLE_MS),
+      2,
       "a re-triggered stop starts from one, not from where it left off",
     );
   });
@@ -65,18 +74,36 @@ test("a triggering group's streak grows one per cycle and resets the moment it s
 test("repeat evaluations inside one cycle re-affirm without advancing the streak", async () => {
   await withStore(async () => {
     const group = "CLSK::call";
-    // getPositionEvaluations runs several times per cycle (run-cycle context, the
-    // seeding pass, the allocation budget). If each one counted, a single cycle
+    // getPositionEvaluations runs 5-6 times per cycle (run-cycle context x3, the
+    // seeding pass x2, the allocation budget). If each one counted, a single cycle
     // would satisfy a 2-cycle requirement on its own.
-    await recordStopTrigger("cash", group, true, 1.17, T0);
-    await recordStopTrigger("cash", group, true, 1.17, T0 + 1_000);
-    await recordStopTrigger("cash", group, true, 1.17, T0 + 30_000);
-    assert.equal(await getStopStreak("cash", group, 1.17, T0 + 30_000), 1);
+    //
+    // REGRESSION: the write side always debounced correctly, but the read side
+    // returned a "prior" that the consumer then incremented — so evaluation #2 of
+    // one cycle read 1 and computed 2, and a 2-cycle stop fired inside a single
+    // cycle on a single quote. Both sides are asserted here, in production order.
+    for (const [label, at] of [
+      ["evaluation #1", T0],
+      ["evaluation #2", T0 + 1_000],
+      ["evaluation #3", T0 + 30_000],
+    ] as Array<[string, number]>) {
+      assert.equal(
+        await getObservedStopCycles("cash", group, 1.17, at),
+        1,
+        `${label} of the SAME cycle must not count that cycle again`,
+      );
+      await recordStopTrigger("cash", group, true, 1.17, at);
+    }
 
     // ...and the next real cycle is still measured from the FIRST sighting, so the
     // re-affirmations neither advance nor postpone it.
+    assert.equal(
+      await getObservedStopCycles("cash", group, 1.17, T0 + CYCLE_MS),
+      2,
+      "the next distinct cycle is the second one, and only the second",
+    );
     await recordStopTrigger("cash", group, true, 1.17, T0 + CYCLE_MS);
-    assert.equal(await getStopStreak("cash", group, 1.17, T0 + CYCLE_MS), 2);
+    assert.equal(await getObservedStopCycles("cash", group, 1.17, T0 + CYCLE_MS), 2);
   });
 });
 
@@ -86,17 +113,17 @@ test("streaks are per account — one book's quote noise cannot arm the other's 
     await recordStopTrigger("cash", group, true, 0.52, T0);
     await recordStopTrigger("cash", group, true, 0.52, T0 + CYCLE_MS);
 
-    assert.equal(await getStopStreak("cash", group, 0.52, T0 + 2 * CYCLE_MS), 2);
+    assert.equal(await getObservedStopCycles("cash", group, 0.52, T0 + 2 * CYCLE_MS), 3);
     assert.equal(
-      await getStopStreak("margin", group, 0.52, T0 + 2 * CYCLE_MS),
-      0,
-      "margin holds the same underlying and must start from zero",
+      await getObservedStopCycles("margin", group, 0.52, T0 + 2 * CYCLE_MS),
+      1,
+      "margin holds the same underlying and must start from its own first cycle",
     );
 
     // And the reverse: margin's own streak does not disturb cash's.
     await recordStopTrigger("margin", group, true, 0.52, T0 + 2 * CYCLE_MS);
-    assert.equal(await getStopStreak("margin", group, 0.52, T0 + 3 * CYCLE_MS), 1);
-    assert.equal(await getStopStreak("cash", group, 0.52, T0 + 3 * CYCLE_MS), 2);
+    assert.equal(await getObservedStopCycles("margin", group, 0.52, T0 + 3 * CYCLE_MS), 2);
+    assert.equal(await getObservedStopCycles("cash", group, 0.52, T0 + 3 * CYCLE_MS), 3);
   });
 });
 
@@ -104,15 +131,15 @@ test("a re-entered position does not inherit the old one's streak (cost-basis gu
   await withStore(async () => {
     const group = "SG::call";
     await recordStopTrigger("cash", group, true, 1.23, T0);
-    assert.equal(await getStopStreak("cash", group, 1.23, T0 + CYCLE_MS), 1);
+    assert.equal(await getObservedStopCycles("cash", group, 1.23, T0 + CYCLE_MS), 2);
     assert.equal(
-      await getStopStreak("cash", group, 0.80, T0 + CYCLE_MS),
-      0,
+      await getObservedStopCycles("cash", group, 0.80, T0 + CYCLE_MS),
+      1,
       "a materially different cost basis is a different position",
     );
     // Recording against the new basis starts a fresh streak rather than extending.
     await recordStopTrigger("cash", group, true, 0.80, T0 + CYCLE_MS);
-    assert.equal(await getStopStreak("cash", group, 0.80, T0 + 2 * CYCLE_MS), 1);
+    assert.equal(await getObservedStopCycles("cash", group, 0.80, T0 + 2 * CYCLE_MS), 2);
   });
 });
 
@@ -120,10 +147,10 @@ test("a streak from before a gap (restart / overnight) is not the previous cycle
   await withStore(async () => {
     const group = "AUR::call";
     await recordStopTrigger("cash", group, true, 1.0, T0);
-    assert.equal(await getStopStreak("cash", group, 1.0, T0 + 2 * CYCLE_MS), 1);
+    assert.equal(await getObservedStopCycles("cash", group, 1.0, T0 + 2 * CYCLE_MS), 2);
     assert.equal(
-      await getStopStreak("cash", group, 1.0, T0 + 20 * 60 * 60 * 1000),
-      0,
+      await getObservedStopCycles("cash", group, 1.0, T0 + 20 * 60 * 60 * 1000),
+      1,
       "yesterday's trigger cannot confirm today's",
     );
   });
@@ -132,10 +159,10 @@ test("a streak from before a gap (restart / overnight) is not the previous cycle
 test("group keys are normalized, and clearStopStreak drops the row", async () => {
   await withStore(async () => {
     await recordStopTrigger("cash", "  iova::call  ", true, 0.53, T0);
-    assert.equal(await getStopStreak("cash", "IOVA::CALL", 0.53, T0 + CYCLE_MS), 1);
+    assert.equal(await getObservedStopCycles("cash", "IOVA::CALL", 0.53, T0 + CYCLE_MS), 2);
 
     await clearStopStreak("cash", "IOVA::call");
-    assert.equal(await getStopStreak("cash", "IOVA::call", 0.53, T0 + CYCLE_MS), 0);
+    assert.equal(await getObservedStopCycles("cash", "IOVA::call", 0.53, T0 + CYCLE_MS), 1);
   });
 });
 
@@ -149,8 +176,8 @@ test("concurrent writes across the cycle's groups all survive", async () => {
     );
     for (const group of groups) {
       assert.equal(
-        await getStopStreak("cash", group, 1.0, T0 + CYCLE_MS),
-        1,
+        await getObservedStopCycles("cash", group, 1.0, T0 + CYCLE_MS),
+        2,
         `${group} was lost to a racing write`,
       );
     }

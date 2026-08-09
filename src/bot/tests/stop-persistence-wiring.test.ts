@@ -84,6 +84,21 @@ const STOPPING = { ask: 0.78, bid: 0.7 };
 const RECOVERED = { ask: 1.2, bid: 1.1 };
 const WAF = 1.17;
 
+/**
+ * One evaluation of the CLSK group at the given cycle index. Asserts the group
+ * evaluated at all, so a null never reaches an assertion as a silent `undefined`
+ * that happens not to equal "CLOSE_POSITION".
+ */
+async function evaluateAtCycle(cycleIndex: number, accountType = "cash" as const) {
+  const evaluation = await evaluatePositionGroup(
+    [positionFor("CLSK", WAF)],
+    cycleTime(cycleIndex),
+    accountType,
+  );
+  assert.ok(evaluation, `cycle ${cycleIndex} produced no evaluation at all`);
+  return evaluation.strategy;
+}
+
 // The premise every case below rests on: the engine's 10-minute cooldown check
 // runs BEFORE the stop floor, so if `updated-at` and the cycle clock are not on
 // the same time base these tests stop measuring persistence and start measuring
@@ -176,6 +191,82 @@ test("a re-entry at a different cost basis starts over", async () => {
   });
 });
 
+// THE regression test for the intra-cycle double-count.
+//
+// getPositionEvaluations runs 5-6 times per cycle — run-cycle-context.ts:339 (the
+// one that feeds the executor), :403, :420, run-cycle-seed.ts:159, :294 and
+// allocation-budget.ts:41 — and every one of them re-runs this gate on every
+// group. The store's write side always debounced correctly and held the streak at
+// 1, but the consumer added 1 to it unconditionally, so evaluation #2 of a single
+// cycle read 1, computed "2 of 2", and closed. The gate delayed by one EVALUATION
+// instead of one CYCLE, i.e. it fired on exactly the single noisy print it exists
+// to reject, and it did so while passing 605 tests.
+test("repeat evaluations WITHIN one cycle never fire the stop", async () => {
+  await withHarness(async (setQuote) => {
+    setQuote(STOPPING.bid, STOPPING.ask);
+
+    for (const attempt of [1, 2, 3, 4, 5, 6]) {
+      const strategy = await evaluateAtCycle(0);
+      // All three have to hold on EVERY repeat, not just the first. suppressAdds,
+      // or the allocator averages into a position that is mid-stop (and moves the
+      // cost basis the store's re-entry guard keys off). stopTriggerHeld, or
+      // recordStopTrigger is called with held=false and deletes the row, wiping
+      // the streak from inside the very cycle that is building it.
+      assert.deepEqual(
+        {
+          action: strategy.action,
+          stopTriggerHeld: strategy.stopTriggerHeld,
+          suppressAdds: strategy.suppressAdds,
+        },
+        {
+          action: "MANAGE_ALLOCATION",
+          stopTriggerHeld: true,
+          suppressAdds: true,
+        },
+        `evaluation ${attempt} of the SAME cycle must hold, keep suppressing adds, and keep re-affirming the trigger`,
+      );
+    }
+
+    // ...and the next DISTINCT cycle still closes. The fix must delay the stop by
+    // one cycle, not disable it.
+    assert.equal(
+      (await evaluateAtCycle(1)).action,
+      "CLOSE_POSITION",
+      "a genuine 2-cycle stop must still fire",
+    );
+  });
+});
+
+// Six evaluations spread over two cycles are still two cycles.
+const TWO_CYCLES_EVALUATED_THRICE = [0, 0, 0, 1, 1, 1];
+
+test("PERSIST_CYCLES=3 needs three DISTINCT cycles, however often each is evaluated", async () => {
+  const prior = process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES;
+  process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES = "3";
+  try {
+    await withHarness(async (setQuote) => {
+      setQuote(STOPPING.bid, STOPPING.ask);
+
+      for (const [attempt, cycleIndex] of TWO_CYCLES_EVALUATED_THRICE.entries()) {
+        assert.equal(
+          (await evaluateAtCycle(cycleIndex)).action,
+          "MANAGE_ALLOCATION",
+          `evaluation ${attempt + 1} (cycle ${cycleIndex + 1}): 6 evaluations are still 2 cycles`,
+        );
+      }
+
+      assert.equal(
+        (await evaluateAtCycle(2)).action,
+        "CLOSE_POSITION",
+        "the third distinct cycle closes",
+      );
+    });
+  } finally {
+    if (prior === undefined) delete process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES;
+    else process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES = prior;
+  }
+});
+
 test("the streak advances on the CYCLE clock, not the wall clock", async () => {
   // These cycles are 4 minutes apart on the simulated clock but microseconds
   // apart in real time, and the store refuses to advance a streak twice inside
@@ -188,18 +279,16 @@ test("the streak advances on the CYCLE clock, not the wall clock", async () => {
   try {
     await withHarness(async (setQuote) => {
       setQuote(STOPPING.bid, STOPPING.ask);
-      const positions = [positionFor("CLSK", WAF)];
 
       for (const index of [0, 1]) {
         assert.equal(
-          (await evaluatePositionGroup(positions, cycleTime(index), "cash"))?.strategy
-            .action,
+          (await evaluateAtCycle(index)).action,
           "MANAGE_ALLOCATION",
           `cycle ${index + 1} of 3 must still hold`,
         );
       }
       assert.equal(
-        (await evaluatePositionGroup(positions, cycleTime(2), "cash"))?.strategy.action,
+        (await evaluateAtCycle(2)).action,
         "CLOSE_POSITION",
         "the third consecutive cycle closes — if this holds, the streak stopped advancing",
       );

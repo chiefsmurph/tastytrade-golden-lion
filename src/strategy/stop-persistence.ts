@@ -2,7 +2,12 @@ import { readEnvInt } from "~/core/env-utils";
 
 /**
  * Stop-loss PERSISTENCE: the intraday stop must see its trigger hold across N
- * consecutive evaluations of the same position group before it closes.
+ * consecutive CYCLES of the same position group before it closes.
+ *
+ * Cycles, not evaluations — the distinction is the whole feature. One cycle
+ * evaluates every group 5-6 times, so counting evaluations delays a stop by
+ * seconds instead of by a cycle and lets it fire on the single noisy print it
+ * exists to reject.
  *
  * WHY. The stop reads a single instantaneous quote. Over 2026-07-17 → 08-07 the
  * stop family is the entire loss the bot books — stop-loss (n=28) returned
@@ -31,12 +36,19 @@ import { readEnvInt } from "~/core/env-utils";
  */
 export interface StopPersistenceContext {
   /**
-   * How many consecutive IMMEDIATELY-PRECEDING evaluations of this exact group
-   * (same account, same `UNDERLYING::side`, same cost basis) already saw the
-   * stop trigger hold. 0 for a group with no usable history — including a
-   * position on its very first cycle.
+   * How many consecutive DISTINCT CYCLES of this exact group (same account, same
+   * `UNDERLYING::side`, same cost basis) have seen the stop trigger hold,
+   * **including the cycle being evaluated right now**. 1 for a position on its
+   * very first cycle, or with no usable history. Never 0.
+   *
+   * CYCLES, not evaluations. `getPositionEvaluations` re-evaluates every group
+   * 5-6 times per cycle and every one of those re-runs this gate, so this count
+   * has to come from `getObservedStopCycles` — which knows, from the stored
+   * timestamp, whether the current cycle has already been counted. Anything that
+   * reconstructs it here with a `+ 1` is wrong on evaluations 2..n and silently
+   * turns the gate into a one-EVALUATION delay instead of a one-CYCLE one.
    */
-  priorConsecutiveTriggers: number;
+  observedConsecutiveCycles: number;
 }
 
 export interface StopPersistenceVerdict {
@@ -99,7 +111,7 @@ function getStopLossPersistBypassFloor(intradayFloor: number): number {
  * a store, and an active gate there would silently cancel a stop that the cycle
  * had already confirmed.
  *
- * A position on its FIRST cycle has `priorConsecutiveTriggers === 0` and is
+ * A position on its FIRST cycle has `observedConsecutiveCycles === 1` and is
  * therefore deferred. Two stops in the measured window (AUR 2026-08-06, PTON
  * 2026-08-07) fired on their opening cycle with no predecessor at all; firing on
  * cycle 1 with no history is precisely what this gate exists to prevent.
@@ -111,8 +123,13 @@ export function resolveStopPersistence(
   persistence?: StopPersistenceContext,
 ): StopPersistenceVerdict {
   const requiredCycles = getStopLossPersistCycles();
-  const priorTriggers = Math.max(0, persistence?.priorConsecutiveTriggers ?? 0);
-  const observedCycles = priorTriggers + 1;
+  // No `+ 1` here, ever. The count handed in already includes this cycle (see
+  // StopPersistenceContext); adding one would count the current cycle twice on
+  // every repeat evaluation of it, which is the normal case, not the edge case.
+  const observedCycles = Math.max(
+    1,
+    Math.trunc(persistence?.observedConsecutiveCycles ?? 1) || 1,
+  );
   const inert = persistence == null || requiredCycles <= 1;
 
   const bypassFloor = getStopLossPersistBypassFloor(intradayFloor);

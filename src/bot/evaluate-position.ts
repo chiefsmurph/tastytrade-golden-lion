@@ -11,7 +11,10 @@ import {
 import { getScaleOutConfig, type ScaleOutContext } from "~/strategy/scale-out";
 import type { StopPersistenceContext } from "~/strategy/stop-persistence";
 import { isScaled } from "./actions/scale-out-store";
-import { getStopStreak, recordStopTrigger } from "./actions/stop-persistence-store";
+import {
+  getObservedStopCycles,
+  recordStopTrigger,
+} from "./actions/stop-persistence-store";
 
 export interface PositionQuoteSnapshot {
   position: CurrentPosition;
@@ -227,13 +230,16 @@ export async function evaluatePositionGroup(
   // The streak is stamped with the CYCLE clock, not Date.now(): every caller of
   // getPositionEvaluations passes the cycle's timestamp, and keying off it is what
   // makes "the immediately preceding cycle" mean the same thing to the store as it
-  // does to the engine.
+  // does to the engine. It is also what lets the store tell a repeat evaluation of
+  // THIS cycle apart from a genuinely new one — which it must, because this
+  // function runs 5-6 times per cycle and the count below is inclusive of the
+  // current cycle rather than a "prior" that the caller then increments.
   const cycleMs = currentTime.getTime();
   const stopPersistence: StopPersistenceContext | undefined =
     accountType === "unknown"
       ? undefined
       : {
-          priorConsecutiveTriggers: await getStopStreak(
+          observedConsecutiveCycles: await getObservedStopCycles(
             accountType,
             groupKey,
             metrics.weightedAverageFill,
