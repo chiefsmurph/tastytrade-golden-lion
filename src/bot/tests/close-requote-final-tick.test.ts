@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { evaluateTradingStrategy } from "~/strategy/evaluate-trading-strategy";
 import { closePosition } from "../actions/close-position";
 import type { PositionGroupEvaluation } from "../evaluate-position";
+import { localTimeAt, minutesBefore } from "./test-clock";
 
 // STRATEGY_CLOSE_REQUOTE_BEFORE_FINAL_TICK — re-quote once, immediately before the
 // chase posts its last rung, and price that rung off the live quote.
@@ -20,6 +22,15 @@ import type { PositionGroupEvaluation } from "../evaluate-position";
 
 type PositionOverrides = Record<string, unknown>;
 
+// How long before the cycle each fixture last acted. 45 min clears the strategy's
+// 10-minute cooldown at cycle time; because the anchor day is in the past it also
+// clears it at EXECUTION time, where closePosition re-runs the strategy against
+// `new Date()` (close-position.ts hasStrategyRecoveredAtExecution). A fixture
+// anchored to "today" made that elapsed go negative — or merely small — whenever
+// the suite ran before ~07:26 local, so the re-check answered "still in cooldown ⇒
+// MANAGE_ALLOCATION", the close was skipped, and every ladder below came back empty.
+const MINUTES_SINCE_LAST_ACTION = 45;
+
 function makeEvaluation(opts: {
   action: "CLOSE_POSITION" | "MANAGE_ALLOCATION";
   ask: number;
@@ -31,8 +42,8 @@ function makeEvaluation(opts: {
   underlying: string;
   weightedAverageFill: number;
 }): PositionGroupEvaluation {
-  const currentTime = new Date();
-  currentTime.setHours(opts.hours, opts.minutes, 0, 0);
+  const currentTime = localTimeAt(opts.hours, opts.minutes);
+  const lastActionTime = minutesBefore(currentTime, MINUTES_SINCE_LAST_ACTION);
   const position = {
     symbol: opts.symbol,
     "underlying-symbol": opts.underlying,
@@ -51,7 +62,7 @@ function makeEvaluation(opts: {
         currentAskPrice: opts.ask,
         weightedAverageFill: opts.weightedAverageFill,
         quantityWeight: 100,
-        lastActionTime: new Date(currentTime.getTime() - 45 * 60 * 1000),
+        lastActionTime,
       },
     ],
     metrics: {
@@ -59,7 +70,7 @@ function makeEvaluation(opts: {
       currentAskPrice: opts.ask,
       weightedAverageFill: opts.weightedAverageFill,
       currentTime,
-      lastActionTime: new Date(currentTime.getTime() - 45 * 60 * 1000),
+      lastActionTime,
     },
     strategy: { action: opts.action, reason: "ledger fixture" },
     currentReturn: (opts.bid - opts.weightedAverageFill) / opts.weightedAverageFill,
@@ -85,8 +96,10 @@ const ERIC = {
 // WEN 2026-07-08 cash stop-loss, urgent. Cycle quote 0.900 / 1.150 on a 1.375
 // basis (bid -34.55%); one leg filled 1.10, the other 0.80 — below the quoted bid.
 // A -34.55% bid return re-evaluates to CLOSE_POSITION at every minute of the
-// trading day, so the execution-time re-check (which reads the wall clock) cannot
-// make this case time-dependent.
+// trading day ONCE THE COOLDOWN HAS CLEARED — pinned by the premise test below —
+// so the execution-time re-check cannot make this case time-dependent. Clearing
+// the cooldown at execution time is what MINUTES_SINCE_LAST_ACTION plus a past
+// anchor day buys; that half of the premise is asserted too.
 const WEN = {
   action: "CLOSE_POSITION" as const,
   ask: 1.15,
@@ -191,6 +204,47 @@ async function runChase(opts: {
 // The ladders the engine posts today, off the cycle-start snapshot alone.
 const ERIC_STALE_LADDER = ["0.42", "0.37", "0.35"];
 const WEN_STALE_LADDER = ["1.13", "1.08", "1.02", "0.97", "0.92", "0.90"];
+
+// The premise every WEN ladder below rests on, asserted rather than assumed.
+// closePosition re-runs the strategy at execution time against `new Date()`; if
+// that re-decision were ever MANAGE_ALLOCATION the close would be skipped and the
+// ladder would come back EMPTY — which is exactly how this file used to fail
+// before ~07:26 local. Two independent things have to hold, so both are checked.
+test("premise: WEN's stop re-decides to CLOSE at every minute of the local day", () => {
+  for (let minuteOfDay = 0; minuteOfDay < 24 * 60; minuteOfDay += 1) {
+    const wallClock = localTimeAt(
+      Math.floor(minuteOfDay / 60),
+      minuteOfDay % 60,
+    );
+    const strategy = evaluateTradingStrategy(
+      {
+        currentBidPrice: WEN.bid,
+        currentAskPrice: WEN.ask,
+        weightedAverageFill: WEN.weightedAverageFill,
+        currentTime: wallClock,
+        // any moment already past the cooldown; the second assertion covers the
+        // cooldown itself
+        lastActionTime: minutesBefore(wallClock, MINUTES_SINCE_LAST_ACTION),
+      },
+      "cash",
+    );
+    assert.equal(
+      strategy.action,
+      "CLOSE_POSITION",
+      `WEN must still be a close at ${Math.floor(minuteOfDay / 60)}:${String(minuteOfDay % 60).padStart(2, "0")} — got ${strategy.reason}`,
+    );
+  }
+});
+
+test("premise: the fixture's last action is older than the cooldown at execution time", () => {
+  // The execution-time re-check compares metrics.lastActionTime against the REAL
+  // clock, so the anchor day must sit in the past by more than the 10-min cooldown.
+  const fixtureLastActionMs = makeEvaluation(WEN).metrics.lastActionTime.getTime();
+  assert.ok(
+    Date.now() - fixtureLastActionMs > 10 * 60 * 1000,
+    "the pinned anchor day is no longer in the past — the ladder assertions below would silently go vacuous",
+  );
+});
 
 test("pref absent entirely: the cycle-start ladder, and no quote call at all", async () => {
   // runChase writes an explicit "false"; this covers the var never being set.

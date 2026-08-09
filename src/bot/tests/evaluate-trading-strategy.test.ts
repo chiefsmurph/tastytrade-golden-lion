@@ -7,12 +7,13 @@ import {
   getTimeOfDayExecutionTargets,
   getTimeOfDayExecutionTargetsForPstTime,
 } from "~/strategy/evaluate-trading-strategy";
+import { localTimeAt, minutesBefore } from "./test-clock";
 
 function buildMetricsAtTime(hours: number, minutes: number) {
-  const currentTime = new Date();
-  currentTime.setHours(hours, minutes, 0, 0);
-
-  const lastActionTime = new Date(currentTime.getTime() - 11 * 60 * 1000);
+  // Pinned local wall clock: the engine reads getHours(), and a bare `new Date()`
+  // also drags in today's calendar date — and therefore a DST boundary.
+  const currentTime = localTimeAt(hours, minutes);
+  const lastActionTime = minutesBefore(currentTime, 11);
 
   return {
     currentBidPrice: 1,
@@ -43,9 +44,7 @@ test("getTimeOfDayExecutionTargetsForPstTime rejects invalid HH:mm format", () =
 test("getTimeOfDayExecutionTargetsForPstTime matches clock-based target schedule", () => {
   const fromPstString = getTimeOfDayExecutionTargetsForPstTime("10:14");
 
-  const localClock = new Date();
-  localClock.setHours(10, 14, 0, 0);
-  const fromDateClock = getTimeOfDayExecutionTargets(localClock);
+  const fromDateClock = getTimeOfDayExecutionTargets(localTimeAt(10, 14));
 
   assert.deepEqual(fromPstString, fromDateClock);
 });

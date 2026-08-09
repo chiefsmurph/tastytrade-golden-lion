@@ -22,6 +22,17 @@ import {
   type SprayDeps,
 } from "../actions/spray-buy";
 import { clearSprayStore, getSpray } from "../actions/spray-store";
+import { localTimeAt } from "./test-clock";
+
+// The fake clock's ORIGIN, not just its deltas, is observable: the chase turns
+// `deps.now()` into a Date and reads its LOCAL hour to pick the morning
+// entry-spread ceiling (spray-buy.ts → getMaxEntrySpreadPctForAccountType →
+// getMorningSpreadThresholdPct). Starting at 0 meant epoch, i.e. local 00:00 in
+// UTC and local 16:00 in PT — a 5% ceiling in one place and 30% in the other, so
+// the 1.00/1.20 book below was refused east of UTC+8 and accepted west of it.
+// 10:00 local is past the 08:00 plateau, where the ceiling is the flat 30% these
+// fixtures were written against.
+const CLOCK_ORIGIN_MS = localTimeAt(10, 0).getTime();
 
 // ── A controllable fake broker ──────────────────────────────────────────────
 
@@ -34,7 +45,7 @@ interface FakeOrder {
 }
 
 class FakeBroker {
-  clock = 0;
+  clock = CLOCK_ORIGIN_MS;
   bid = 1.0;
   ask = 1.2;
   orders: FakeOrder[] = [];

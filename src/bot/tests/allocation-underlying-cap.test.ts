@@ -13,8 +13,11 @@ import {
   getMaxUnderlyingContracts,
   getMaxUnderlyingNotional,
 } from "~/strategy/risk-limits";
+import { localTimeAt } from "./test-clock";
 import type { PositionGroupEvaluation } from "../evaluate-position";
 import type { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
+
+const AT_1000 = localTimeAt(10, 0);
 
 // Assign each entry into process.env, deleting keys whose value is undefined.
 function setEnv(entries: Iterable<[string, string | undefined]>): void {
@@ -206,15 +209,18 @@ function buildHolding(
     metrics: {
       currentAskPrice: ask,
       currentBidPrice: bid,
-      currentTime: new Date(),
-      lastActionTime: new Date(),
+      // Pinned weekday mid-morning: the accumulation-cutoff and entry-spread
+      // gates read this clock with getHours(), so `new Date()` made the result
+      // depend on the hour the suite happened to run.
+      currentTime: AT_1000,
+      lastActionTime: AT_1000,
       weightedAverageFill: 1,
     },
     positionSnapshots: [
       {
         currentAskPrice: ask,
         currentBidPrice: bid,
-        lastActionTime: new Date(),
+        lastActionTime: AT_1000,
         position,
         quantityWeight: heldContracts * 100,
         weightedAverageFill: 1,
