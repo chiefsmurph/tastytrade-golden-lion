@@ -38,7 +38,7 @@ Each `runCycle` call (every N minutes during market hours):
 
 ### Key Subsystems
 
-**`src/strategy/evaluate-trading-strategy.ts`** — Core strategy state machine. Blends DTE and exposure targets by time of day. Hard circuit breakers: dynamic profit target (40% → 7%), -30% bid stop loss before cutoff, -10% after cutoff, EOD liquidation for margin. Full schedules and ordering in STRATEGY.v2.md §4 & §6.
+**`src/strategy/evaluate-trading-strategy.ts`** — Core strategy state machine. Blends DTE and exposure targets by time of day. Hard circuit breakers: dynamic profit target (40% → 7%), -30% bid stop loss before cutoff, -10% after cutoff, EOD liquidation for margin. The intraday stop additionally requires the **midpoint to confirm** (§6b) and the trigger to **persist across 2 cycles** (§6d, streak state in `src/bot/actions/stop-persistence-store.ts`); the take-profit can also fire on the **midpoint** (§6c). Full schedules and ordering in STRATEGY.v2.md §4 & §6.
 
 **`src/bot/run-cycle-context.ts`** — Builds the full snapshot before execution: pulls position evaluations, applies secret signals and buy weights, sorts groups by priority.
 

@@ -52,6 +52,24 @@ export function isCostBlockedSeedReason(reason: string | null | undefined): bool
   return reason.startsWith("insufficient effective buying power for seed order");
 }
 
+/**
+ * May this group be averaged into from the OTHER account this cycle?
+ *
+ * `MANAGE_ALLOCATION` alone is not enough. Several strategy paths return
+ * `MANAGE_ALLOCATION` with `suppressAdds` precisely because the group must be held
+ * and not added to — a scaled runner riding its remainder, a stop the midpoint
+ * disputes, and (since 2026-08-08) a stop awaiting its second confirming cycle. A
+ * cross-account seed is an add like any other, and before this check the two seed
+ * passes only looked at `action`, so a group the local allocator was forbidden to
+ * touch could still be averaged into from the far side of the book.
+ */
+export function isSeedEligibleEvaluation(
+  evaluation: PositionGroupEvaluation,
+): boolean {
+  if (evaluation.strategy.action !== "MANAGE_ALLOCATION") return false;
+  return evaluation.strategy.suppressAdds !== true;
+}
+
 function getAskReturnPct(evaluation: PositionGroupEvaluation): number | null {
   const fill = evaluation.metrics.weightedAverageFill;
   if (!(fill > 0)) return null;
@@ -146,7 +164,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
   const results: MarginSeedResult[] = [];
 
   for (const evaluation of cashEvaluations) {
-    if (evaluation.strategy.action !== "MANAGE_ALLOCATION") continue;
+    if (!isSeedEligibleEvaluation(evaluation)) continue;
 
     const side = getGroupSideForPositions(evaluation.positions);
     if (side !== "call" && side !== "put") continue;
@@ -285,7 +303,7 @@ export async function maybeSeedCashAccountFromMarginAccount(
   const results: MarginSeedResult[] = [];
 
   for (const evaluation of marginEvaluations) {
-    if (evaluation.strategy.action !== "MANAGE_ALLOCATION") continue;
+    if (!isSeedEligibleEvaluation(evaluation)) continue;
 
     const side = getGroupSideForPositions(evaluation.positions);
     if (side !== "call" && side !== "put") continue;

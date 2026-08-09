@@ -9,7 +9,12 @@ import {
   StrategyAccountType,
 } from "~/strategy/evaluate-trading-strategy";
 import { getScaleOutConfig, type ScaleOutContext } from "~/strategy/scale-out";
+import type { StopPersistenceContext } from "~/strategy/stop-persistence";
 import { isScaled } from "./actions/scale-out-store";
+import {
+  getObservedStopCycles,
+  recordStopTrigger,
+} from "./actions/stop-persistence-store";
 
 export interface PositionQuoteSnapshot {
   position: CurrentPosition;
@@ -215,7 +220,53 @@ export async function evaluatePositionGroup(
     ? await isScaled(accountType, groupKey, metrics.weightedAverageFill)
     : false;
   const scaleOutContext: ScaleOutContext = { ...scaleConfig, alreadyScaled };
-  const strategy = buildExecutionStrategy(metrics, accountType, scaleOutContext);
+
+  // Stop-loss persistence. The streak is stored per ACCOUNT + group key: cash and
+  // margin regularly hold the same underlying, and a symbol-only key would let one
+  // book's quote noise arm the other book's stop. An "unknown" account type has no
+  // book to key against, so it runs with the gate inert (today's behaviour) rather
+  // than sharing a bucket — same rule the scale-out store follows.
+  //
+  // The streak is stamped with the CYCLE clock, not Date.now(): every caller of
+  // getPositionEvaluations passes the cycle's timestamp, and keying off it is what
+  // makes "the immediately preceding cycle" mean the same thing to the store as it
+  // does to the engine. It is also what lets the store tell a repeat evaluation of
+  // THIS cycle apart from a genuinely new one — which it must, because this
+  // function runs 5-6 times per cycle and the count below is inclusive of the
+  // current cycle rather than a "prior" that the caller then increments.
+  const cycleMs = currentTime.getTime();
+  const stopPersistence: StopPersistenceContext | undefined =
+    accountType === "unknown"
+      ? undefined
+      : {
+          observedConsecutiveCycles: await getObservedStopCycles(
+            accountType,
+            groupKey,
+            metrics.weightedAverageFill,
+            cycleMs,
+          ),
+        };
+
+  const strategy = buildExecutionStrategy(
+    metrics,
+    accountType,
+    scaleOutContext,
+    stopPersistence,
+  );
+
+  if (stopPersistence) {
+    // Advance the streak while the trigger keeps holding, drop it the moment it
+    // stops — including when the group recovers, is closed, or is re-entered (the
+    // store's staleness + cost-basis guards catch the cases this call cannot see).
+    await recordStopTrigger(
+      accountType,
+      groupKey,
+      strategy.stopTriggerHeld === true,
+      metrics.weightedAverageFill,
+      cycleMs,
+    );
+  }
+
   const currentReturn =
     metrics.weightedAverageFill > 0
       ? (metrics.currentBidPrice - metrics.weightedAverageFill) /
