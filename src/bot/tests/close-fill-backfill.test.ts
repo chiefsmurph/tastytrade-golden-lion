@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractFillsFromOrder } from "../get-closed-positions-today";
+import {
+  computeCloseRealizedPnl,
+  extractFillsFromOrder,
+  impliedEntryPrice,
+} from "../get-closed-positions-today";
 
 // REGRESSION — 2026-08-03.
 // run-cycle records close fills from the order PLACEMENT response, which by
@@ -80,4 +84,32 @@ test("partial close prices off the group WAF, not costBasis/closedQty", () => {
   const wrong = (avgFill - wrongEntry) * closedQty * 100;
   assert.equal(Math.round(wrong * 100) / 100, -55);
   assert.notEqual(Math.round(correct * 100) / 100, Math.round(wrong * 100) / 100);
+});
+
+// REGRESSION — 2026-08-08. This reporter carried the same unconditional ×100 as
+// pnl-ledger. Both accounts hold manually-traded EQUITY rows (bare ticker, no
+// OCC suffix); pricing a share round-trip as a 100-share contract inflated it
+// 100× and swamped the day's real options P&L.
+const OCC_SYMBOL = "AAPL  260619C00100000";
+
+test("an option close keeps the ×100 contract multiplier", () => {
+  const pnl = computeCloseRealizedPnl(OCC_SYMBOL, 0.75, 0.65, 1);
+  assert.ok(Math.abs(pnl.realizedPnlDollars - 10) < 1e-9);
+  assert.ok(Math.abs(pnl.realizedPnlPct - 0.1538461) < 1e-6);
+});
+
+test("an equity close is priced per share, not per 100-share contract", () => {
+  const pnl = computeCloseRealizedPnl("SNWV", 4.95, 5.0, 1000);
+  assert.ok(Math.abs(pnl.realizedPnlDollars - -50) < 1e-9);
+  assert.notEqual(Math.round(pnl.realizedPnlDollars), -5000);
+  // The percentage was never wrong — only the dollars.
+  assert.ok(Math.abs(pnl.realizedPnlPct - -0.01) < 1e-9);
+});
+
+test("the legacy cost-basis fallback is multiplier-aware too", () => {
+  // 2 option contracts, $130 basis => $0.65/contract.
+  assert.ok(Math.abs(impliedEntryPrice(OCC_SYMBOL, 130, 2) - 0.65) < 1e-9);
+  // 1,000 shares, $5,000 basis => $5.00/share (the ×100 form gave $0.05).
+  assert.ok(Math.abs(impliedEntryPrice("SNWV", 5000, 1000) - 5) < 1e-9);
+  assert.equal(impliedEntryPrice(OCC_SYMBOL, 130, 0), 0);
 });
