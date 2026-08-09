@@ -2,7 +2,12 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 import { getManagedAccountNumbers } from "~/core/default-account";
-import { getOccExpirationDate, inferOptionSide } from "./actions/order-utils";
+import {
+  getContractMultiplier,
+  getOccExpirationDate,
+  inferOptionSide,
+  isOccOptionSymbol,
+} from "./actions/order-utils";
 import type { RunCloseOrder, RunGroupReturn, RunStrategyDecision } from "./run-history";
 
 // Realized-P&L attribution ledger (IMPROVEMENTS.v5 strategy #9). One NDJSON
@@ -177,9 +182,12 @@ export function buildPnlLedgerEntries(input: BuildPnlLedgerEntriesInput): PnlLed
           ? perLegFill
           : group && group.weightedAverageFill > 0 ? group.weightedAverageFill : null;
 
+      // ×100 for an option contract, ×1 for the equity rows both accounts also
+      // carry (manual stock, side "none"). See getContractMultiplier.
+      const contractMultiplier = getContractMultiplier(closeOrder.symbol);
       const realizedPnlDollars =
         weightedAverageOpenFill != null
-          ? (avgCloseFillPrice - weightedAverageOpenFill) * quantityClosed * 100
+          ? (avgCloseFillPrice - weightedAverageOpenFill) * quantityClosed * contractMultiplier
           : null;
       const realizedPnlPct =
         weightedAverageOpenFill != null
@@ -296,6 +304,31 @@ export async function appendPnlLedgerEntries(
   await fs.appendFile(filePath, lines, "utf8");
 }
 
+/**
+ * Repair rows written before the contract-multiplier fix.
+ *
+ * Rows already on disk for a NON-option symbol carry a ×100 inflation. This
+ * rewrites only rows that provably came from the buggy path: the symbol is not
+ * an OCC contract AND the stored dollars match the ×100 arithmetic exactly. A
+ * correct row (option, or an equity row written after the fix) fails one of
+ * those two tests and is returned untouched, so this can never corrupt a good
+ * number. Read-only — the NDJSON on disk is left alone.
+ */
+export function repairLegacyContractScaling(entry: PnlLedgerEntry): PnlLedgerEntry {
+  const { symbol, realizedPnlDollars, avgCloseFillPrice, weightedAverageOpenFill, quantityClosed } =
+    entry;
+  if (realizedPnlDollars == null || weightedAverageOpenFill == null) return entry;
+  if (!Number.isFinite(avgCloseFillPrice) || !Number.isFinite(quantityClosed)) return entry;
+  if (isOccOptionSymbol(symbol)) return entry;
+
+  const perShare = (avgCloseFillPrice - weightedAverageOpenFill) * quantityClosed;
+  if (perShare === 0) return entry;
+  // Only the exact ×100 signature qualifies; anything else is left as written.
+  if (Math.abs(realizedPnlDollars - perShare * 100) > Math.abs(perShare) * 1e-6) return entry;
+
+  return { ...entry, realizedPnlDollars: perShare };
+}
+
 // fallow-ignore-next-line complexity
 async function readLedgerEntriesForAccount(accountNumber: string): Promise<PnlLedgerEntry[]> {
   const safeAccountNumber = sanitizeAccountNumberForPath(accountNumber);
@@ -318,7 +351,7 @@ async function readLedgerEntriesForAccount(accountNumber: string): Promise<PnlLe
         const trimmed = line.trim();
         if (!trimmed) continue;
         try {
-          entries.push(JSON.parse(trimmed) as PnlLedgerEntry);
+          entries.push(repairLegacyContractScaling(JSON.parse(trimmed) as PnlLedgerEntry));
         } catch {
           // skip corrupt line
         }

@@ -120,20 +120,77 @@ function getOrCreateScoreboard(
   return board;
 }
 
+// ── Durable, greppable mutation log ─────────────────────────────────────────
+// The counters above live only in this process's memory, so a PM2 restart
+// silently resets the day mid-session: on 2026-07-23 the cash day-report showed
+// `placed: 5` while the pm2 log for the same day contains 58 seeds with
+// `placedOrder: true`. Every `seedRejections` number is therefore a
+// since-last-restart count, not a day count.
+//
+// Rather than add a persistence layer (new files, new I/O failure modes on a
+// path that runs hundreds of times a session), every mutation also emits ONE
+// line of JSON. Counting those lines reconstructs any day's board exactly,
+// across restarts:
+//
+//   grep '"scope":"seed-scoreboard"' <log> | jq -r 'select(.date=="2026-08-05")
+//     | [.accountNumber,.bucket] | @tsv' | sort | uniq -c
+//
+// The line also carries the SYMBOL, which the counters never had. That is what
+// makes `cooldown` interpretable: the bucket is incremented once per secret-feed
+// tick, so a large count may be a handful of names probed over and over rather
+// than many distinct missed opportunities. Distinct opportunities are now
+// countable by collapsing on (date, accountNumber, symbol).
+export const SEED_SCOREBOARD_LOG_SCOPE = "seed-scoreboard";
+
+// Context for one scoreboard mutation. `date` keeps the previous
+// positional-argument behaviour available; `symbol` is the new field.
+//
+// An object (rather than more positionals) so a `string` date can never be
+// silently bound to `symbol` at a call site — and `symbol` is REQUIRED, not
+// optional, so the compiler is what guarantees every recording site attributes
+// its bucket. An optional field would let a caller quietly drop the one piece of
+// information this whole record exists to carry (pass an explicit `null` for the
+// rare site that genuinely has no underlying).
+export interface SeedScoreboardContext {
+  symbol: string | null;
+  date?: string;
+}
+
+function recordBucket(
+  accountNumber: string,
+  bucket: SeedRejectionBucket,
+  reason: string | null,
+  context: SeedScoreboardContext,
+): void {
+  const date = context.date ?? getPstDateString();
+  getOrCreateScoreboard(accountNumber, date)[bucket] += 1;
+  console.log(
+    JSON.stringify({
+      scope: SEED_SCOREBOARD_LOG_SCOPE,
+      accountNumber,
+      date,
+      bucket,
+      symbol: context.symbol ?? null,
+      reason: reason ?? null,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
 // Record one seed attempt against today's per-account scoreboard.
 // - A placed order increments `placed`.
 // - Otherwise the skippedReason is normalized into a rejection bucket.
 export function recordSeedAttempt(
   accountNumber: string,
   result: { placedOrder?: boolean; skippedReason?: string | null },
-  date: string = getPstDateString(),
+  context: SeedScoreboardContext,
 ): void {
-  const board = getOrCreateScoreboard(accountNumber, date);
   if (result.placedOrder) {
-    board.placed += 1;
+    recordBucket(accountNumber, "placed", null, context);
     return;
   }
-  board[classifySeedRejection(result.skippedReason)] += 1;
+  const reason = result.skippedReason ?? null;
+  recordBucket(accountNumber, classifySeedRejection(reason), reason, context);
 }
 
 // Record a seed that was suppressed BEFORE seedSymbol ran (cooldown or gate),
@@ -141,10 +198,9 @@ export function recordSeedAttempt(
 export function recordSeedSkip(
   accountNumber: string,
   reason: string,
-  date: string = getPstDateString(),
+  context: SeedScoreboardContext,
 ): void {
-  const board = getOrCreateScoreboard(accountNumber, date);
-  board[classifySeedRejection(reason)] += 1;
+  recordBucket(accountNumber, classifySeedRejection(reason), reason, context);
 }
 
 // Snapshot today's (or a given date's) scoreboard for an account. Always

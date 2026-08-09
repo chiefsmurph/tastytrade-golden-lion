@@ -21,18 +21,42 @@ const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 // buying-power skip blocked retries for 10 min, while optionless names got a
 // fresh chain walk every 10 min forever. Split by outcome instead:
 //   placed       → the existing per-path cooldown map (10 min default).
-//   no-chain     → very long, symbol-keyed. The underlying is not optionable at
-//                  all (zero expirations anywhere) — a permanent property, so
-//                  re-probing burns a full chain fetch for a name that can NEVER
-//                  seed. Account-independent.
-//   no-candidate → long, symbol-keyed (a chain exists but has no usable
-//                  candidate — including DTE-window misses — account-independent
-//                  and rarely changing intraday).
+//   no-chain     → very long, account+symbol-keyed. The underlying looks
+//                  un-optionable (zero expirations anywhere), so re-probing
+//                  burns a full chain fetch for a name that likely can never seed.
+//   no-candidate → long, account+symbol-keyed (a chain exists but has no usable
+//                  candidate — including DTE-window misses — and that rarely
+//                  changes intraday).
 //   retry        → short, account+symbol-keyed (buying power, dry-run… are
 //                  transient and account-specific).
-const noChainSeedAtBySymbol = new Map<string, number>();
-const noCandidateSeedAtBySymbol = new Map<string, number>();
+//
+// ALL FOUR outcome benches are account-scoped. no-chain and no-candidate used to
+// be keyed by SYMBOL ALONE, on the theory that "this underlying has no usable
+// contract" is a property of the underlying rather than of the account. It is
+// not: the two accounts never evaluate the same contract set. They run different
+// spread caps (cash 0.20 vs margin 0.10 — see ~/strategy/liquidity-gate) and the
+// cash path additionally requires the CASH_ACCOUNT_SEED_MIN_DTE-MAX_DTE window
+// that margin never applies — two of the NO_CANDIDATE_SKIP_REASONS below
+// literally begin "cash seed …". So a cash-only miss benched MARGIN for 45 min
+// (3h for no-chain) on a name margin had not even looked at.
+//
+// Measured over 17 sessions of production logs: the cash path set 142 of these
+// symbol-keyed benches, and in 142 of 142 margin made zero seed attempts for
+// that symbol inside the bench window; 33 of the 142 used a structurally
+// cash-only DTE-window reason. On 2026-08-05 margin finished the day with 51
+// cooldown suppressions and no seed attempt at all.
+//
+// The 10-min `placed` cooldown is deliberately NOT touched — it is the only
+// duplicate-order guard (hasOpenUnderlyingPosition reads broker positions, so
+// working limit orders are invisible to it).
+const noChainSeedAtByAccountSymbol = new Map<string, number>();
+const noCandidateSeedAtByAccountSymbol = new Map<string, number>();
 const retrySeedAtByAccountSymbol = new Map<string, number>();
+
+// Shared key builder so the three account-scoped benches cannot drift apart.
+function accountSymbolKey(accountNumber: string, symbol: string): string {
+  return `${accountNumber}:${symbol}`;
+}
 
 export type SeedOutcomeCooldownKind = "placed" | "no-chain" | "no-candidate" | "retry";
 
@@ -92,6 +116,35 @@ function getEffectiveNoCandidateCooldownMs(attemptAt: number): number {
     : getNoCandidateCooldownMs();
 }
 
+// Which of the four cooldowns (placed / no-chain / no-candidate / retry) is
+// currently benching this symbol+account, or null when none is. Returning the
+// kind rather than a bare boolean is what lets the caller record WHY a seed was
+// suppressed: the scoreboard's `cooldown` bucket used to be a single opaque
+// number covering all four, with no way to tell a 10-min duplicate-order guard
+// from a 3-hour no-chain bench.
+export function getActiveAutoSeedCooldownKind(
+  cooldownMap: Map<string, number>,
+  symbol: string,
+  accountNumber: string,
+  now: number,
+): SeedOutcomeCooldownKind | null {
+  const key = accountSymbolKey(accountNumber, symbol);
+  const lastSeedAt = cooldownMap.get(symbol) ?? 0;
+  if (now - lastSeedAt < getAutoSeedCooldownMs()) {
+    return "placed";
+  }
+  const lastNoChainAt = noChainSeedAtByAccountSymbol.get(key) ?? 0;
+  if (now - lastNoChainAt < getNoChainCooldownMs()) {
+    return "no-chain";
+  }
+  const lastNoCandidateAt = noCandidateSeedAtByAccountSymbol.get(key) ?? 0;
+  if (now - lastNoCandidateAt < getEffectiveNoCandidateCooldownMs(lastNoCandidateAt)) {
+    return "no-candidate";
+  }
+  const lastRetryAt = retrySeedAtByAccountSymbol.get(key) ?? 0;
+  return now - lastRetryAt < getRetryCooldownMs() ? "retry" : null;
+}
+
 // Exported for tests: true while ANY of the four cooldowns (placed / no-chain /
 // no-candidate / retry) is still active for this symbol+account.
 export function isAutoSeedCooldownActive(
@@ -100,20 +153,7 @@ export function isAutoSeedCooldownActive(
   accountNumber: string,
   now: number,
 ): boolean {
-  const lastSeedAt = cooldownMap.get(symbol) ?? 0;
-  if (now - lastSeedAt < getAutoSeedCooldownMs()) {
-    return true;
-  }
-  const lastNoChainAt = noChainSeedAtBySymbol.get(symbol) ?? 0;
-  if (now - lastNoChainAt < getNoChainCooldownMs()) {
-    return true;
-  }
-  const lastNoCandidateAt = noCandidateSeedAtBySymbol.get(symbol) ?? 0;
-  if (now - lastNoCandidateAt < getEffectiveNoCandidateCooldownMs(lastNoCandidateAt)) {
-    return true;
-  }
-  const lastRetryAt = retrySeedAtByAccountSymbol.get(`${accountNumber}:${symbol}`) ?? 0;
-  return now - lastRetryAt < getRetryCooldownMs();
+  return getActiveAutoSeedCooldownKind(cooldownMap, symbol, accountNumber, now) !== null;
 }
 
 // Exported for tests: stamps the map matching the classified outcome.
@@ -124,26 +164,29 @@ export function recordSeedOutcomeCooldown(
   accountNumber: string,
   now: number,
 ): void {
+  const key = accountSymbolKey(accountNumber, symbol);
   if (kind === "placed") {
     cooldownMap.set(symbol, now);
   } else if (kind === "no-chain") {
-    noChainSeedAtBySymbol.set(symbol, now);
+    noChainSeedAtByAccountSymbol.set(key, now);
   } else if (kind === "no-candidate") {
-    noCandidateSeedAtBySymbol.set(symbol, now);
+    noCandidateSeedAtByAccountSymbol.set(key, now);
   } else {
-    retrySeedAtByAccountSymbol.set(`${accountNumber}:${symbol}`, now);
+    retrySeedAtByAccountSymbol.set(key, now);
   }
 }
 
 // ── Sticky "full thesis observed today" memory ──────────────────────────────
-// The feed's thesis flags flicker tick-to-tick, so requiring full thesis at
-// the exact tick the margin branch runs almost never fires (~1×/day) even
-// though several tickers reach full thesis at SOME point each day. Instead:
-// remember every ticker that hit full thesis at any point today, and seed
-// margin when the feed is actively buying (willBuy) a remembered name. The
-// quality bar is unchanged — full thesis must still have been genuinely
-// observed today. Rolls over on calendar-date change (stored date string, no
-// timers).
+// The feed's thesis flags flicker tick-to-tick, so requiring full thesis at the
+// exact tick the margin branch runs almost never fires (~1×/day) even though
+// several tickers reach full thesis at SOME point each day. This remembers
+// every ticker that hit full thesis at any point today, rolling over on
+// calendar-date change (stored date string, no timers).
+//
+// As of 2026-08-08 it no longer BLOCKS a margin seed by default — see
+// evaluateMarginSeedThesisGate for why. It is still maintained on every tick
+// for two reasons: it is what the revert flag re-arms, and it is the field that
+// splits the new thesis-gate log into its relief and pass halves.
 const fullThesisObservedTickers = new Set<string>();
 let fullThesisObservedDateStr: string | null = null;
 
@@ -188,8 +231,11 @@ export function wasFullThesisObservedToday(
   );
 }
 
-// The margin seed condition: full thesis observed today (sticky) AND the feed
-// is actively buying this name right now (willBuy at the current tick).
+// The LEGACY margin seed condition: full thesis observed today (sticky) AND the
+// feed is actively buying this name right now (willBuy at the current tick).
+// No longer the live gate — see evaluateMarginSeedThesisGate below. Retained
+// because it is the exact predicate the revert flag restores, and because both
+// halves of the new instrument are defined relative to it.
 export function shouldSeedMarginSticky(
   position: SecretSourcePosition,
   dateStr: string,
@@ -198,6 +244,78 @@ export function shouldSeedMarginSticky(
     position.willBuy === true &&
     wasFullThesisObservedToday(normalizeTicker(position.ticker), dateStr)
   );
+}
+
+// ── Margin thesis gate — REMOVED 2026-08-08, revertible without a deploy ─────
+// Margin seeding no longer requires the feed's full thesis. It measured
+// BACKWARDS over 8 instrumented sessions (07-22, 07-23, 07-24, 07-27,
+// 08-04..08-07) read straight off the `secret-auto-seed-margin-sticky-block`
+// line this replaces:
+//
+//   • Names the gate BLOCKED beat names it PASSED by ~2.35 percentage points of
+//     universe-excess return on the UNDERLYING to the margin EOD line
+//     (12:55 PT). 90% day-clustered CI [-3.75, -1.00] — excludes zero.
+//   • The sign never flips under drop-one-blocked-name (-1.69..-2.56) or
+//     drop-one-day (-1.56..-2.82).
+//   • The time-of-day confound runs AGAINST the result: blocked events land
+//     later in the session (median 10:59 PT vs 08:40 PT), so they earned their
+//     excess in a SHORTER window. The time-matched +60m horizon agrees in sign.
+//   • Of 41 distinct (day, symbol) willBuy margin-seed candidates, 13 (32%)
+//     were blocked for the entire day.
+//
+// Structurally the gate largely graded its own entry conditions: 3 of the 4
+// flags behind `thesisCount` are upstream buy PRECONDITIONS or the `buyWeight`
+// threshold, and `buyWeight` measured at +3bp forward return on the sibling
+// stock bot — i.e. no content.
+//
+// Honest caveat: all of the above is measured on the UNDERLYING, not on option
+// P&L. At 15-30% option spreads a +2% underlying move is not automatically a
+// win. The evidence is decisive against the gate's stated purpose — name
+// selection — not proof that the newly-allowed seeds print.
+//
+// What did NOT change: willBuy is still hard-required (the feed must be buying
+// the name at this tick), and the knife brakes downstream — plateauScore and
+// the add-governor — are untouched. Those are knife-shaped, not thesis-shaped.
+//
+// Set STRATEGY_MARGIN_SEED_REQUIRE_FULL_THESIS=true to restore the old gate.
+export function getMarginSeedRequireFullThesis(): boolean {
+  return toBooleanFlag(process.env.STRATEGY_MARGIN_SEED_REQUIRE_FULL_THESIS);
+}
+
+export type MarginSeedThesisDecision = {
+  // May this seed proceed past the thesis gate? (Knife gates run after.)
+  seed: boolean;
+  // The feed is buying this name at this tick. Still hard-required.
+  willBuy: boolean;
+  // The sticky memory saw full thesis at some point today.
+  fullThesisObservedToday: boolean;
+  // Flag state at decision time, carried into the log so the analysis never has
+  // to guess which regime a line was emitted under.
+  requireFullThesis: boolean;
+  // The old gate would have stopped this one. When `seed` is also true, this is
+  // exactly the population the removal newly admits.
+  legacyGateWouldBlock: boolean;
+};
+
+// Single decision point for the margin thesis gate. Pure apart from the sticky
+// memory read and the flag read, so tests can drive both regimes directly.
+export function evaluateMarginSeedThesisGate(
+  position: SecretSourcePosition,
+  dateStr: string,
+  requireFullThesis: boolean = getMarginSeedRequireFullThesis(),
+): MarginSeedThesisDecision {
+  const willBuy = position.willBuy === true;
+  const legacyGatePasses = shouldSeedMarginSticky(position, dateStr);
+  return {
+    seed: requireFullThesis ? legacyGatePasses : willBuy,
+    willBuy,
+    fullThesisObservedToday: wasFullThesisObservedToday(
+      normalizeTicker(position.ticker),
+      dateStr,
+    ),
+    requireFullThesis,
+    legacyGateWouldBlock: willBuy && !legacyGatePasses,
+  };
 }
 
 function shouldAutoSeedOnSecretPositionsUpdate(): boolean {
@@ -386,8 +504,23 @@ async function maybeAutoSeedSymbol(options: {
   governorMult?: number;
 }): Promise<void> {
   const now = Date.now();
-  if (isAutoSeedCooldownActive(options.cooldownMap, options.symbol, options.accountNumber, now)) {
-    recordSeedSkip(options.accountNumber, "seed suppressed by cooldown");
+  const activeCooldownKind = getActiveAutoSeedCooldownKind(
+    options.cooldownMap,
+    options.symbol,
+    options.accountNumber,
+    now,
+  );
+  if (activeCooldownKind !== null) {
+    // The kind is embedded in the reason string so the scoreboard's `cooldown`
+    // bucket becomes decomposable. All four spellings still classify as
+    // `cooldown` (classifySeedRejection matches the "cooldown" substring, and
+    // none of them contains an earlier rule's needle — "no-candidate" is
+    // hyphenated, so it does not match the "no candidate" no-chain rule).
+    recordSeedSkip(
+      options.accountNumber,
+      `seed suppressed by ${activeCooldownKind} cooldown`,
+      { symbol: options.symbol },
+    );
     return;
   }
 
@@ -397,7 +530,7 @@ async function maybeAutoSeedSymbol(options: {
       priceMode: "mid",
       governorMult: options.governorMult,
     });
-    recordSeedAttempt(options.accountNumber, result);
+    recordSeedAttempt(options.accountNumber, result, { symbol: options.symbol });
     const cooldownKind = classifySeedOutcomeCooldown(result);
     recordSeedOutcomeCooldown(
       cooldownKind,
@@ -434,8 +567,65 @@ async function maybeAutoSeedSymbol(options: {
   }
 }
 
-// Margin-side seed attempt for one position: sticky full-thesis trigger, then
-// the plateau entry gate, then the seed itself.
+// The thesis-gate instrument, one emit site, three mutually-exclusive scopes.
+// `secret-auto-seed-margin-sticky-block` was the single most useful line in
+// this file — it is what made the gate's backwardness measurable at all — so
+// removing the gate does not remove the instrument, it INVERTS it:
+//
+//   secret-auto-seed-margin-thesis-relief → seed proceeds, the OLD gate would
+//       have blocked it. Same fields, same emit position, same population as
+//       the old block line: this is the removal's own effect, directly
+//       measurable next week with no reconstruction.
+//   secret-auto-seed-margin-thesis-pass   → seed proceeds, the old gate would
+//       have passed it too. The mirror, so relief-vs-pass is symmetric BY
+//       CONSTRUCTION rather than rebuilt from separate log families later.
+//   secret-auto-seed-margin-sticky-block  → the seed is blocked by the thesis
+//       gate. Only reachable with STRATEGY_MARGIN_SEED_REQUIRE_FULL_THESIS on
+//       (with the gate removed, a blocked seed means !willBuy, which the caller
+//       never logs), so a revert restores the original line too.
+//
+// The caller emits only for willBuy names — both to stay quiet (the margin path
+// evaluates every feed position every tick) and because that willBuy population
+// is precisely the one the analysis is defined over.
+// Exported for tests.
+export function logMarginThesisGateDecision(
+  decision: MarginSeedThesisDecision,
+  symbol: string,
+  plateauScore: number | undefined,
+): void {
+  let scope: string;
+  if (!decision.seed) {
+    scope = "secret-auto-seed-margin-sticky-block";
+  } else if (decision.legacyGateWouldBlock) {
+    scope = "secret-auto-seed-margin-thesis-relief";
+  } else {
+    scope = "secret-auto-seed-margin-thesis-pass";
+  }
+  console.log(
+    JSON.stringify({
+      scope,
+      symbol,
+      willBuy: decision.willBuy,
+      fullThesisObservedToday: decision.fullThesisObservedToday,
+      requireFullThesis: decision.requireFullThesis,
+      plateauScore,
+    }),
+  );
+}
+
+// The human-readable trigger recorded on the seed line. Names the regime the
+// seed fired under, so a run-history reader can tell a post-removal willBuy
+// seed from a legacy full-thesis one without cross-referencing the env.
+// Exported for tests.
+export function marginSeedTriggerReason(decision: MarginSeedThesisDecision): string {
+  return decision.requireFullThesis
+    ? "secret-positions-update: full thesis observed today + willBuy"
+    : "secret-positions-update: willBuy";
+}
+
+// Margin-side seed attempt for one position: the thesis gate (willBuy, plus the
+// full-thesis requirement only when the revert flag is on), then the knife
+// gates, then the seed itself.
 async function maybeAutoSeedMarginForPosition(options: {
   position: SecretSourcePosition;
   symbol: string;
@@ -445,28 +635,18 @@ async function maybeAutoSeedMarginForPosition(options: {
   goodBooleanScore: number;
   booleanSurplusPct: number;
 }): Promise<void> {
-  if (!shouldSeedMarginSticky(options.position, options.observationDateStr)) {
-    // Observe-only: surface the interesting near-miss — a name the feed is
-    // actively buying (willBuy) that margin still won't seed because the full
-    // 4/4 thesis was never observed today. Gated on willBuy so it stays quiet:
-    // the sticky check runs for every position every tick, but only actively-
-    // bought names are worth auditing (this is exactly the XXI-on-2026-07-21
-    // case). fullThesisObservedToday is necessarily false here (sticky =
-    // willBuy && thesisObserved), logged explicitly to make the reason obvious.
-    if (options.position.willBuy === true) {
-      console.log(
-        JSON.stringify({
-          scope: "secret-auto-seed-margin-sticky-block",
-          symbol: options.symbol,
-          willBuy: true,
-          fullThesisObservedToday: wasFullThesisObservedToday(
-            options.symbol,
-            options.observationDateStr,
-          ),
-          plateauScore: options.position.plateauScore,
-        }),
-      );
-    }
+  const thesisGate = evaluateMarginSeedThesisGate(
+    options.position,
+    options.observationDateStr,
+  );
+  if (thesisGate.willBuy) {
+    logMarginThesisGateDecision(
+      thesisGate,
+      options.symbol,
+      options.position.plateauScore,
+    );
+  }
+  if (!thesisGate.seed) {
     return;
   }
   if (marginSeedBlockedByKnife(options.position, options.symbol)) {
@@ -478,7 +658,7 @@ async function maybeAutoSeedMarginForPosition(options: {
     scope: "secret-auto-seed-margin-all-signals",
     accountNumber: options.marginAccountNumber,
     cooldownMap: lastMarginAllSignalsSeedAtBySymbol,
-    triggerReason: "secret-positions-update: full thesis observed today + willBuy",
+    triggerReason: marginSeedTriggerReason(thesisGate),
     goodBooleanScore: options.goodBooleanScore,
     booleanSurplusPct: options.booleanSurplusPct,
   });
@@ -547,8 +727,8 @@ export async function maybeAutoSeedFromSecretPositions(
     }
 
     // Margin path is evaluated for every position (not gated on
-    // isQualityToBuy): crash-regime block first, then sticky full-thesis
-    // observation + current willBuy, then the plateau entry gate.
+    // isQualityToBuy): crash-regime block first, then the thesis gate (current
+    // willBuy), then the plateau/governor entry gates.
     if (hasSeparateMarginAccount && !marginCrashBlocked) {
       await maybeAutoSeedMarginForPosition({
         position,

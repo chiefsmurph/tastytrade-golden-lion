@@ -436,6 +436,57 @@ qualityFactor = max(0.5, min(1.0, (buyMult × gateMult) / 4.0))
 The gate result feeds sizing; the target exposure the executor chases is
 `finalTargets.targetAccountExposure × (margin|cash)GateMaxTargetPct`.
 
+### 7e. Margin auto-seed thesis gate — *REMOVED 2026-08-08*
+
+Feed-driven **margin auto-seeds** (`src/strategy/secret/secret-auto-seed.ts`,
+distinct from the cross-account seeding in §11) used to require the feed's full
+thesis — `thesisCount ≥ thesisMax`, observed at any point that day via a sticky
+memory — on top of a live `willBuy`. **That requirement is gone. `willBuy` alone
+is the signal condition now**
+([`evaluateMarginSeedThesisGate`](../src/strategy/secret/secret-auto-seed.ts)).
+
+Why: over 8 instrumented sessions (07-22, 07-23, 07-24, 07-27, 08-04 → 08-07),
+measured directly off the `secret-auto-seed-margin-sticky-block` line, the gate
+ran **backwards**.
+
+| Evidence | Result |
+|---|---|
+| Blocked vs passed, universe-excess on the **underlying** to the margin EOD line (12:55 PT) | blocked beat passed by **+2.35pp** |
+| 90% day-clustered CI | **[-3.75, -1.00]** — excludes zero |
+| Drop-one-blocked-name / drop-one-day | −1.69…−2.56 / −1.56…−2.82 — sign never flips |
+| Time-of-day confound | runs *against* the finding: blocked events are later (median 10:59 PT vs 08:40 PT), so a **shorter** window earned +1.71%. Time-matched +60m agrees in sign |
+| Coverage | 13 of 41 distinct (day, symbol) `willBuy` candidates blocked **all day** |
+
+Structurally the gate largely graded its own entry conditions: 3 of the 4 flags
+behind `thesisCount` are upstream buy *preconditions* or the `buyWeight`
+threshold, and `buyWeight` measured at +3bp forward return on the sibling stock
+bot — i.e. no content.
+
+**Caveat, stated plainly:** every number above is the *underlying's* move, not
+option P&L. At the 15–30% option spreads this book pays, a 2% underlying move is
+not automatically a win. The evidence is decisive against the gate's stated
+purpose — name selection — not proof that the newly-admitted seeds print.
+
+Unchanged by this: `willBuy` is still hard-required, and the downstream knife
+brakes (`plateauScore ≥ SECRET_SEED_MIN_PLATEAU`, the add-governor,
+`crashRegime`) still block. They are knife-shaped, not thesis-shaped.
+
+**Revert without a deploy:** `STRATEGY_MARGIN_SEED_REQUIRE_FULL_THESIS=true`
+re-arms the old gate exactly, block line included.
+
+**Instrumentation (inverted, not deleted).** The block line that made the
+measurement possible is replaced by a symmetric pair emitted at the same point,
+for the same `willBuy` population, with the same fields plus `requireFullThesis`:
+
+| Scope | Fires when |
+|---|---|
+| `secret-auto-seed-margin-thesis-relief` | seed proceeds, the **old gate would have blocked** it — the removal's own effect |
+| `secret-auto-seed-margin-thesis-pass` | seed proceeds, the old gate would have passed it too — the mirror |
+| `secret-auto-seed-margin-sticky-block` | thesis gate blocked the seed — only reachable with the revert flag on |
+
+Relief-vs-pass is therefore a partition **by construction**: re-grading the
+change next week needs no reconstruction from separate log families.
+
 ---
 
 ## 8. Contract selection & liquidity gates
@@ -587,8 +638,11 @@ loss-depth zone plus a thesis bar. Passes when the feed thesis is FULL
 zone's bar. Seed-size multiplier by thesis score: `<3 → 1.0×`, `3-4 → 0.95×`,
 `5-6 → 0.85×`, `7+ → 0.7×` (higher conviction → tighter/earlier).
 
-Margin-from-booleans seeding requires the **full** feed thesis
-(`shouldSeedMarginFromBooleans`, [position-gate.ts:221-227](../src/strategy/position-gate.ts#L221-L227)).
+`shouldSeedMarginFromBooleans` ([position-gate.ts:221-227](../src/strategy/position-gate.ts#L221-L227))
+— the full-feed-thesis predicate — is still what `getSeedDecision` above accepts
+as its FULL-thesis leg, and it still feeds the sticky day memory in
+`secret-auto-seed.ts`. It is no longer a *block* on the feed-driven margin
+auto-seed path: that gate was removed 2026-08-08, see §7e.
 
 ---
 
@@ -623,6 +677,7 @@ Key knobs referenced above (default in parens):
 | `STRATEGY_CASH_MIN_TARGET_DTE` | 7 | cash DTE floor |
 | `STRATEGY_MARGIN_MAX_TARGET_MULTIPLIER` | 1.33 | margin gate scale-up |
 | `STRATEGY_CROSS_ACCOUNT_YES_DOWN_PCT` | 10 | cross-account dip trigger (1pm-lenient) |
+| `STRATEGY_MARGIN_SEED_REQUIRE_FULL_THESIS` | false | re-arm the removed margin auto-seed full-thesis gate (§7e) |
 | `STRATEGY_GATE_STRONG_YES_MAX_TARGET_PCT` | 0.35 | top signal-tier ceiling |
 | `STRATEGY_MIN_OPEN_INTEREST` | 0 (off) | optional OI floor |
 | `BOT_RUN_ON_SCHEDULE` / `BOT_RUN_INTERVAL_MS` | — | scheduler |

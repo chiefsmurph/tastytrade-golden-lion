@@ -1,4 +1,5 @@
 import { getManagedAccountNumbers } from "~/core/default-account";
+import { getContractMultiplier } from "./actions/order-utils";
 import { getRecentRunHistory } from "./run-history";
 import { getPstDateString } from "./day-report-store";
 
@@ -53,6 +54,41 @@ function toCloseFill(raw: Record<string, unknown>): CloseFill {
     quantity: numericOrNull(raw.quantity),
     filledAt: at || null,
   };
+}
+
+/**
+ * Realized P&L for one close, in dollars and as a fraction of the entry price.
+ *
+ * The multiplier is derived from the symbol, NOT hard-coded to 100: both managed
+ * accounts also carry manually-traded equity rows, and pricing a share round-trip
+ * as if it were a 100-share contract inflated it 100×. Shared with pnl-ledger via
+ * getContractMultiplier so the two reporters cannot drift apart again.
+ */
+export function computeCloseRealizedPnl(
+  symbol: string,
+  avgClosePrice: number,
+  entryPrice: number,
+  quantity: number,
+): { realizedPnlDollars: number; realizedPnlPct: number } {
+  return {
+    realizedPnlDollars:
+      (avgClosePrice - entryPrice) * quantity * getContractMultiplier(symbol),
+    realizedPnlPct: (avgClosePrice - entryPrice) / entryPrice,
+  };
+}
+
+/**
+ * Per-unit cost basis implied by a group's total cost basis. Legacy fallback for
+ * run-history entries written before weightedAverageFill existed; multiplier-aware
+ * for the same reason as computeCloseRealizedPnl.
+ */
+export function impliedEntryPrice(
+  symbol: string,
+  totalCostBasis: number,
+  totalUnits: number,
+): number {
+  if (!(totalUnits > 0)) return 0;
+  return totalCostBasis / (totalUnits * getContractMultiplier(symbol));
 }
 
 export function extractFillsFromOrder(order: unknown): CloseFill[] {
@@ -142,13 +178,15 @@ async function getClosedPositionsTodayForAccount(
         let fill = matchingGroup.legWeightedFills?.[closeOrder.symbol] ?? matchingGroup.weightedAverageFill ?? 0;
         if (!fill) {
           const totalSymbolFillQty = totalFillQtyBySymbol.get(sym) ?? totalFillQty;
-          if (totalSymbolFillQty > 0) {
-            fill = matchingGroup.totalCostBasis / (totalSymbolFillQty * 100);
-          }
+          fill = impliedEntryPrice(closeOrder.symbol, matchingGroup.totalCostBasis, totalSymbolFillQty);
         }
         if (fill > 0) {
-          realizedPnlDollars = (avgFillPrice - fill) * totalFillQty * 100;
-          realizedPnlPct = (avgFillPrice - fill) / fill;
+          ({ realizedPnlDollars, realizedPnlPct } = computeCloseRealizedPnl(
+            closeOrder.symbol,
+            avgFillPrice,
+            fill,
+            totalFillQty,
+          ));
         }
       }
 
@@ -219,8 +257,9 @@ async function getClosedPositionsTodayForAccount(
         // wrong P&L is worse than an admitted gap.
         const entry = close.groupWeightedFill;
         if (entry != null && entry > 0) {
-          close.realizedPnlDollars = (avg - entry) * qty * 100;
-          close.realizedPnlPct = (avg - entry) / entry;
+          const pnl = computeCloseRealizedPnl(close.symbol, avg, entry, qty);
+          close.realizedPnlDollars = pnl.realizedPnlDollars;
+          close.realizedPnlPct = pnl.realizedPnlPct;
         }
       } catch {
         // Leave the row untouched — an unreachable broker must not corrupt a report.

@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 
-import { buildPnlLedgerEntries, classifyCloseDecision } from "../pnl-ledger";
+import {
+  buildPnlLedgerEntries,
+  classifyCloseDecision,
+  getPnlLedger,
+  repairLegacyContractScaling,
+  type PnlLedgerEntry,
+} from "../pnl-ledger";
 import type { RunCloseOrder, RunGroupReturn, RunStrategyDecision } from "../run-history";
 
 // OCC: "AAPL  " (6-char root) + 260619 (2026-06-19 expiration) + C + strike
@@ -265,4 +274,156 @@ test("clock liquidation and post-cutoff price stop are distinct urgent decisionT
   assert.notEqual(clock.decisionType, priceStop.decisionType);
   assert.equal(clock.isUrgentClose, true);
   assert.equal(priceStop.isUrgentClose, true);
+});
+
+// ── REGRESSION 2026-08-08: the unconditional ×100 contract multiplier ────────
+// The margin account carries manually-traded EQUITY rows (a bare ticker, no OCC
+// suffix, side "none") alongside options. The ledger multiplied those by 100
+// too. Three rows in the 07-17→08-07 window were inflated 100×, and the window
+// total read roughly 20× its true magnitude — enough to invert the read on
+// which account was losing money.
+const EQUITY_SYMBOL = "SNWV";
+
+function buildEquityLedger(overrides: Partial<Parameters<typeof buildPnlLedgerEntries>[0]> = {}) {
+  return buildPnlLedgerEntries({
+    accountNumber: "ACC-1",
+    accountType: "margin",
+    cycleCloseOrders: [
+      buildCloseOrder({
+        symbol: EQUITY_SYMBOL,
+        underlyingSymbol: EQUITY_SYMBOL,
+        // 1,000 shares sold at 4.95 against a 5.00 basis => -$50, not -$5,000.
+        fills: [{ fillId: "f1", fillPrice: 4.95, filledAt: "2026-08-05T16:30:00Z", quantity: 1000 }],
+      }),
+    ],
+    overnightCloseOrders: [],
+    groups: [
+      buildGroup({
+        side: "none",
+        underlyingSymbol: EQUITY_SYMBOL,
+        weightedAverageFill: 5.0,
+        totalCostBasis: 5000,
+      }),
+    ],
+    strategyDecisions: [],
+    entryContextByUnderlying: new Map(),
+    ...overrides,
+  });
+}
+
+test("an equity row in the margin ledger is priced per share, not ×100", () => {
+  const entry = buildEquityLedger()[0]!;
+
+  assert.equal(entry.symbol, EQUITY_SYMBOL);
+  assert.equal(entry.side, null, "a bare ticker has no option side");
+  assert.equal(entry.quantityClosed, 1000);
+  // (4.95 - 5.00) * 1000 shares * 1 => -$50. The bug produced -$5,000.
+  assert.ok(Math.abs((entry.realizedPnlDollars ?? 0) - -50) < 1e-9);
+  assert.notEqual(Math.round(entry.realizedPnlDollars ?? 0), -5000);
+  // The percentage was always right — only the dollars were scaled.
+  assert.ok(Math.abs((entry.realizedPnlPct ?? 0) - -0.01) < 1e-9);
+});
+
+test("a genuine OCC option row still gets the ×100 contract multiplier", () => {
+  // Guard the other direction: the multiplier gate must not quietly de-scale a
+  // correct option row. (1.2 - 1.0) * 2 contracts * 100 = +$40.
+  const entry = build()[0]!;
+  assert.equal(entry.symbol, OCC_SYMBOL);
+  assert.ok(Math.abs((entry.realizedPnlDollars ?? 0) - 40) < 1e-9);
+});
+
+test("a mixed cycle scales each row by its own instrument", () => {
+  const entries = buildPnlLedgerEntries({
+    accountNumber: "ACC-1",
+    accountType: "margin",
+    cycleCloseOrders: [
+      buildCloseOrder(),
+      buildCloseOrder({
+        symbol: EQUITY_SYMBOL,
+        underlyingSymbol: EQUITY_SYMBOL,
+        fills: [{ fillId: "f2", fillPrice: 4.95, filledAt: "2026-08-05T16:30:00Z", quantity: 1000 }],
+      }),
+    ],
+    overnightCloseOrders: [],
+    groups: [
+      buildGroup(),
+      buildGroup({
+        side: "none",
+        underlyingSymbol: EQUITY_SYMBOL,
+        weightedAverageFill: 5.0,
+        totalCostBasis: 5000,
+      }),
+    ],
+    strategyDecisions: [],
+    entryContextByUnderlying: new Map(),
+  });
+
+  const total = entries.reduce((sum, e) => sum + (e.realizedPnlDollars ?? 0), 0);
+  // +$40 option, -$50 equity. The bug read this cycle as -$4,960.
+  assert.ok(Math.abs(total - -10) < 1e-9);
+});
+
+test("repairLegacyContractScaling fixes stored equity rows and leaves options alone", () => {
+  const base: PnlLedgerEntry = {
+    ...build()[0]!,
+    symbol: EQUITY_SYMBOL,
+    underlyingSymbol: EQUITY_SYMBOL,
+    quantityClosed: 1000,
+    avgCloseFillPrice: 4.95,
+    weightedAverageOpenFill: 5.0,
+    realizedPnlDollars: -5000, // written by the buggy path
+  };
+  assert.ok(Math.abs((repairLegacyContractScaling(base).realizedPnlDollars ?? 0) - -50) < 1e-9);
+
+  // Already-correct equity row: untouched.
+  const fixed = { ...base, realizedPnlDollars: -50 };
+  assert.equal(repairLegacyContractScaling(fixed).realizedPnlDollars, -50);
+
+  // A real option row keeps its ×100 dollars.
+  const option = build()[0]!;
+  assert.equal(repairLegacyContractScaling(option).realizedPnlDollars, option.realizedPnlDollars);
+
+  // A row that does not match the ×100 signature is left exactly as written.
+  const unrelated = { ...base, realizedPnlDollars: -1234 };
+  assert.equal(repairLegacyContractScaling(unrelated).realizedPnlDollars, -1234);
+});
+
+test("getPnlLedger repairs the 100× rows already written to disk", async () => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "sl-ledger-"));
+  const previousDataDir = process.env.BOT_DATA_DIR;
+  process.env.BOT_DATA_DIR = dataDir;
+  try {
+    const optionRow = build()[0]!;
+    const equityRow: PnlLedgerEntry = {
+      ...optionRow,
+      id: "legacy-1",
+      symbol: EQUITY_SYMBOL,
+      underlyingSymbol: EQUITY_SYMBOL,
+      side: null,
+      quantityClosed: 1000,
+      avgCloseFillPrice: 4.95,
+      weightedAverageOpenFill: 5.0,
+      realizedPnlDollars: -5000,
+      realizedPnlPct: -0.01,
+    };
+
+    await fs.mkdir(path.join(dataDir, "ledger"), { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "ledger", "ACC-1-margin.ndjson"),
+      `${JSON.stringify(optionRow)}\n${JSON.stringify(equityRow)}\n`,
+      "utf8",
+    );
+
+    const result = (await getPnlLedger(["ACC-1"])) as {
+      entryCount: number;
+      totalRealizedPnlDollars: number;
+    };
+    assert.equal(result.entryCount, 2);
+    // +$40 option, -$50 repaired equity. Unrepaired this read -$4,960.
+    assert.ok(Math.abs(result.totalRealizedPnlDollars - -10) < 1e-9);
+  } finally {
+    if (previousDataDir === undefined) delete process.env.BOT_DATA_DIR;
+    else process.env.BOT_DATA_DIR = previousDataDir;
+    await fs.rm(dataDir, { recursive: true, force: true });
+  }
 });
