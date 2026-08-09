@@ -61,3 +61,22 @@ export function toBooleanFlag(raw: unknown): boolean {
   if (typeof raw === "number") return raw === 1;
   return ["true", "1", "yes"].includes(String(raw ?? "").trim().toLowerCase());
 }
+
+/**
+ * Read an env var as a boolean flag whose in-code default may be EITHER value.
+ *
+ * `toBooleanFlag(process.env.KEY ?? true)` is subtly wrong and only survives
+ * because every flag that used it defaulted to `false`: dotenv turns a
+ * present-but-blank `KEY=` line into `""`, which is not nullish, so `??` never
+ * reaches the fallback and `toBooleanFlag("")` returns `false`. That silently
+ * inverts any flag whose default is `true` — exactly the case this repo's
+ * "a blank env var means use the in-code default" rule exists to protect.
+ *
+ * Absent, blank, or whitespace-only → `fallback`. Anything else goes through
+ * `toBooleanFlag` (so `true`/`1`/`yes` are on, everything else is off).
+ */
+export function readEnvBool(key: string, fallback: boolean): boolean {
+  const raw = process.env[key]?.trim();
+  if (!raw) return fallback;
+  return toBooleanFlag(raw);
+}

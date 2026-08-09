@@ -2,7 +2,11 @@ export type ProgrammaticAction = "MANAGE_ALLOCATION" | "CLOSE_POSITION";
 import type { PositionGateResult } from "./position-gate";
 import type { ScaleOutContext } from "./scale-out";
 import { EOD_ARMED_MINUTE } from "./spread-thresholds";
-import { readEnvInt, toBooleanFlag } from "~/core/env-utils";
+import {
+  resolveStopPersistence,
+  type StopPersistenceContext,
+} from "./stop-persistence";
+import { readEnvBool, readEnvInt } from "~/core/env-utils";
 
 // Unified return structure containing target state goals for the execution loop
 export interface ExecutionStrategy {
@@ -18,6 +22,12 @@ export interface ExecutionStrategy {
   // Scaled runner that is holding its remainder: skip further adds so it simply
   // rides to its higher target / breakeven ratchet. Honored by the dispatcher.
   suppressAdds?: boolean;
+  // The intraday stop's trigger condition held on THIS evaluation — the bid
+  // cleared the floor and the midpoint confirmed it. Set on both the fired close
+  // and the persistence deferral, and absent everywhere else. Read by
+  // evaluate-position to advance (or reset) the persistence streak; it is the
+  // engine's only output that is state, not decision.
+  stopTriggerHeld?: boolean;
 }
 
 export interface ExecutionTargets {
@@ -97,9 +107,30 @@ const DEFAULT_STOP_LOSS_MID_CONFIRM_FLOOR = 0.20;
  * 25 and defers 9 whose median realized was −7.1% and median mid −6.2% — i.e. it
  * removes the phantom triggers and keeps every deep one.
  *
- * DEFAULT OFF. Enabling it is a real risk change: it stops selling positions the bot
- * sells today. The n above is 25 intraday stops over one month, enough to establish
- * the measurement bias and nowhere near enough to price the tail of holding on.
+ * DEFAULT ON as of 2026-08-08 (it shipped default-off in PR #35). A second window,
+ * 2026-07-17 → 08-07, is what promoted it. There the stop family is the bot's entire
+ * loss — stop-loss (n=28) returned −21.0% and eod-stop (n=12) −13.7%, together more
+ * than the whole net loss of the book, while every other exit class combined was
+ * positive (take-profit n=8, +20.4%). And the triggers are not describing the
+ * positions: **15 of 34 stops fired while the position was flat or UP on the offer**,
+ * the bot's own fills came in +14.5pp of entry better than the bid they triggered on
+ * in **20 of 25** cases, and **15 of 17 intraday stops had a MIDPOINT above −30%** —
+ * they would not have fired on mid at all. A −30% bid stop is roughly a −15% stop in
+ * executable terms. IOVA 2026-08-03 is the clean example: the midpoint sat between
+ * +2.7% and +12% all day, one cycle printed a −53.3% bid against a +68% ask, the stop
+ * fired, and it FILLED AT +6.4% — a winner sold on a phantom bid.
+ *
+ * At the default 20% floor this defers exactly the 6 demonstrably-wrong stops in that
+ * window (CNH, TDOC, IOVA, SG, AUR, PTON) and still fires the 11 real ones, whose
+ * median realized was −29.6%.
+ *
+ * DO NOT RAISE IT TO 25. Measured: 25% defers 11 of the 17 intraday stops, including
+ * genuinely dead positions sitting at a −22% midpoint. 20 is the edge of the split.
+ *
+ * The midpoint is NOT truth either, and the justification is not that it predicts
+ * better. TDOC 2026-07-30 showed a −5.8% midpoint and booked −25.0%. The argument for
+ * this gate is narrower and harder to argue with: **stop triggering on a number the
+ * position cannot transact at.**
  *
  * SCOPE: the intraday floor only. The EOD floor (−10%) is deliberately untouched —
  * n=9 there, its floor is shallow enough that the same gap means something different,
@@ -107,7 +138,7 @@ const DEFAULT_STOP_LOSS_MID_CONFIRM_FLOOR = 0.20;
  * deferring one at 9am.
  */
 export function isStopLossMidConfirmEnabled(): boolean {
-  return toBooleanFlag(process.env.STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM ?? false);
+  return readEnvBool("STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM", true);
 }
 
 /**
@@ -177,29 +208,53 @@ function evaluateStopLossMidConfirmation(
 
 /**
  * The intraday floor's verdict once the BID trigger has already cleared. Split out
- * of the engine so the deferral branch is readable next to the close it replaces.
+ * of the engine so the deferral branches are readable next to the close they replace.
+ *
+ * Two independent conditions can hold the close back, in order:
+ *   1. mid confirmation — the quote does not agree that the position is broken;
+ *   2. persistence      — the quote agrees, but only on this one reading.
+ *
+ * Both deferrals suppress adds. Falling through to a plain MANAGE_ALLOCATION would
+ * let the allocator average down on the same quote the stop was just told not to
+ * trust — the honest reading of a disputed quote is "do nothing", not "do the
+ * opposite". It also keeps the group's cost basis static while a streak builds,
+ * which is what makes the store's WAF re-entry guard meaningful.
  */
 function resolveIntradayStop(
   metrics: PositionMetrics,
   currentReturn: number,
   intradayFloor: number,
+  persistence?: StopPersistenceContext,
 ): ExecutionStrategy {
   const midConfirmation = evaluateStopLossMidConfirmation(metrics, intradayFloor);
   if (midConfirmation.defer) {
-    // Hold, and suppress adds while holding. Falling through to a plain
-    // MANAGE_ALLOCATION would let the allocator average down on the same quote
-    // the stop was just told not to trust — the honest reading of a disputed
-    // quote is "do nothing", not "do the opposite".
     return {
       action: "MANAGE_ALLOCATION",
       reason: `Stop-loss deferred by mid confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% but mid ${((midConfirmation.midReturn ?? 0) * 100).toFixed(2)}% > -${(midConfirmation.midFloor * 100).toFixed(0)}%) - holding, no adds`,
       suppressAdds: true,
     };
   }
+
+  const persistenceVerdict = resolveStopPersistence(
+    currentReturn,
+    getMidReturn(metrics),
+    intradayFloor,
+    persistence,
+  );
+  if (persistenceVerdict.defer) {
+    return {
+      action: "MANAGE_ALLOCATION",
+      reason: `Stop-loss awaiting confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% on ${persistenceVerdict.observedCycles} of ${persistenceVerdict.requiredCycles} consecutive cycles) - holding, no adds`,
+      stopTriggerHeld: true,
+      suppressAdds: true,
+    };
+  }
+
   return {
     action: "CLOSE_POSITION",
-    reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered`,
+    reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered${persistenceVerdict.bypassed ? " (collapse bypass)" : ""}`,
     isUrgentClose: true,
+    stopTriggerHeld: true,
   };
 }
 
@@ -292,6 +347,77 @@ export function getDynamicTakeProfitTarget(currentTime: Date): number {
   return calcTimeBlend(currentTime, 0.4, 0.07, sixThirtyAM, twelveFiftyFivePM);
 }
 
+const DEFAULT_TAKE_PROFIT_MID_MARGIN = 0.05;
+
+/**
+ * STRATEGY_TAKE_PROFIT_ALLOW_MID — let the dynamic take-profit fire on the MIDPOINT
+ * as well as the bid. **Default ON.**
+ *
+ * WHY. The take-profit reads the same bid the stop does, so the same wide spreads
+ * that make the stop fire early make the take-profit fire late or never. Over
+ * 2026-07-17 → 08-07, across 14 symbol-days, **158 cycles sat above the dynamic
+ * target at the MIDPOINT while the bid had not reached it, against 5 cycles where
+ * the bid triggered.** SGML finished 2026-08-07 at a +22.3% midpoint and never sold.
+ * Fixing only the loss side of a bid-based engine leaves the win side censored — the
+ * bid stop and the bid target are the same measurement error with opposite signs.
+ */
+function isTakeProfitMidPathEnabled(): boolean {
+  return readEnvBool("STRATEGY_TAKE_PROFIT_ALLOW_MID", true);
+}
+
+/**
+ * STRATEGY_TAKE_PROFIT_MID_MARGIN_PCT — how far ABOVE the dynamic target the midpoint
+ * must sit before the mid path fires. Integer percent (`5` ⇒ target + 5pp), default 5.
+ *
+ * The margin exists because a mid trigger is a claim about a price we have not been
+ * shown: the close chase starts at the ask and CONCEDES downward, so a midpoint
+ * exactly at target would land under it on any fill below mid. Headroom means an
+ * ordinary concession still books at or above the target that justified the exit.
+ */
+function getTakeProfitMidMargin(): number {
+  const raw = process.env.STRATEGY_TAKE_PROFIT_MID_MARGIN_PCT?.trim();
+  const parsed = raw ? Number(raw) / 100 : DEFAULT_TAKE_PROFIT_MID_MARGIN;
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_TAKE_PROFIT_MID_MARGIN;
+}
+
+/**
+ * Can the midpoint alone justify a take-profit close?
+ *
+ * EXECUTABILITY is the whole design constraint here, and it is settled by how
+ * `closePosition` actually sells. A take-profit close is NON-urgent, so
+ * `getCloseStartPrice` posts it at the ASK and `getSellEdgePrice` walks it down to
+ * the BID over up to 10 rungs (close-position.ts). **The bid is therefore the
+ * worst-case fill of a mid-triggered exit** — triggering on a mid the position
+ * cannot transact at just starts a chase down, which is the exact mistake this
+ * change is fixing on the stop side.
+ *
+ * So the mid path additionally requires the BID to be at or above breakeven. That is
+ * an invariant, not a knob: a close classified `take-profit` must never be able to
+ * book a loss. It is what keeps the phantom quotes out — PTON's −63.05% bid against a
+ * +136.45% ask has a hugely positive midpoint and must never be sold into, and the
+ * IOVA cycle that printed a −53.3% bid against a +68% ask would clear a naive mid
+ * test on the same day the stop wrongly fired on it.
+ *
+ * The second half of executability is already in place and deliberately reused rather
+ * than duplicated: `shouldSkipClosePositionForMorningSpread` only waives the close-side
+ * spread ceiling for BID take-profits and urgent closes, so a mid-triggered close on a
+ * genuinely unusable spread is SKIPPED and the position simply held for another cycle.
+ * That is the sensible degradation — no fill beats a bad fill when nothing forces the
+ * exit.
+ */
+function isTakeProfitMidTriggered(
+  metrics: PositionMetrics,
+  bidReturn: number,
+  target: number,
+): boolean {
+  if (!isTakeProfitMidPathEnabled()) return false;
+  if (!(bidReturn >= 0)) return false;
+  const midReturn = getMidReturn(metrics);
+  return midReturn != null && midReturn >= target + getTakeProfitMidMargin();
+}
+
 function getTimeInMinutes(currentTime: Date): number {
   return currentTime.getHours() * 60 + currentTime.getMinutes();
 }
@@ -327,14 +453,56 @@ function evaluateScaledRunner(
 }
 
 /**
+ * The take-profit gate, or null when neither basis has reached the target.
+ *
+ * Both bases produce the SAME `Profit target reached (…)` prefix on purpose — the
+ * P&L ledger classifies closes by that prefix (pnl-ledger.ts `classifyCloseDecision`),
+ * so a mid-path exit has to stay a `take-profit` there. The tail names the basis so
+ * the two are still separable when reading the run history.
+ */
+function resolveTakeProfit(
+  metrics: PositionMetrics,
+  currentReturn: number,
+  dynamicTakeProfitTarget: number,
+  scaleOut?: ScaleOutContext,
+): ExecutionStrategy | null {
+  const targetPct = (dynamicTakeProfitTarget * 100).toFixed(2);
+  const bidTriggered = currentReturn >= dynamicTakeProfitTarget;
+  if (
+    !bidTriggered &&
+    !isTakeProfitMidTriggered(metrics, currentReturn, dynamicTakeProfitTarget)
+  ) {
+    return null;
+  }
+
+  const basis = bidTriggered
+    ? `${(currentReturn * 100).toFixed(2)}% >= ${targetPct}%`
+    : `mid ${((getMidReturn(metrics) ?? 0) * 100).toFixed(2)}% >= ${targetPct}% + ${(getTakeProfitMidMargin() * 100).toFixed(0)}pp, bid ${(currentReturn * 100).toFixed(2)}%`;
+  const scaling = scaleOut?.enabled === true;
+
+  return {
+    action: "CLOSE_POSITION",
+    reason: scaling
+      ? `Profit target reached (${basis}) - scaling out ${(scaleOut!.fraction * 100).toFixed(0)}%, letting the rest run`
+      : `Profit target reached (${basis}) - close position and lock in gains`,
+    ...(scaling ? { closeFraction: scaleOut!.fraction } : {}),
+  };
+}
+
+/**
  * Main Institutional Decision Engine
  * Tracks the state targets of the portfolio. If the action is MANAGE_ALLOCATION,
  * the broker pipeline should inspect exposure and execute buy orders accordingly.
+ *
+ * `stopPersistence` is the caller's cycle history for this group. Omitting it makes
+ * the persistence gate INERT — see resolveStopPersistence for why the execution-time
+ * re-check must not re-litigate a stop the cycle already confirmed.
  */
 export function evaluateTradingStrategy(
   metrics: PositionMetrics,
   accountType: StrategyAccountType = "unknown",
   scaleOut?: ScaleOutContext,
+  stopPersistence?: StopPersistenceContext,
 ): ExecutionStrategy {
   const { currentBidPrice, weightedAverageFill, currentTime, lastActionTime } = metrics;
 
@@ -366,15 +534,14 @@ export function evaluateTradingStrategy(
     return evaluateScaledRunner(currentReturn, dynamicTakeProfitTarget, scaleOut);
   }
 
-  if (currentReturn >= dynamicTakeProfitTarget) {
-    const scaling = scaleOut?.enabled === true;
-    return {
-      action: "CLOSE_POSITION",
-      reason: scaling
-        ? `Profit target reached (${(currentReturn * 100).toFixed(2)}% >= ${(dynamicTakeProfitTarget * 100).toFixed(2)}%) - scaling out ${(scaleOut!.fraction * 100).toFixed(0)}%, letting the rest run`
-        : `Profit target reached (${(currentReturn * 100).toFixed(2)}% >= ${(dynamicTakeProfitTarget * 100).toFixed(2)}%) - close position and lock in gains`,
-      ...(scaling ? { closeFraction: scaleOut!.fraction } : {}),
-    };
+  const takeProfit = resolveTakeProfit(
+    metrics,
+    currentReturn,
+    dynamicTakeProfitTarget,
+    scaleOut,
+  );
+  if (takeProfit) {
+    return takeProfit;
   }
 
   // Minimum 10-minute cooldown since last action
@@ -390,7 +557,12 @@ export function evaluateTradingStrategy(
   // Absolute Risk Floor Check
   const intradayFloor = getIntradayStopLossFloor();
   if (timeInMinutes < accumulationCutoffMinute && currentReturn <= -intradayFloor) {
-    return resolveIntradayStop(metrics, currentReturn, intradayFloor);
+    return resolveIntradayStop(
+      metrics,
+      currentReturn,
+      intradayFloor,
+      stopPersistence,
+    );
   }
 
   // 4. BLOCK ALL NEW ACCUMULATION PAST THE ACCOUNT-SPECIFIC CUTOFF
@@ -639,8 +811,9 @@ export function buildExecutionStrategy(
   metrics: PositionMetrics,
   accountType: StrategyAccountType = "unknown",
   scaleOut?: ScaleOutContext,
+  stopPersistence?: StopPersistenceContext,
 ): ExecutionStrategy {
-  return evaluateTradingStrategy(metrics, accountType, scaleOut);
+  return evaluateTradingStrategy(metrics, accountType, scaleOut, stopPersistence);
 }
 
 function roundToTwoDecimals(value: number): number {

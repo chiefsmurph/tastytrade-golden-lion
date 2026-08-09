@@ -139,37 +139,61 @@ function withEnv<T>(vars: Record<string, string | undefined>, run: () => T): T {
   }
 }
 
-const OFF = {
+// Every var absent ⇒ the in-code defaults. Since 2026-08-08 that means the mid
+// confirmation is ON (see isStopLossMidConfirmEnabled); DISABLED is the explicit
+// opt-out that restores the original bid-only stop.
+const ON = {
   STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM: undefined,
   STRATEGY_STOP_LOSS_MID_CONFIRM_PCT: undefined,
   STRATEGY_INTRADAY_STOP_LOSS_PCT: undefined,
   STRATEGY_EOD_STOP_LOSS_PCT: undefined,
 };
-const ON = { ...OFF, STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM: "true" };
+const DISABLED = { ...ON, STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM: "false" };
 
-test("default (pref absent) stops every real ledger trigger exactly as today", () => {
-  withEnv(OFF, () => {
+test("default (pref absent) applies the mid confirmation", () => {
+  withEnv(ON, () => {
+    for (const fixture of DEEP_STOPS) {
+      const strategy = evaluateTradingStrategy(metricsFor(fixture), "cash");
+      assert.equal(
+        strategy.action,
+        "CLOSE_POSITION",
+        `${fixture.label}: mid ${fixture.midReturnPct}% is under the confirmation floor`,
+      );
+      assert.equal(strategy.isUrgentClose, true, fixture.label);
+      assert.match(strategy.reason, /stop loss triggered/);
+    }
+    for (const fixture of PHANTOM_STOPS) {
+      assert.equal(
+        evaluateTradingStrategy(metricsFor(fixture), "cash").action,
+        "MANAGE_ALLOCATION",
+        `${fixture.label}: mid ${fixture.midReturnPct}% must defer by default now`,
+      );
+    }
+  });
+});
+
+test("a blank pref means the in-code default, not off", () => {
+  // dotenv turns `KEY=` into "", which is NOT nullish — a `?? true` read would
+  // silently invert the flag. Blank must behave exactly like absent.
+  withEnv({ ...ON, STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM: "" }, () => {
+    assert.equal(
+      evaluateTradingStrategy(metricsFor(PHANTOM_STOPS[0]), "cash").action,
+      "MANAGE_ALLOCATION",
+    );
+  });
+});
+
+test("pref explicitly false restores the original bid-only stop", () => {
+  withEnv(DISABLED, () => {
     for (const fixture of [...DEEP_STOPS, ...PHANTOM_STOPS]) {
       const strategy = evaluateTradingStrategy(metricsFor(fixture), "cash");
       assert.equal(
         strategy.action,
         "CLOSE_POSITION",
-        `${fixture.label}: default must keep firing (bid ${fixture.bidReturnPct}%)`,
+        `${fixture.label}: bid-only must keep firing (bid ${fixture.bidReturnPct}%)`,
       );
       assert.equal(strategy.isUrgentClose, true, fixture.label);
       assert.match(strategy.reason, /stop loss triggered/);
-    }
-  });
-});
-
-test("pref explicitly false is the same as absent", () => {
-  withEnv({ ...OFF, STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM: "false" }, () => {
-    for (const fixture of PHANTOM_STOPS) {
-      assert.equal(
-        evaluateTradingStrategy(metricsFor(fixture), "cash").action,
-        "CLOSE_POSITION",
-        fixture.label,
-      );
     }
   });
 });

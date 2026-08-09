@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getHeldContractFallbackCandidate } from "../actions/manage-allocation";
-import { isCostBlockedSeedReason, isNoFittingSeedCandidateReason } from "../run-cycle-seed";
+import {
+  isCostBlockedSeedReason,
+  isNoFittingSeedCandidateReason,
+  isSeedEligibleEvaluation,
+} from "../run-cycle-seed";
 import type { PositionGroupEvaluation } from "../evaluate-position";
 
 function occSymbol(root: string, yymmdd: string, strike: string): string {
@@ -249,5 +253,63 @@ test("isCostBlockedSeedReason matches only buying-power failures", () => {
   assert.equal(
     isCostBlockedSeedReason("underlying already has an open position"),
     false,
+  );
+});
+
+// Cross-account seeding eligibility. A seed is an ADD, so the two seed passes must
+// respect the same "hold, don't add" verdicts the local allocator does — otherwise a
+// group the allocator is forbidden to touch (a stop awaiting confirmation, a
+// mid-disputed stop, a scaled runner) gets averaged into from the far side of the
+// book instead.
+function evaluationWithStrategy(
+  strategy: PositionGroupEvaluation["strategy"],
+): PositionGroupEvaluation {
+  return { ...buildEvaluation([{ symbol: "X", bid: 1, ask: 1 }]), strategy };
+}
+
+test("isSeedEligibleEvaluation: only a group that is genuinely adding may be seeded", () => {
+  assert.equal(
+    isSeedEligibleEvaluation(
+      evaluationWithStrategy({ action: "MANAGE_ALLOCATION", reason: "normal" }),
+    ),
+    true,
+  );
+  assert.equal(
+    isSeedEligibleEvaluation(
+      evaluationWithStrategy({ action: "CLOSE_POSITION", reason: "stop" }),
+    ),
+    false,
+  );
+  assert.equal(
+    isSeedEligibleEvaluation(
+      evaluationWithStrategy({
+        action: "MANAGE_ALLOCATION",
+        reason: "Stop-loss awaiting confirmation (1 of 2 consecutive cycles)",
+        suppressAdds: true,
+      }),
+    ),
+    false,
+    "a stop mid-streak must not be averaged into from the other account",
+  );
+  assert.equal(
+    isSeedEligibleEvaluation(
+      evaluationWithStrategy({
+        action: "MANAGE_ALLOCATION",
+        reason: "Scaled runner riding",
+        suppressAdds: true,
+      }),
+    ),
+    false,
+  );
+  // Explicit false is not the same as "suppressed".
+  assert.equal(
+    isSeedEligibleEvaluation(
+      evaluationWithStrategy({
+        action: "MANAGE_ALLOCATION",
+        reason: "normal",
+        suppressAdds: false,
+      }),
+    ),
+    true,
   );
 });
