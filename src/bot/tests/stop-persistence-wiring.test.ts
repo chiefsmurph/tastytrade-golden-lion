@@ -15,6 +15,20 @@ import { evaluatePositionGroup } from "~/bot/evaluate-position";
 
 const CYCLE_MS = 4 * 60 * 1000;
 
+// ONE TIME BASE, and it is LOCAL — `cycleTime` below builds the simulated cycle
+// clock in local time because the engine reads time-of-day off getHours(), and
+// evaluate-position turns `updated-at` straight into metrics.lastActionTime. The
+// `"2026-08-08T12:00:00Z"` literal this replaced was read as 05:00 in PT but
+// 15:00 in MSK and 21:00 in JST, i.e. AFTER the simulated 09:30 cycle: elapsed
+// went negative, the engine short-circuited on "Still in cooldown period
+// (-330.0 min < 10 min)", and every stop assertion in this file failed with the
+// strategy parked on MANAGE_ALLOCATION in any zone east of UTC.
+//
+// 08:00 keeps the last action a comfortable 90 minutes before cycle 0, so the
+// 10-minute cooldown is never what this file is measuring.
+const POSITION_UPDATED_AT = "2026-08-08T08:00:00";
+const FIRST_CYCLE_AT = new Date(2026, 7, 8, 9, 30, 0, 0);
+
 function positionFor(underlying: string, averageOpenPrice: number): CurrentPosition {
   return {
     "account-number": "TEST",
@@ -25,14 +39,12 @@ function positionFor(underlying: string, averageOpenPrice: number): CurrentPosit
     "streamer-symbol": `.${underlying}260814C12`,
     symbol: `${underlying}  260814C00012000`,
     "underlying-symbol": underlying,
-    "updated-at": "2026-08-08T12:00:00Z",
+    "updated-at": POSITION_UPDATED_AT,
   } as unknown as CurrentPosition;
 }
 
 function cycleTime(index: number): Date {
-  const time = new Date(2026, 7, 8);
-  time.setHours(9, 30, 0, 0);
-  return new Date(time.getTime() + index * CYCLE_MS);
+  return new Date(FIRST_CYCLE_AT.getTime() + index * CYCLE_MS);
 }
 
 async function withHarness(
@@ -71,6 +83,19 @@ async function withHarness(
 const STOPPING = { ask: 0.78, bid: 0.7 };
 const RECOVERED = { ask: 1.2, bid: 1.1 };
 const WAF = 1.17;
+
+// The premise every case below rests on: the engine's 10-minute cooldown check
+// runs BEFORE the stop floor, so if `updated-at` and the cycle clock are not on
+// the same time base these tests stop measuring persistence and start measuring
+// the cooldown — silently, with the strategy parked on MANAGE_ALLOCATION.
+test("premise: the fixture's last action is well before cycle 0, in any timezone", () => {
+  const elapsedMinutes =
+    (cycleTime(0).getTime() - Date.parse(POSITION_UPDATED_AT)) / 60_000;
+  assert.ok(
+    elapsedMinutes >= 60,
+    `updated-at must precede the first cycle by more than the 10-min cooldown; got ${elapsedMinutes} min — is one of them a "...Z" literal?`,
+  );
+});
 
 test("the first cycle holds, the second closes", async () => {
   await withHarness(async (setQuote) => {
@@ -149,6 +174,40 @@ test("a re-entry at a different cost basis starts over", async () => {
       "MANAGE_ALLOCATION",
     );
   });
+});
+
+test("the streak advances on the CYCLE clock, not the wall clock", async () => {
+  // These cycles are 4 minutes apart on the simulated clock but microseconds
+  // apart in real time, and the store refuses to advance a streak twice inside
+  // getStreakAdvanceMinMs (half a run interval = 2 min here). So a 3-cycle
+  // requirement only ever completes if the store is measuring the same clock the
+  // engine is. At 2 cycles this is invisible — the second cycle closes off the
+  // first cycle's row either way — which is why it takes 3 to pin it.
+  const prior = process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES;
+  process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES = "3";
+  try {
+    await withHarness(async (setQuote) => {
+      setQuote(STOPPING.bid, STOPPING.ask);
+      const positions = [positionFor("CLSK", WAF)];
+
+      for (const index of [0, 1]) {
+        assert.equal(
+          (await evaluatePositionGroup(positions, cycleTime(index), "cash"))?.strategy
+            .action,
+          "MANAGE_ALLOCATION",
+          `cycle ${index + 1} of 3 must still hold`,
+        );
+      }
+      assert.equal(
+        (await evaluatePositionGroup(positions, cycleTime(2), "cash"))?.strategy.action,
+        "CLOSE_POSITION",
+        "the third consecutive cycle closes — if this holds, the streak stopped advancing",
+      );
+    });
+  } finally {
+    if (prior === undefined) delete process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES;
+    else process.env.STRATEGY_STOP_LOSS_PERSIST_CYCLES = prior;
+  }
 });
 
 test("an unknown account type leaves the gate inert (today's behaviour)", async () => {
