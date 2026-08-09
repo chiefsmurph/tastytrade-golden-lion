@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { evaluateTradingStrategy } from "~/strategy/evaluate-trading-strategy";
+import { localTimeAt, minutesBefore } from "./test-clock";
 
 // STRATEGY_STOP_LOSS_REQUIRE_MID_CONFIRM — the intraday bid stop must also see the
 // MIDPOINT under a (shallower) floor before it fires.
@@ -107,15 +108,15 @@ function metricsFor(
   hours = 8,
   minutes = 15,
 ) {
-  const currentTime = new Date();
-  currentTime.setHours(hours, minutes, 0, 0);
+  // LOCAL wall clock, pinned: the engine's time-of-day branches read getHours().
+  const currentTime = localTimeAt(hours, minutes);
   return {
     currentAskPrice: fixture.ask,
     currentBidPrice: fixture.bid,
     currentTime,
     // Well past the 10-minute cooldown, which would otherwise short-circuit
     // before the stop is ever reached.
-    lastActionTime: new Date(currentTime.getTime() - 45 * 60 * 1000),
+    lastActionTime: minutesBefore(currentTime, 45),
     weightedAverageFill: fixture.weightedAverageFill,
   };
 }

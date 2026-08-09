@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { closePosition } from "../actions/close-position";
 import type { PositionGroupEvaluation } from "../evaluate-position";
+import { localTimeOn } from "./test-clock";
 
 // STRATEGY_CLOSE_TICK_INTERVAL_MS — how long each rung of the close chase rests
 // before conceding a tick.
@@ -34,8 +35,10 @@ function makeEvaluation(bid: number, ask: number): PositionGroupEvaluation {
       currentBidPrice: bid,
       currentAskPrice: ask,
       weightedAverageFill: 0.65,
-      currentTime: new Date("2026-08-03T17:00:00.000Z"),
-      lastActionTime: new Date("2026-08-03T16:00:00.000Z"),
+      // 2026-08-03 10:00 LOCAL. The close path reads getHours(), so the `...Z`
+      // literal this replaced was a different time of day in every timezone.
+      currentTime: localTimeOn(3, 10, 0),
+      lastActionTime: localTimeOn(3, 9, 0),
     },
     strategy: "CLOSE_POSITION",
     currentReturn: 0.15,

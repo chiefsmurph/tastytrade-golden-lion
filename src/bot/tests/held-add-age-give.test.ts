@@ -88,6 +88,17 @@ test("hard cap bounds the give even when the env tunables are absurd", () => {
   );
 });
 
+// ONE TIME BASE, and it is LOCAL. `created-at` is read with Date.parse and
+// differenced against a Date built here (getHeldGroupAgeDays), and the
+// entry-spread ramp reads getHours() off the same clock. The `...Z` literals
+// these replaced were differenced against a local `new Date("...T10:30:00")`,
+// so the measured age moved by the runner's UTC offset — up to ±14h of the
+// 3-day age that decides the give. 10:30 is midday enough that the entry-spread
+// ramp is at its plateau, so a tight spread passes.
+const AT_1030 = new Date("2026-07-10T10:30:00");
+const CREATED_3_DAYS_EARLIER = "2026-07-07T10:30:00";
+const CREATED_SAME_DAY = "2026-07-10T10:00:00";
+
 function occSymbol(root: string, yymmdd: string, strike: string): string {
   return `${root.padEnd(6, " ")}${yymmdd}C${strike}`;
 }
@@ -106,15 +117,15 @@ function buildEvaluation(snapshot: {
     metrics: {
       currentAskPrice: snapshot.ask,
       currentBidPrice: snapshot.bid,
-      currentTime: new Date(),
-      lastActionTime: new Date(),
+      currentTime: AT_1030,
+      lastActionTime: AT_1030,
       weightedAverageFill: snapshot.waf,
     },
     positionSnapshots: [
       {
         currentAskPrice: snapshot.ask,
         currentBidPrice: snapshot.bid,
-        lastActionTime: new Date(),
+        lastActionTime: AT_1030,
         position: {
           "account-number": "ACC-1",
           "created-at": snapshot.createdAt,
@@ -141,13 +152,13 @@ function buildEvaluation(snapshot: {
 }
 
 test("getHeldGroupAgeDays reads the earliest created-at; null when absent", () => {
-  const now = new Date("2026-07-10T10:30:00.000Z");
+  const now = AT_1030;
   const aged = buildEvaluation({
     symbol: occSymbol("LCID", "260717", "00006000"),
     bid: 0.44,
     ask: 0.46,
     waf: 0.4,
-    createdAt: "2026-07-07T10:30:00.000Z",
+    createdAt: CREATED_3_DAYS_EARLIER,
   });
   const age = getHeldGroupAgeDays(aged, now);
   assert.ok(age !== null && Math.abs(age - 3) < 0.01);
@@ -161,9 +172,6 @@ test("getHeldGroupAgeDays reads the earliest created-at; null when absent", () =
   assert.equal(getHeldGroupAgeDays(undated, now), null);
 });
 
-// Midday so the entry-spread ramp is at its plateau; a tight spread passes.
-const at1030 = new Date("2026-07-10T10:30:00");
-
 test("flag OFF preserves current behavior: aged position still blocked above avg", () => {
   withGiveEnv({}, () => {
     // 3 days old, ask 0.48 above 0.40 avg. With the flag off there is no give,
@@ -173,9 +181,9 @@ test("flag OFF preserves current behavior: aged position still blocked above avg
       bid: 0.46,
       ask: 0.48,
       waf: 0.4,
-      createdAt: "2026-07-07T10:30:00.000Z",
+      createdAt: CREATED_3_DAYS_EARLIER,
     });
-    const result = getHeldContractFallbackCandidate(evaluation, "margin", at1030);
+    const result = getHeldContractFallbackCandidate(evaluation, "margin", AT_1030);
     assert.equal(result.symbol, undefined);
     assert.match(result.skippedReason ?? "", /above our avg .*average down only/);
   });
@@ -195,9 +203,9 @@ test("flag ON: aged position clears the give; fresh position still blocked", () 
         bid: 0.4,
         ask: 0.41,
         waf: 0.4,
-        createdAt: "2026-07-07T10:30:00.000Z",
+        createdAt: CREATED_3_DAYS_EARLIER,
       });
-      const agedResult = getHeldContractFallbackCandidate(aged, "margin", at1030);
+      const agedResult = getHeldContractFallbackCandidate(aged, "margin", AT_1030);
       assert.equal(
         agedResult.symbol,
         occSymbol("LCID", "260717", "00006000"),
@@ -211,9 +219,9 @@ test("flag ON: aged position clears the give; fresh position still blocked", () 
         bid: 0.4,
         ask: 0.41,
         waf: 0.4,
-        createdAt: "2026-07-10T10:00:00.000Z",
+        createdAt: CREATED_SAME_DAY,
       });
-      const freshResult = getHeldContractFallbackCandidate(fresh, "margin", at1030);
+      const freshResult = getHeldContractFallbackCandidate(fresh, "margin", AT_1030);
       assert.equal(freshResult.symbol, undefined);
       assert.match(freshResult.skippedReason ?? "", /average down only/);
     },

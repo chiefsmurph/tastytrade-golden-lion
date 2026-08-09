@@ -19,15 +19,21 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { shouldSkipClosePositionForMorningSpread } from "~/bot/actions/close-position";
+import { localTimeAt } from "./test-clock";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (rel: string) => readFileSync(resolve(here, rel), "utf8");
 
 // A wide-spread, mid-morning group — the SGML shape.
+//
+// 07:30 is built in LOCAL time on purpose: the gate reads the hour off
+// `currentTime.getHours()`, so the old `"2026-08-07T14:30:00Z"` literal was
+// 07:30 in PT and 23:30 in JST — past EOD_ARMED_MINUTE, where the gate bows out
+// entirely and this control case silently inverted.
 const wideSpreadEvaluation = (): never =>
   ({
     metrics: {
-      currentTime: new Date("2026-08-07T14:30:00Z"), // inside the morning window
+      currentTime: localTimeAt(7, 30), // inside the morning window
       currentBidPrice: 1.0,
       currentAskPrice: 2.6, // ~89% spread, far past any cap
       weightedAverageFill: 2.8, // deeply red, so no take-profit escape
