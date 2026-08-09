@@ -28,9 +28,10 @@ export interface SecretSourcePosition {
   thesisMax?: number; // feed-side flag count (currently 4)
   manualThesisCount?: number; // manually-curated thesis — the preferred score source
   manualThesisMax?: number; // always 10
-  // Upstream computes willBuy = isBuyEligible && …, always concrete. Read by
-  // the sticky margin trigger (full thesis observed today + willBuy now) and
-  // the margin willBuy hard gate.
+  // Upstream computes willBuy = isBuyEligible && …, always concrete. Since
+  // 2026-08-08 it is the ONLY signal condition on a margin auto-seed (the
+  // full-thesis requirement that sat on top of it measured backwards — see
+  // evaluateMarginSeedThesisGate), and it is also the margin willBuy hard gate.
   willBuy?: boolean;
 
   // ── AVAILABLE (not read yet) ──────────────────────────────────────────────
