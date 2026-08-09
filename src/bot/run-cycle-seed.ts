@@ -197,7 +197,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
         gated: true,
         gateReason: decision.reason,
       }));
-      recordSeedSkip(accountNumber, `seed gate: ${decision.reason}`);
+      recordSeedSkip(accountNumber, `seed gate: ${decision.reason}`, { symbol });
       continue;
     }
 
@@ -206,7 +206,7 @@ export async function maybeSeedMarginAccountFromCashAccount(
       orderSource: MARGIN_SEED_FROM_CASH_ORDER_SOURCE,
       maxLimitPrice: cashFill > 0 ? cashFill : undefined,
     });
-    recordSeedAttempt(accountNumber, result);
+    recordSeedAttempt(accountNumber, result, { symbol });
 
     if (result.placedOrder) {
       await recordPositionOpened(accountNumber, symbol, side);
@@ -347,7 +347,7 @@ export async function maybeSeedCashAccountFromMarginAccount(
         gated: true,
         gateReason: decision.reason,
       }));
-      recordSeedSkip(accountNumber, `seed gate: ${decision.reason}`);
+      recordSeedSkip(accountNumber, `seed gate: ${decision.reason}`, { symbol });
       continue;
     }
 
@@ -402,7 +402,7 @@ export async function maybeSeedCashAccountFromMarginAccount(
       }
     }
 
-    recordSeedAttempt(accountNumber, result);
+    recordSeedAttempt(accountNumber, result, { symbol });
 
     if (result.placedOrder) {
       await recordPositionOpened(accountNumber, symbol, side);

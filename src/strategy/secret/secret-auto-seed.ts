@@ -21,18 +21,42 @@ const lastMarginAllSignalsSeedAtBySymbol = new Map<string, number>();
 // buying-power skip blocked retries for 10 min, while optionless names got a
 // fresh chain walk every 10 min forever. Split by outcome instead:
 //   placed       → the existing per-path cooldown map (10 min default).
-//   no-chain     → very long, symbol-keyed. The underlying is not optionable at
-//                  all (zero expirations anywhere) — a permanent property, so
-//                  re-probing burns a full chain fetch for a name that can NEVER
-//                  seed. Account-independent.
-//   no-candidate → long, symbol-keyed (a chain exists but has no usable
-//                  candidate — including DTE-window misses — account-independent
-//                  and rarely changing intraday).
+//   no-chain     → very long, account+symbol-keyed. The underlying looks
+//                  un-optionable (zero expirations anywhere), so re-probing
+//                  burns a full chain fetch for a name that likely can never seed.
+//   no-candidate → long, account+symbol-keyed (a chain exists but has no usable
+//                  candidate — including DTE-window misses — and that rarely
+//                  changes intraday).
 //   retry        → short, account+symbol-keyed (buying power, dry-run… are
 //                  transient and account-specific).
-const noChainSeedAtBySymbol = new Map<string, number>();
-const noCandidateSeedAtBySymbol = new Map<string, number>();
+//
+// ALL FOUR outcome benches are account-scoped. no-chain and no-candidate used to
+// be keyed by SYMBOL ALONE, on the theory that "this underlying has no usable
+// contract" is a property of the underlying rather than of the account. It is
+// not: the two accounts never evaluate the same contract set. They run different
+// spread caps (cash 0.20 vs margin 0.10 — see ~/strategy/liquidity-gate) and the
+// cash path additionally requires the CASH_ACCOUNT_SEED_MIN_DTE-MAX_DTE window
+// that margin never applies — two of the NO_CANDIDATE_SKIP_REASONS below
+// literally begin "cash seed …". So a cash-only miss benched MARGIN for 45 min
+// (3h for no-chain) on a name margin had not even looked at.
+//
+// Measured over 17 sessions of production logs: the cash path set 142 of these
+// symbol-keyed benches, and in 142 of 142 margin made zero seed attempts for
+// that symbol inside the bench window; 33 of the 142 used a structurally
+// cash-only DTE-window reason. On 2026-08-05 margin finished the day with 51
+// cooldown suppressions and no seed attempt at all.
+//
+// The 10-min `placed` cooldown is deliberately NOT touched — it is the only
+// duplicate-order guard (hasOpenUnderlyingPosition reads broker positions, so
+// working limit orders are invisible to it).
+const noChainSeedAtByAccountSymbol = new Map<string, number>();
+const noCandidateSeedAtByAccountSymbol = new Map<string, number>();
 const retrySeedAtByAccountSymbol = new Map<string, number>();
+
+// Shared key builder so the three account-scoped benches cannot drift apart.
+function accountSymbolKey(accountNumber: string, symbol: string): string {
+  return `${accountNumber}:${symbol}`;
+}
 
 export type SeedOutcomeCooldownKind = "placed" | "no-chain" | "no-candidate" | "retry";
 
@@ -92,6 +116,35 @@ function getEffectiveNoCandidateCooldownMs(attemptAt: number): number {
     : getNoCandidateCooldownMs();
 }
 
+// Which of the four cooldowns (placed / no-chain / no-candidate / retry) is
+// currently benching this symbol+account, or null when none is. Returning the
+// kind rather than a bare boolean is what lets the caller record WHY a seed was
+// suppressed: the scoreboard's `cooldown` bucket used to be a single opaque
+// number covering all four, with no way to tell a 10-min duplicate-order guard
+// from a 3-hour no-chain bench.
+export function getActiveAutoSeedCooldownKind(
+  cooldownMap: Map<string, number>,
+  symbol: string,
+  accountNumber: string,
+  now: number,
+): SeedOutcomeCooldownKind | null {
+  const key = accountSymbolKey(accountNumber, symbol);
+  const lastSeedAt = cooldownMap.get(symbol) ?? 0;
+  if (now - lastSeedAt < getAutoSeedCooldownMs()) {
+    return "placed";
+  }
+  const lastNoChainAt = noChainSeedAtByAccountSymbol.get(key) ?? 0;
+  if (now - lastNoChainAt < getNoChainCooldownMs()) {
+    return "no-chain";
+  }
+  const lastNoCandidateAt = noCandidateSeedAtByAccountSymbol.get(key) ?? 0;
+  if (now - lastNoCandidateAt < getEffectiveNoCandidateCooldownMs(lastNoCandidateAt)) {
+    return "no-candidate";
+  }
+  const lastRetryAt = retrySeedAtByAccountSymbol.get(key) ?? 0;
+  return now - lastRetryAt < getRetryCooldownMs() ? "retry" : null;
+}
+
 // Exported for tests: true while ANY of the four cooldowns (placed / no-chain /
 // no-candidate / retry) is still active for this symbol+account.
 export function isAutoSeedCooldownActive(
@@ -100,20 +153,7 @@ export function isAutoSeedCooldownActive(
   accountNumber: string,
   now: number,
 ): boolean {
-  const lastSeedAt = cooldownMap.get(symbol) ?? 0;
-  if (now - lastSeedAt < getAutoSeedCooldownMs()) {
-    return true;
-  }
-  const lastNoChainAt = noChainSeedAtBySymbol.get(symbol) ?? 0;
-  if (now - lastNoChainAt < getNoChainCooldownMs()) {
-    return true;
-  }
-  const lastNoCandidateAt = noCandidateSeedAtBySymbol.get(symbol) ?? 0;
-  if (now - lastNoCandidateAt < getEffectiveNoCandidateCooldownMs(lastNoCandidateAt)) {
-    return true;
-  }
-  const lastRetryAt = retrySeedAtByAccountSymbol.get(`${accountNumber}:${symbol}`) ?? 0;
-  return now - lastRetryAt < getRetryCooldownMs();
+  return getActiveAutoSeedCooldownKind(cooldownMap, symbol, accountNumber, now) !== null;
 }
 
 // Exported for tests: stamps the map matching the classified outcome.
@@ -124,14 +164,15 @@ export function recordSeedOutcomeCooldown(
   accountNumber: string,
   now: number,
 ): void {
+  const key = accountSymbolKey(accountNumber, symbol);
   if (kind === "placed") {
     cooldownMap.set(symbol, now);
   } else if (kind === "no-chain") {
-    noChainSeedAtBySymbol.set(symbol, now);
+    noChainSeedAtByAccountSymbol.set(key, now);
   } else if (kind === "no-candidate") {
-    noCandidateSeedAtBySymbol.set(symbol, now);
+    noCandidateSeedAtByAccountSymbol.set(key, now);
   } else {
-    retrySeedAtByAccountSymbol.set(`${accountNumber}:${symbol}`, now);
+    retrySeedAtByAccountSymbol.set(key, now);
   }
 }
 
@@ -386,8 +427,23 @@ async function maybeAutoSeedSymbol(options: {
   governorMult?: number;
 }): Promise<void> {
   const now = Date.now();
-  if (isAutoSeedCooldownActive(options.cooldownMap, options.symbol, options.accountNumber, now)) {
-    recordSeedSkip(options.accountNumber, "seed suppressed by cooldown");
+  const activeCooldownKind = getActiveAutoSeedCooldownKind(
+    options.cooldownMap,
+    options.symbol,
+    options.accountNumber,
+    now,
+  );
+  if (activeCooldownKind !== null) {
+    // The kind is embedded in the reason string so the scoreboard's `cooldown`
+    // bucket becomes decomposable. All four spellings still classify as
+    // `cooldown` (classifySeedRejection matches the "cooldown" substring, and
+    // none of them contains an earlier rule's needle — "no-candidate" is
+    // hyphenated, so it does not match the "no candidate" no-chain rule).
+    recordSeedSkip(
+      options.accountNumber,
+      `seed suppressed by ${activeCooldownKind} cooldown`,
+      { symbol: options.symbol },
+    );
     return;
   }
 
@@ -397,7 +453,7 @@ async function maybeAutoSeedSymbol(options: {
       priceMode: "mid",
       governorMult: options.governorMult,
     });
-    recordSeedAttempt(options.accountNumber, result);
+    recordSeedAttempt(options.accountNumber, result, { symbol: options.symbol });
     const cooldownKind = classifySeedOutcomeCooldown(result);
     recordSeedOutcomeCooldown(
       cooldownKind,
