@@ -35,6 +35,11 @@ import {
   manageAllocationForGroup,
 } from "./actions/manage-allocation";
 import { getDoNotTouchGroupKeys, isEvaluationDoNotTouch } from "./do-not-touch-groups";
+import {
+  buildProvenanceReport,
+  isManualProvenanceAutoProtectEnabled,
+  logProvenanceReport,
+} from "./position-provenance";
 import { computePerLegReturnBreakdown } from "./per-leg-returns";
 import { computeUnderlyingStabilization } from "./underlying-stabilization";
 import { PositionGroupEvaluation } from "./evaluate-position";
@@ -302,6 +307,41 @@ export function normalizeGroupExecutionTargetExposures(
   });
 }
 
+/**
+ * The env-configured do-not-touch set, plus (only when armed) any group the
+ * broker's own order history positively attributes to the OWNER rather than to
+ * the strategy.
+ *
+ * Reusing `BOT_DO_NOT_TOUCH_GROUPS` rather than inventing a parallel path is
+ * deliberate: that one set is already consulted by the close path (stop loss and
+ * take profit), the allocation path, the overnight reduction, the live-order
+ * cancel sweep, and — because do-not-touch groups are filtered out of the
+ * actionable list before anything executes — the 12:50 margin EOD sweep too.
+ *
+ * The classification is computed and LOGGED every cycle regardless of the flag;
+ * with the flag off the returned set is byte-identical to today's.
+ */
+async function resolveDoNotTouchGroupKeys(
+  accountNumber: string,
+  evaluations: readonly PositionGroupEvaluation[],
+): Promise<Set<string>> {
+  const configuredKeys = getDoNotTouchGroupKeys();
+  const armed = isManualProvenanceAutoProtectEnabled();
+
+  const report = await buildProvenanceReport({
+    accountNumber,
+    groupKeys: evaluations.map((evaluation) => evaluation.groupKey),
+    fetchOrders: (account, queryParams) =>
+      tastytradeApi.orderService.getOrders(account, queryParams),
+  });
+  logProvenanceReport(accountNumber, report, armed);
+
+  if (!armed) {
+    return configuredKeys;
+  }
+  return new Set([...configuredKeys, ...report.manualGroupKeys]);
+}
+
 // fallow-ignore-next-line complexity
 export async function buildRunCycleContext(
   accountNumber?: string,
@@ -334,9 +374,12 @@ export async function buildRunCycleContext(
     accountBalances,
     accountMarginOrCash,
   );
-  const doNotTouchGroupKeys = getDoNotTouchGroupKeys();
-
   const completedEvaluations = await getPositionEvaluations(resolvedAccountNumber);
+  const doNotTouchGroupKeys = await resolveDoNotTouchGroupKeys(
+    resolvedAccountNumber,
+    completedEvaluations,
+  );
+
   const ignoredEvaluations = completedEvaluations.filter((evaluation) =>
     isEvaluationDoNotTouch(evaluation, doNotTouchGroupKeys),
   );
