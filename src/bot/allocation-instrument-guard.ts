@@ -10,11 +10,20 @@
  * ?? "none"`) — and the allocator then reads that share lot as a call position
  * to accumulate into, on the same underlying, with the bot's money.
  *
- * This is the ENTRY half of a hole whose EXIT half is closed by the close-side
- * instrument guard (PR #43, `feat/equity-close-guard`), which stops the margin
- * EOD sweep from liquidating those same shares. The two are deliberately
- * symmetric and share one predicate (`position-instrument.ts`): the bot may only
- * act on an instrument it is capable of opening itself.
+ * This is the ENTRY half of a hole whose EXIT half is closed by
+ * [close-instrument-guard.ts](./close-instrument-guard.ts), which stops the margin
+ * EOD sweep from liquidating those same shares. The two are deliberately symmetric
+ * and share ONE predicate — `isOpenableInstrument` / `getNonOpenablePositions`,
+ * imported from that module rather than restated here: the bot may only act on an
+ * instrument it is capable of opening itself.
+ *
+ * The shared predicate carries the OCC-symbol-shape fallback for a missing broker
+ * `instrument-type`, and that is a safety property BOTH guards depend on: a
+ * well-formed 21-character contract symbol still reads as an option, so an absent
+ * broker field can never silently reclassify a real option — on the close side that
+ * would disarm a live stop, and here it would strand a position the bot opened
+ * itself. A bare ticker cannot pass the shape test, so a share lot is caught either
+ * way.
  *
  * WHY A SKIP AND NOT AN IMPLICIT DO-NOT-TOUCH. Do-not-touch groups are dropped
  * from the execution-path exposure sums (`run-cycle-context.ts` filters them out
@@ -32,7 +41,10 @@
 
 import { readEnvBool } from "~/core/env-utils";
 import type { PositionGroupEvaluation } from "./evaluate-position";
-import { getNonOpenablePositions, getPositionInstrumentType } from "./position-instrument";
+import {
+  getNonOpenablePositions,
+  getPositionInstrumentType,
+} from "./close-instrument-guard";
 
 /** Greppable token on every suppressed allocation. */
 export const ALLOCATION_INSTRUMENT_SUPPRESSED_TOKEN = "ALLOCATION_INSTRUMENT_SUPPRESSED";
@@ -59,7 +71,7 @@ export function isAllocationBlockedByInstrumentGuard(
   evaluation: Pick<PositionGroupEvaluation, "positions">,
 ): boolean {
   if (!isAllocationInstrumentGuardEnabled()) return false;
-  return getNonOpenablePositions(evaluation.positions).length > 0;
+  return getNonOpenablePositions(evaluation).length > 0;
 }
 
 /** The instrument types that caused the block, deduped and in encounter order. */
@@ -67,7 +79,7 @@ function getBlockingInstrumentTypes(
   evaluation: Pick<PositionGroupEvaluation, "positions">,
 ): string[] {
   return [
-    ...new Set(getNonOpenablePositions(evaluation.positions).map(getPositionInstrumentType)),
+    ...new Set(getNonOpenablePositions(evaluation).map(getPositionInstrumentType)),
   ];
 }
 
@@ -99,7 +111,7 @@ export function logSuppressedAllocation(context: {
   targetDTE?: number;
 }): void {
   const { accountNumber, evaluation } = context;
-  const blocked = getNonOpenablePositions(evaluation.positions);
+  const blocked = getNonOpenablePositions(evaluation);
 
   console.log(
     JSON.stringify({

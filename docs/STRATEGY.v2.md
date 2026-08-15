@@ -693,11 +693,14 @@ option buying on the same underlying. That `?? "call"` default is *correct* for 
 option group whose symbols will not parse; the fix is to stop equity reaching it, not
 to change it.
 
-**Predicate.** `isOpenableInstrument`
-([position-instrument.ts](../src/bot/position-instrument.ts)) — the broker
+**Predicate — shared with §6e, not restated.** `isOpenableInstrument` /
+`getNonOpenablePositions`
+([close-instrument-guard.ts](../src/bot/close-instrument-guard.ts)) — the broker
 `instrument-type` when present, otherwise the OCC symbol **shape**, so a missing
 broker field can never silently reclassify a real option. One non-openable leg
-withholds the whole group: the bot cannot buy half of a mixed pile.
+withholds the whole group: the bot cannot buy half of a mixed pile. The exit guard
+(§6e) and this entry guard therefore cannot drift apart; widening the openable set
+moves both at once, which is the point.
 
 **A skip, not a do-not-touch.** `BOT_DO_NOT_TOUCH_GROUPS` groups are dropped from
 the execution-path exposure sums (`run-cycle-context.ts` filters
@@ -710,9 +713,12 @@ greppable line on the token `ALLOCATION_INSTRUMENT_SUPPRESSED` naming the ticker
 the instrument types, the quantity, and the side the old default would have bought.
 
 **This changes sizing behaviour** — a group that used to attract buys no longer does.
-`false` restores the previous behaviour exactly. It is the ENTRY twin of the
-close-side instrument guard; both rest on the same invariant: *the bot may only act
-on an instrument it is capable of opening.*
+`false` restores the previous behaviour exactly. It is the ENTRY twin of §6e; both
+rest on the same invariant: *the bot may only act on an instrument it is capable of
+opening.* §6e stops the bot selling the owner's shares; this stops it buying options
+against them. Neither is redundant with `BOT_READ_ONLY_ACCOUNTS`: a read-only account
+is an account-wide switch, while these are per-group and survive the account being
+traded again.
 
 ---
 

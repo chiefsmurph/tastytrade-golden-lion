@@ -10,7 +10,10 @@ import {
   ALLOCATION_INSTRUMENT_SUPPRESSED_TOKEN,
   isAllocationInstrumentGuardEnabled,
 } from "../allocation-instrument-guard";
-import { isOpenableInstrument } from "../position-instrument";
+// Deliberately imported from the CLOSE guard: the two guards share ONE predicate,
+// so this exercises that shared definition from the entry side rather than
+// characterising a second copy of it.
+import { isOpenableInstrument } from "../close-instrument-guard";
 import type { PositionGroupEvaluation } from "../evaluate-position";
 import type { ExecutionTargets } from "~/strategy/evaluate-trading-strategy";
 import { localTimeAt } from "./test-clock";
