@@ -1,4 +1,4 @@
-// Authoritative realized option round-trips for a date window, straight from the
+// Authoritative realized round-trips for a date window, straight from the
 // tastytrade transaction ledger (getAccountTransactions). Read-only.
 //
 //   node --import tsx src/tools/realized-pnl.ts 2026-07-20
@@ -6,14 +6,37 @@
 // The data-pull run NDJSON is a per-cycle DECISION log and misses async fill
 // confirmations, so it under-reports (and can mislabel a realized win as
 // "idle"). This ledger is the truth: it matches every opening leg to a terminal
-// event (Sell-to-Close OR expiration/assignment) per option symbol, FIFO, and
-// prints realized $ + %.
+// event (Sell-to-Close OR expiration/assignment), FIFO, options and equity
+// separately, and prints realized $ + %.
 //
-// All matching arithmetic lives in realized-pnl-report.ts so it can be tested
-// without a broker session; this file only fetches and prints.
+// PAGING (regression, 2026-08-15)
+// This used to issue ONE request. The endpoint is paginated and caps a page at
+// 250 rows, so any window longer than that was silently cut off — and the bias
+// grows with the window, which is the opposite of what a reader assumes. The old
+// comment here claimed a truncated fetch would be visible as "a suspiciously
+// round count"; nothing actually checked, and nobody ever noticed.
+//
+// Two things make the fix safe rather than merely longer:
+//   1. the SDK's extractResponseData throws away the `pagination` envelope, so
+//      the loop cannot rely on `total-pages` being present and must also be able
+//      to stop on a short page;
+//   2. an API that IGNORES an unrecognised paging param returns page 1 forever,
+//      and a loop that trusted the offset would concatenate duplicates into a
+//      confidently doubled P&L. Every row is therefore identity-deduped, and a
+//      page that adds nothing new STOPS the loop and marks the window
+//      incomplete. The worst case is "we read less and say so, loudly".
+//
+// All matching arithmetic, response-shape parsing and the paging loop itself live
+// in realized-pnl-report.ts so they can be tested without a broker session; this
+// file only supplies the broker calls and prints.
 import { config } from "dotenv";
 
-import { buildRealizedPnlReport, formatRealizedPnlReport } from "./realized-pnl-report";
+import {
+  buildOrderSourceIndex,
+  buildRealizedPnlReport,
+  fetchAllPages,
+  formatRealizedPnlReport,
+} from "./realized-pnl-report";
 
 config();
 
@@ -26,32 +49,52 @@ type TransactionsService = {
   getAccountTransactions: (account: string, params: Record<string, unknown>) => Promise<unknown>;
 };
 
-function readItems(res: unknown): unknown[] {
-  if (Array.isArray(res)) return res;
-  const items = (res as { items?: unknown })?.items;
-  return Array.isArray(items) ? items : [];
+type OrderService = {
+  getOrders: (account: string, params?: Record<string, unknown>) => Promise<unknown>;
+};
+
+/**
+ * order-id → order `source`, the only way to tell a bot-caused fill from one the
+ * owner placed by hand. A failure here degrades the report to "unattributed"
+ * rather than silently reading every close as owner-placed.
+ */
+async function fetchOrderSources(
+  orders: OrderService,
+  account: string,
+  startDate: string,
+): Promise<Map<string, string>> {
+  const { rows, audit } = await fetchAllPages((params) =>
+    orders.getOrders(account, { "start-date": startDate, ...params }),
+  );
+  if (audit.incomplete) {
+    console.log(
+      `  order-history incomplete (${audit.reason}) — ` +
+        "some closes will read \"unattributed\" rather than being mis-attributed.",
+    );
+  }
+  return buildOrderSourceIndex(rows);
 }
 
 async function reportAccount(
   svc: TransactionsService,
+  orders: OrderService,
   account: string,
   label: string,
   startDate: string,
 ): Promise<void> {
-  console.log(`\n=== ${label} (${account}) — realized option round-trips since ${startDate} ===`);
-  // Deliberately one request, exactly as the broker call was always made. The
-  // report echoes "rows examined" so a paged-off tail shows up as a suspiciously
-  // round count plus a spike in "closes w/o open in window", rather than as a
-  // silently short total.
-  const res = await svc
-    .getAccountTransactions(account, { "start-date": startDate })
-    .catch((error: Error) => {
-      console.log(`  ledger error: ${error.message}`);
-      return null;
-    });
-  if (res === null) return;
-  const rows = readItems(res);
-  for (const line of formatRealizedPnlReport(buildRealizedPnlReport(rows))) {
+  console.log(`\n=== ${label} (${account}) — realized round-trips since ${startDate} ===`);
+
+  const { rows, audit } = await fetchAllPages((params) =>
+    svc.getAccountTransactions(account, { "start-date": startDate, ...params }),
+  );
+  if (rows.length === 0 && audit.incomplete) {
+    console.log(`  ledger error: ${audit.reason}`);
+    return;
+  }
+
+  const orderSources = await fetchOrderSources(orders, account, startDate);
+  const report = buildRealizedPnlReport(rows, { orderSources, fetchAudit: audit });
+  for (const line of formatRealizedPnlReport(report)) {
     console.log(line);
   }
 }
@@ -59,10 +102,13 @@ async function reportAccount(
 async function main() {
   const startDate = process.argv[2] ?? new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
   const { default: api } = await import("../core/tastytrade-client");
-  const svc = (api as unknown as { transactionsService: TransactionsService }).transactionsService;
+  const client = api as unknown as {
+    transactionsService: TransactionsService;
+    orderService: OrderService;
+  };
 
   for (const [account, label] of ACCOUNTS) {
-    await reportAccount(svc, account, label, startDate);
+    await reportAccount(client.transactionsService, client.orderService, account, label, startDate);
   }
 }
 

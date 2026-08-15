@@ -56,8 +56,95 @@ export function normalizeInstrumentType(
   }
 }
 
-export function roundOrderPrice(price: number): string {
-  return (Math.round(price * 100) / 100).toFixed(2);
+/**
+ * One band of tastytrade's `tick-sizes` array (TastytradeOptionChain['tick-sizes']).
+ * `threshold` is the price at which the band stops applying; the entry without one
+ * is the final, open-ended band.
+ */
+export interface OptionTickSize {
+  threshold?: string | number;
+  value: string | number;
+}
+
+/**
+ * Fallback bands, used when the instrument's own `tick-sizes` are not to hand.
+ *
+ * NOT a guess: the broker rejected live orders with
+ * "Price must be in increments of $0.05 for this order. [invalid_price_increment]"
+ * at limit prices of 3.28, 3.23 and 3.03 — every rejection at or above $3.00 and
+ * none below it. That is the penny-pilot convention ($0.01 under $3, $0.05 at or
+ * above) and it is what these bands encode. Prefer the chain's real `tick-sizes`
+ * when a caller has them; this is only the floor.
+ */
+export const DEFAULT_OPTION_TICK_SIZES: readonly OptionTickSize[] = [
+  { value: "0.01", threshold: "3.0" },
+  { value: "0.05" },
+];
+
+/**
+ * Shares quote in pennies at every price. The $3.00 nickel band is an OPTIONS
+ * rule, and this bot does place share orders — the EOD margin liquidation clears
+ * every instrument in the account, including equity the owner bought by hand — so
+ * borrowing the option grid there would move a share limit by up to 2c for nothing.
+ */
+export const EQUITY_TICK_SIZES: readonly OptionTickSize[] = [{ value: "0.01" }];
+
+/**
+ * Pick the grid for an order leg's `instrument-type`.
+ *
+ * "Equity Option" contains "Equity", so options must be matched FIRST. Unknown
+ * types fall back to the option grid on purpose: a nickel price is always a legal
+ * penny price, so the option grid is never rejected, only coarser.
+ */
+export function tickSizesForInstrument(
+  instrumentType: string | null | undefined,
+): readonly OptionTickSize[] {
+  const normalized = String(instrumentType ?? "").toLowerCase();
+  if (normalized.includes("option")) return DEFAULT_OPTION_TICK_SIZES;
+  return normalized.includes("equity") ? EQUITY_TICK_SIZES : DEFAULT_OPTION_TICK_SIZES;
+}
+
+/** The increment that applies at `price`, per tastytrade's banded tick schema. */
+export function resolveTickSize(
+  price: number,
+  tickSizes: readonly OptionTickSize[] = DEFAULT_OPTION_TICK_SIZES,
+): number {
+  const bands = (tickSizes ?? [])
+    .map((band) => ({
+      value: Number(band?.value),
+      // No threshold = the open-ended top band, so it must sort last.
+      threshold: band?.threshold === undefined ? Infinity : Number(band.threshold),
+    }))
+    .filter((band) => Number.isFinite(band.value) && band.value > 0)
+    .sort((a, b) => a.threshold - b.threshold);
+
+  if (bands.length === 0) return 0.01;
+  const match = bands.find((band) => price < band.threshold);
+  return (match ?? bands[bands.length - 1]!).value;
+}
+
+/**
+ * Snap a limit price to the instrument's tick grid.
+ *
+ * This used to round to $0.01 unconditionally, which is only legal below $3.00.
+ * At or above it the broker requires nickels and rejects the order outright, so an
+ * otherwise-valid order was thrown away at the preflight check — invisibly, since
+ * a rejected seed just reads as a skip.
+ *
+ * Rounds to NEAREST, which is the policy already in force at $0.01. Switching to
+ * directional rounding would change how aggressively the bot bids and concedes,
+ * and that is a strategy decision rather than a formatting one.
+ */
+export function roundOrderPrice(
+  price: number,
+  tickSizes?: readonly OptionTickSize[],
+): string {
+  const tick = resolveTickSize(price, tickSizes);
+  let rounded = Math.round(price / tick) * tick;
+  // A positive price must never round away to a $0.00 limit — that is an instant
+  // rejection on a buy and giving the position away on a sell.
+  if (rounded <= 0 && price > 0) rounded = tick;
+  return rounded.toFixed(2);
 }
 
 export function buildClosingOrderPayload(
@@ -76,12 +163,15 @@ export function buildClosingOrderPayload(
   }
 
   const action = getClosingAction(snapshot.position);
+  const instrumentType = normalizeInstrumentType(
+    String(snapshot.position["instrument-type"] ?? ""),
+  );
 
   return {
     source: source ?? "tastytrade-silver-lynx",
     "time-in-force": "Day",
     "order-type": "Limit",
-    price: roundOrderPrice(price),
+    price: roundOrderPrice(price, tickSizesForInstrument(instrumentType)),
     "price-effect": action.startsWith("Buy") ? "Debit" : "Credit",
     "advanced-instructions": {
       "strict-position-effect-validation": true,
@@ -91,9 +181,7 @@ export function buildClosingOrderPayload(
         action,
         symbol: snapshot.position.symbol,
         quantity,
-        "instrument-type": normalizeInstrumentType(
-          String(snapshot.position["instrument-type"] ?? ""),
-        ),
+        "instrument-type": instrumentType,
       },
     ],
   };
