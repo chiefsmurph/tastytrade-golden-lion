@@ -36,6 +36,11 @@ import {
   getMaxUnderlyingNotional,
 } from "~/strategy/risk-limits";
 import type { TastytradePlacedOrderResponse } from "~/core/types";
+import {
+  buildSuppressedAllocationReason,
+  isAllocationBlockedByInstrumentGuard,
+  logSuppressedAllocation,
+} from "../allocation-instrument-guard";
 import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
 // Budget helpers live in a leaf module to keep this file out of the
@@ -84,6 +89,11 @@ interface ManageAllocationOptions {
   accountMarginOrCash?: "margin" | "cash";
 }
 
+// The `?? "call"` default is right for an OPTION group whose symbols will not
+// parse, and wrong for the other thing that reaches a sideless group: a hand-bought
+// share lot, which has no C/P suffix and so groups as `TICKER::none`. That case is
+// filtered out before this is ever called — see the instrument guard at the top of
+// manageAllocationForGroup (allocation-instrument-guard.ts).
 function getCandidateSide(evaluation: PositionGroupEvaluation): "call" | "put" {
   const inferredSides = evaluation.positions
     .map((position) => inferOptionSide(position.symbol))
@@ -845,6 +855,20 @@ export async function manageAllocationForGroup(
 
   if (!targets) {
     return skip({ skippedReason: "execution targets missing" });
+  }
+
+  // A group the bot could not have opened is not an accumulation target. Checked
+  // FIRST of the group-level gates so a share lot costs no chain lookup, no quote
+  // and no health call, and so the suppression is reported before anything else
+  // can skip for an unrelated reason. Default ON — see allocation-instrument-guard.
+  if (isAllocationBlockedByInstrumentGuard(evaluation)) {
+    logSuppressedAllocation({
+      accountNumber,
+      evaluation,
+      targetDTE: targets.targetDTE,
+      wouldHaveBoughtSide: getCandidateSide(evaluation),
+    });
+    return skip({ skippedReason: buildSuppressedAllocationReason(evaluation) });
   }
 
   // The dip boost multiplies after the normalization/gate clamp so it survives

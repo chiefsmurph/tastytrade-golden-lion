@@ -386,6 +386,65 @@ shares, this must become provenance-aware
 ([position-provenance.ts](../src/bot/position-provenance.ts)) rather than simply
 widening the openable set — an owner-directed share lot is still his exit.
 
+The **entry** half of the same hole — an equity group attracting option *buys* —
+is §8c, and it reuses this section's `isOpenableInstrument` predicate rather than
+restating it.
+
+### 6f. Reading the exits in the log — token `EXIT_GATE_DECISION` — *added 2026-08-15*
+
+§6b, §6c and §6d shipped into two files that emitted **nothing** —
+[evaluate-trading-strategy.ts](../src/strategy/evaluate-trading-strategy.ts) and
+[stop-persistence-store.ts](../src/bot/actions/stop-persistence-store.ts) contained
+zero log statements between them — so for a week the rebuild could not be verified
+in production at all. When nine stops fired 08-12/13 at −34% to −39% instead of
+snapping at the −30% floor, that reading is equally consistent with a persistence
+gate doing its job and with the price simply gapping through; nothing distinguished
+them.
+
+Every intraday-stop and take-profit verdict now emits **one JSON line** carrying the
+token `EXIT_GATE_DECISION`
+([exit-decision-log.ts](../src/strategy/exit-decision-log.ts)):
+
+```
+pm2 logs tastytrade-silver-lynx --lines 5000 --nostream | grep EXIT_GATE_DECISION
+```
+
+**Observability only — no gate reads any of it, and no threshold moved.**
+
+| field | answers |
+|---|---|
+| `gate` | `intraday-stop` or `take-profit` |
+| `decision` | `FIRED` or `WITHHELD` |
+| `withheldBy` | `mid-confirm` (§6b) · `persistence` (§6d) · `cooldown` (gate 3) · `bid-below-breakeven` (§6c) |
+| `bid` / `ask` / `mid` / `weightedAverageFill` | the quote, so the verdict is re-derivable by hand |
+| `bidReturnPct` / `midReturnPct`, `bidFloorPct` / `midFloorPct`, `midConfirmed` | the §6b comparison, both sides |
+| `observedCycles` / `requiredCycles` | the §6d streak, **already inclusive of the current cycle** |
+| `stopTriggerHeld` | whether this evaluation ADVANCES the streak or RESETS it |
+| `persistenceActive` | `false` on the `closePosition` re-check and the chain probe, where §6d is inert |
+| `collapseBypassed` | the `STRATEGY_STOP_LOSS_PERSIST_BYPASS_PCT` escape hatch fired |
+| `basis` / `targetPct` / `midTargetPct` | for a take-profit: bid or mid, and the target it cleared |
+
+**Silence is unambiguous by design.** A withheld exit logs as loudly as a fired
+one, so "no line" means one thing: the bid never crossed the floor while the stop
+window was open. That is also why the **cooldown** short-circuit (gate 3, which
+returns before the stop is consulted at all) emits a line when the bid *is* under
+the floor — a cooldown standing in front of a live trigger would otherwise look
+identical to a healthy position, and it silently resets the streak.
+
+Two supporting notes:
+
+- `PositionMetrics` gained one **optional** field, `groupKey`, purely so a line can
+  name the position it is about. Nothing reads it; every decision in the engine is
+  still a function of bid, ask, WAF and the clock.
+- The gate order is unchanged, so an exit can be pre-empted before it is ever
+  evaluated: **EOD liquidation → take-profit → cooldown → intraday stop**. Only the
+  cooldown pre-emption is logged (above); the post-cutoff **EOD stop** (gate 5) has
+  no gate that can withhold it and is deliberately out of scope here.
+- The close-instrument guard (§6e) sits **downstream** of every verdict here, at
+  order dispatch. A `FIRED` line therefore means the strategy decided to close,
+  not that an order went out — pair it with `CLOSE_INSTRUMENT_SUPPRESSED` when a
+  close is missing from the fills.
+
 ### 6a. Partial take-profit + runner (scale-out) — *added 2026-08-04, cash-only*
 
 Optional, **default OFF** (`STRATEGY_PARTIAL_SCALE_OUT_ENABLED`). When enabled it
@@ -617,6 +676,44 @@ overnight-hold accumulation is unguarded (different exit semantics).
 > the governor, so a fading intraday signal doesn't strand capital in an illiquid
 > ITM position we can't exit, while a genuine dip still gets filled.
 
+### 8c. Equity groups are not accumulation targets — *added 2026-08-15, **default ON***
+
+`BOT_BUY_ONLY_OPENABLE_INSTRUMENTS` (**default `true`**). The first group-level gate
+in `manageAllocationForGroup`: a group holding an instrument the bot could not have
+opened itself is skipped before any chain lookup, quote or health call.
+
+**The hole.** Every BUY path hard-codes `"Equity Option"` (`manage-allocation.ts`,
+`spray-buy.ts`, `seed-symbol.ts`), so the bot can only ever open an option — but
+equity enters the engine as a first-class position group. The owner hand-buys
+**shares** in the margin account; a share lot has no C/P suffix, so §5 keys it
+`TICKER::none`, and `getCandidateSide`
+([manage-allocation.ts](../src/bot/actions/manage-allocation.ts)) defaults a sideless
+group to `"call"`. His shares were therefore an accumulation target for the bot's
+option buying on the same underlying. That `?? "call"` default is *correct* for an
+option group whose symbols will not parse; the fix is to stop equity reaching it, not
+to change it.
+
+**Predicate.** `isOpenableInstrument`
+([position-instrument.ts](../src/bot/position-instrument.ts)) — the broker
+`instrument-type` when present, otherwise the OCC symbol **shape**, so a missing
+broker field can never silently reclassify a real option. One non-openable leg
+withholds the whole group: the bot cannot buy half of a mixed pile.
+
+**A skip, not a do-not-touch.** `BOT_DO_NOT_TOUCH_GROUPS` groups are dropped from
+the execution-path exposure sums (`run-cycle-context.ts` filters
+`actionableCompletedEvaluations` before `buildInitialBudget`), so marking equity
+hands-off would make the bot size its option buys as though that capital were free.
+Skipping at the allocation step keeps the equity in the exposure denominator, which
+is correct — the capital is committed. The suppression is an ordinary
+`placedOrder: false` skip with a reason, so it lands in run history, plus one
+greppable line on the token `ALLOCATION_INSTRUMENT_SUPPRESSED` naming the ticker,
+the instrument types, the quantity, and the side the old default would have bought.
+
+**This changes sizing behaviour** — a group that used to attract buys no longer does.
+`false` restores the previous behaviour exactly. It is the ENTRY twin of the
+close-side instrument guard; both rest on the same invariant: *the bot may only act
+on an instrument it is capable of opening.*
+
 ---
 
 ## 9. Order routing & tick-chasing
@@ -732,6 +829,7 @@ Key knobs referenced above (default in parens):
 | `STRATEGY_MARGIN_SEED_REQUIRE_FULL_THESIS` | false | re-arm the removed margin auto-seed full-thesis gate (§7e) |
 | `STRATEGY_GATE_STRONG_YES_MAX_TARGET_PCT` | 0.35 | top signal-tier ceiling |
 | `STRATEGY_MIN_OPEN_INTEREST` | 0 (off) | optional OI floor |
+| `BOT_BUY_ONLY_OPENABLE_INSTRUMENTS` | **true** | equity groups are not accumulation targets (§8c) |
 | `BOT_RUN_ON_SCHEDULE` / `BOT_RUN_INTERVAL_MS` | — | scheduler |
 
 The July-1 refactor renamed ~30 vars; the boot log warns on obsolete names

@@ -704,6 +704,11 @@ function hasStrategyRecoveredAtExecution(
       weightedAverageFill: snapshot.weightedAverageFill,
       currentTime: new Date(),
       lastActionTime: evaluation.metrics.lastActionTime,
+      // Logging only. This re-check deliberately runs WITHOUT a persistence
+      // context (§6d is inert here), so its exit-gate lines carry
+      // "persistenceActive": false — that is how you tell an execution-time
+      // re-check apart from the cycle evaluation in the log.
+      groupKey: evaluation.groupKey,
     },
     accountType,
     scaleOut,
