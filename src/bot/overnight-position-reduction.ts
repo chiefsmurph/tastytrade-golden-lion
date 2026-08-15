@@ -5,6 +5,10 @@ import { isOvernightPosition, getPositionAgeDays } from "./position-registry";
 import { computeOvernightReductionTargetPct } from "~/strategy/overnight-reduction";
 import { OVERNIGHT_REDUCTION_ORDER_SOURCE } from "./order-sources";
 import { getDoNotTouchGroupKeys, isEvaluationDoNotTouch } from "./do-not-touch-groups";
+import {
+  isCloseBlockedByInstrumentGuard,
+  logSuppressedClose,
+} from "./close-instrument-guard";
 
 // Cash accumulation cutoff: 1:00 PM PT (same as getNoBuyCutoffMinute("cash")).
 // Overnight reductions placed after this time serve no purpose — the window
@@ -111,6 +115,20 @@ export async function executeOvernightReductions(
     );
 
     if (contractsToClose <= 0) continue;
+
+    // Close-instrument guard: an over-cap SHARE lot is still the owner's to
+    // exit. Checked here, after sizing, so the suppression log reports the
+    // quantity this branch would actually have sold.
+    if (isCloseBlockedByInstrumentGuard(evaluation)) {
+      logSuppressedClose({
+        accountNumber,
+        dispatchSite: "overnight-reduction",
+        evaluation,
+        requestedBy: "overnight exposure reduction (over the overnight cap)",
+        requestedQuantity: contractsToClose,
+      });
+      continue;
+    }
 
     console.log(
       JSON.stringify({
