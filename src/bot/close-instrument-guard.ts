@@ -106,8 +106,13 @@ export function isCloseInstrumentGuardEnabled(): boolean {
  * Evaluated across EVERY position in the group, not just the first: the bot
  * cannot sell "only the option part" of a mixed pile, so one non-openable leg
  * makes the whole group hands-off.
+ *
+ * Exported because the ENTRY-side twin of this guard
+ * ([allocation-instrument-guard.ts](./allocation-instrument-guard.ts)) needs the
+ * SAME answer to "which legs here can the bot not act on?". Two copies of that
+ * filter would be two places to change when the openable set does.
  */
-function getNonOpenablePositions(
+export function getNonOpenablePositions(
   evaluation: Pick<PositionGroupEvaluation, "positions">,
 ): CurrentPosition[] {
   return (evaluation.positions ?? []).filter((position) => !isOpenableInstrument(position));

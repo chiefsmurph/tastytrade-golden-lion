@@ -5,7 +5,14 @@ import { EOD_ARMED_MINUTE } from "./spread-thresholds";
 import {
   resolveStopPersistence,
   type StopPersistenceContext,
+  type StopPersistenceVerdict,
 } from "./stop-persistence";
+import {
+  logIntradayStopDecision,
+  logTakeProfitDecision,
+  type ExitGateQuote,
+  type ExitGateWithheldBy,
+} from "./exit-decision-log";
 import { readEnvBool, readEnvInt } from "~/core/env-utils";
 
 // Unified return structure containing target state goals for the execution loop
@@ -206,6 +213,12 @@ function evaluateStopLossMidConfirmation(
   return { defer: midReturn > -midFloor, midFloor, midReturn };
 }
 
+/** The strategy an intraday-stop trigger resolves to, plus which gate held it back. */
+interface IntradayStopVerdict {
+  strategy: ExecutionStrategy;
+  withheldBy?: ExitGateWithheldBy;
+}
+
 /**
  * The intraday floor's verdict once the BID trigger has already cleared. Split out
  * of the engine so the deferral branches are readable next to the close they replace.
@@ -220,42 +233,171 @@ function evaluateStopLossMidConfirmation(
  * opposite". It also keeps the group's cost basis static while a streak builds,
  * which is what makes the store's WAF re-entry guard meaningful.
  */
-function resolveIntradayStop(
-  metrics: PositionMetrics,
+function buildIntradayStopVerdict(
   currentReturn: number,
   intradayFloor: number,
-  persistence?: StopPersistenceContext,
-): ExecutionStrategy {
-  const midConfirmation = evaluateStopLossMidConfirmation(metrics, intradayFloor);
+  midConfirmation: StopLossMidConfirmation,
+  persistenceVerdict: StopPersistenceVerdict,
+): IntradayStopVerdict {
   if (midConfirmation.defer) {
     return {
-      action: "MANAGE_ALLOCATION",
-      reason: `Stop-loss deferred by mid confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% but mid ${((midConfirmation.midReturn ?? 0) * 100).toFixed(2)}% > -${(midConfirmation.midFloor * 100).toFixed(0)}%) - holding, no adds`,
-      suppressAdds: true,
+      strategy: {
+        action: "MANAGE_ALLOCATION",
+        reason: `Stop-loss deferred by mid confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% but mid ${((midConfirmation.midReturn ?? 0) * 100).toFixed(2)}% > -${(midConfirmation.midFloor * 100).toFixed(0)}%) - holding, no adds`,
+        suppressAdds: true,
+      },
+      withheldBy: "mid-confirm",
     };
   }
 
-  const persistenceVerdict = resolveStopPersistence(
-    currentReturn,
-    getMidReturn(metrics),
-    intradayFloor,
-    persistence,
-  );
   if (persistenceVerdict.defer) {
     return {
-      action: "MANAGE_ALLOCATION",
-      reason: `Stop-loss awaiting confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% on ${persistenceVerdict.observedCycles} of ${persistenceVerdict.requiredCycles} consecutive cycles) - holding, no adds`,
-      stopTriggerHeld: true,
-      suppressAdds: true,
+      strategy: {
+        action: "MANAGE_ALLOCATION",
+        reason: `Stop-loss awaiting confirmation (bid ${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}% on ${persistenceVerdict.observedCycles} of ${persistenceVerdict.requiredCycles} consecutive cycles) - holding, no adds`,
+        stopTriggerHeld: true,
+        suppressAdds: true,
+      },
+      withheldBy: "persistence",
     };
   }
 
   return {
-    action: "CLOSE_POSITION",
-    reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered${persistenceVerdict.bypassed ? " (collapse bypass)" : ""}`,
-    isUrgentClose: true,
-    stopTriggerHeld: true,
+    strategy: {
+      action: "CLOSE_POSITION",
+      reason: `Hit absolute loss limit (${(currentReturn * 100).toFixed(2)}% <= -${(intradayFloor * 100).toFixed(0)}%) - stop loss triggered${persistenceVerdict.bypassed ? " (collapse bypass)" : ""}`,
+      isUrgentClose: true,
+      stopTriggerHeld: true,
+    },
   };
+}
+
+/**
+ * Resolve the intraday stop AND report it. See `exit-decision-log.ts` for why the
+ * withheld paths are logged as loudly as the fired one.
+ *
+ * `resolveStopPersistence` is now evaluated BEFORE the branch instead of inside it.
+ * It is a pure function of its arguments plus two env reads, so hoisting it changes
+ * nothing about the decision — it just means a stop withheld by the MIDPOINT can
+ * still report the streak it is sitting on, which is exactly the pair of facts an
+ * operator needs to tell "the gate saved us" from "the quote was fine".
+ */
+function resolveIntradayStop(
+  metrics: PositionMetrics,
+  currentReturn: number,
+  intradayFloor: number,
+  accountType: StrategyAccountType,
+  persistence?: StopPersistenceContext,
+): ExecutionStrategy {
+  const midConfirmation = evaluateStopLossMidConfirmation(metrics, intradayFloor);
+  const midReturn = getMidReturn(metrics);
+  const persistenceVerdict = resolveStopPersistence(
+    currentReturn,
+    midReturn,
+    intradayFloor,
+    persistence,
+  );
+
+  const verdict = buildIntradayStopVerdict(
+    currentReturn,
+    intradayFloor,
+    midConfirmation,
+    persistenceVerdict,
+  );
+
+  reportIntradayStop({
+    accountType,
+    bidReturn: currentReturn,
+    intradayFloor,
+    metrics,
+    midConfirmation,
+    midReturn,
+    persistence,
+    persistenceVerdict,
+    strategy: verdict.strategy,
+    withheldBy: verdict.withheldBy,
+  });
+
+  return verdict.strategy;
+}
+
+/**
+ * One place that turns an intraday-stop outcome into its log line, shared by the
+ * stop itself and by the cooldown short-circuit that precedes it. Keeping the
+ * field set identical is what lets an operator grep the token once and read every
+ * line the same way.
+ */
+function reportIntradayStop(context: {
+  accountType: StrategyAccountType;
+  bidReturn: number;
+  intradayFloor: number;
+  metrics: PositionMetrics;
+  midConfirmation: StopLossMidConfirmation;
+  midReturn: number | null;
+  persistence?: StopPersistenceContext;
+  persistenceVerdict: StopPersistenceVerdict;
+  strategy: ExecutionStrategy;
+  withheldBy?: ExitGateWithheldBy;
+}): void {
+  const { metrics, persistenceVerdict, strategy } = context;
+  logIntradayStopDecision({
+    accountType: context.accountType,
+    bidReturn: context.bidReturn,
+    bypassed: persistenceVerdict.bypassed,
+    decision: strategy.action === "CLOSE_POSITION" ? "FIRED" : "WITHHELD",
+    intradayFloor: context.intradayFloor,
+    midConfirmEnabled: isStopLossMidConfirmEnabled(),
+    midFloor: context.midConfirmation.midFloor,
+    midReturn: context.midReturn,
+    observedCycles: persistenceVerdict.observedCycles,
+    persistenceActive: context.persistence != null,
+    quote: toExitGateQuote(metrics),
+    reason: strategy.reason,
+    requiredCycles: persistenceVerdict.requiredCycles,
+    stopTriggerHeld: strategy.stopTriggerHeld === true,
+    withheldBy: context.withheldBy,
+  });
+}
+
+/**
+ * The cooldown (gate 3) returns before the stop is ever consulted, so a position
+ * sitting under the floor during a cooldown produces the same silence as a
+ * position that is perfectly healthy. Emit the same line with
+ * `withheldBy: "cooldown"` so the two are distinguishable, and note that this
+ * path leaves `stopTriggerHeld` unset — the persistence streak RESETS here.
+ *
+ * No-ops unless the bid has actually crossed the floor inside the stop's window,
+ * so the ordinary cooldown stays silent.
+ */
+function reportCooldownWithheldStop(
+  metrics: PositionMetrics,
+  currentReturn: number,
+  accountType: StrategyAccountType,
+  stopWindowOpen: boolean,
+  strategy: ExecutionStrategy,
+  persistence?: StopPersistenceContext,
+): void {
+  const intradayFloor = getIntradayStopLossFloor();
+  if (!stopWindowOpen || !(currentReturn <= -intradayFloor)) return;
+
+  const midReturn = getMidReturn(metrics);
+  reportIntradayStop({
+    accountType,
+    bidReturn: currentReturn,
+    intradayFloor,
+    metrics,
+    midConfirmation: evaluateStopLossMidConfirmation(metrics, intradayFloor),
+    midReturn,
+    persistence,
+    persistenceVerdict: resolveStopPersistence(
+      currentReturn,
+      midReturn,
+      intradayFloor,
+      persistence,
+    ),
+    strategy,
+    withheldBy: "cooldown",
+  });
 }
 
 function getScheduleTailPoints(
@@ -309,6 +451,15 @@ export interface PositionMetrics {
   weightedAverageFill: number;   // Our WAF cost basis
   currentTime: Date;             // Current system clock
   lastActionTime: Date;          // When this recommendation first flashed
+  /**
+   * OBSERVABILITY ONLY — the `UNDERLYING::side` key this quote came from, so an
+   * exit-decision log line names the position it is about. Optional and never
+   * read by any gate: every decision in this file is a function of the four
+   * numbers above and the clock, and that must stay true. Callers that have no
+   * group (the contract-selection probe) simply omit it and the line logs
+   * `"groupKey": null`.
+   */
+  groupKey?: string;
 }
 
 export type StrategyAccountType = "margin" | "cash" | "unknown";
@@ -407,15 +558,30 @@ function getTakeProfitMidMargin(): number {
  * That is the sensible degradation — no fill beats a bad fill when nothing forces the
  * exit.
  */
-function isTakeProfitMidTriggered(
+type TakeProfitMidVerdict =
+  /** The mid path is off, or the midpoint has not reached target + margin. */
+  | "not-reached"
+  /** Target + margin cleared on the midpoint, and the bid is at/above breakeven. */
+  | "triggered"
+  /**
+   * Target + margin cleared on the midpoint, but the BID is under water — the
+   * invariant above. Distinguished from "not-reached" ONLY so it can be logged:
+   * this is the phantom-quote case (PTON's −63% bid against a +136% ask), and a
+   * silent skip here is indistinguishable from a position nowhere near target.
+   */
+  | "withheld-bid-below-breakeven";
+
+function evaluateTakeProfitMid(
   metrics: PositionMetrics,
   bidReturn: number,
   target: number,
-): boolean {
-  if (!isTakeProfitMidPathEnabled()) return false;
-  if (!(bidReturn >= 0)) return false;
+): TakeProfitMidVerdict {
+  if (!isTakeProfitMidPathEnabled()) return "not-reached";
   const midReturn = getMidReturn(metrics);
-  return midReturn != null && midReturn >= target + getTakeProfitMidMargin();
+  if (midReturn == null || !(midReturn >= target + getTakeProfitMidMargin())) {
+    return "not-reached";
+  }
+  return bidReturn >= 0 ? "triggered" : "withheld-bid-below-breakeven";
 }
 
 function getTimeInMinutes(currentTime: Date): number {
@@ -464,14 +630,33 @@ function resolveTakeProfit(
   metrics: PositionMetrics,
   currentReturn: number,
   dynamicTakeProfitTarget: number,
+  accountType: StrategyAccountType,
   scaleOut?: ScaleOutContext,
 ): ExecutionStrategy | null {
   const targetPct = (dynamicTakeProfitTarget * 100).toFixed(2);
   const bidTriggered = currentReturn >= dynamicTakeProfitTarget;
-  if (
-    !bidTriggered &&
-    !isTakeProfitMidTriggered(metrics, currentReturn, dynamicTakeProfitTarget)
-  ) {
+  const midVerdict = evaluateTakeProfitMid(
+    metrics,
+    currentReturn,
+    dynamicTakeProfitTarget,
+  );
+
+  const base = {
+    accountType,
+    bidReturn: currentReturn,
+    metrics,
+    target: dynamicTakeProfitTarget,
+  };
+
+  if (!bidTriggered && midVerdict !== "triggered") {
+    if (midVerdict === "withheld-bid-below-breakeven") {
+      reportTakeProfit({
+        ...base,
+        decision: "WITHHELD",
+        reason: `Take-profit withheld: mid cleared ${targetPct}% + ${(getTakeProfitMidMargin() * 100).toFixed(0)}pp but bid ${(currentReturn * 100).toFixed(2)}% is below breakeven`,
+        withheldBy: "bid-below-breakeven",
+      });
+    }
     return null;
   }
 
@@ -480,12 +665,60 @@ function resolveTakeProfit(
     : `mid ${((getMidReturn(metrics) ?? 0) * 100).toFixed(2)}% >= ${targetPct}% + ${(getTakeProfitMidMargin() * 100).toFixed(0)}pp, bid ${(currentReturn * 100).toFixed(2)}%`;
   const scaling = scaleOut?.enabled === true;
 
-  return {
+  const strategy: ExecutionStrategy = {
     action: "CLOSE_POSITION",
     reason: scaling
       ? `Profit target reached (${basis}) - scaling out ${(scaleOut!.fraction * 100).toFixed(0)}%, letting the rest run`
       : `Profit target reached (${basis}) - close position and lock in gains`,
     ...(scaling ? { closeFraction: scaleOut!.fraction } : {}),
+  };
+
+  reportTakeProfit({
+    ...base,
+    basis: bidTriggered ? "bid" : "mid",
+    decision: "FIRED",
+    reason: strategy.reason,
+    ...(scaling ? { closeFraction: scaleOut!.fraction } : {}),
+  });
+
+  return strategy;
+}
+
+/** One place that turns a take-profit outcome into its `EXIT_GATE_DECISION` line. */
+function reportTakeProfit(context: {
+  accountType: StrategyAccountType;
+  basis?: "bid" | "mid";
+  bidReturn: number;
+  closeFraction?: number;
+  decision: "FIRED" | "WITHHELD";
+  metrics: PositionMetrics;
+  reason: string;
+  target: number;
+  withheldBy?: ExitGateWithheldBy;
+}): void {
+  logTakeProfitDecision({
+    accountType: context.accountType,
+    basis: context.basis,
+    bidReturn: context.bidReturn,
+    closeFraction: context.closeFraction,
+    decision: context.decision,
+    midMargin: getTakeProfitMidMargin(),
+    midPathEnabled: isTakeProfitMidPathEnabled(),
+    midReturn: getMidReturn(context.metrics),
+    quote: toExitGateQuote(context.metrics),
+    reason: context.reason,
+    target: context.target,
+    withheldBy: context.withheldBy,
+  });
+}
+
+/** The logging view of a quote — identity plus the three prices, nothing else. */
+function toExitGateQuote(metrics: PositionMetrics): ExitGateQuote {
+  return {
+    currentAskPrice: metrics.currentAskPrice,
+    currentBidPrice: metrics.currentBidPrice,
+    groupKey: metrics.groupKey,
+    weightedAverageFill: metrics.weightedAverageFill,
   };
 }
 
@@ -538,6 +771,7 @@ export function evaluateTradingStrategy(
     metrics,
     currentReturn,
     dynamicTakeProfitTarget,
+    accountType,
     scaleOut,
   );
   if (takeProfit) {
@@ -548,10 +782,21 @@ export function evaluateTradingStrategy(
   const timeSinceLastActionMs = currentTime.getTime() - lastActionTime.getTime();
   const timeSinceLastActionMinutes = timeSinceLastActionMs / (1000 * 60);
   if (timeSinceLastActionMinutes < 10) {
-    return {
+    const cooling: ExecutionStrategy = {
       action: "MANAGE_ALLOCATION",
       reason: `Still in cooldown period (${timeSinceLastActionMinutes.toFixed(1)} min < 10 min) - no new actions yet`
     };
+    // Observability only — silent unless this cooldown is standing in front of a
+    // live stop trigger. See reportCooldownWithheldStop.
+    reportCooldownWithheldStop(
+      metrics,
+      currentReturn,
+      accountType,
+      timeInMinutes < accumulationCutoffMinute,
+      cooling,
+      stopPersistence,
+    );
+    return cooling;
   }
 
   // Absolute Risk Floor Check
@@ -561,6 +806,7 @@ export function evaluateTradingStrategy(
       metrics,
       currentReturn,
       intradayFloor,
+      accountType,
       stopPersistence,
     );
   }
