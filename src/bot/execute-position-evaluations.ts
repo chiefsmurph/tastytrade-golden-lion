@@ -43,6 +43,10 @@ import {
 } from "./order-sources";
 import { isOvernightPosition } from "./position-registry";
 import { isInOvernightReductionWindow } from "~/strategy/overnight-reduction";
+import {
+  partitionClosesByInstrumentGuard,
+  suppressCloseForInstrumentGuard,
+} from "./close-instrument-guard";
 
 // Total option contracts across a group's snapshots — used to turn a scale-out
 // closeFraction into an absolute maxQuantityToClose (and to decide whether a
@@ -319,11 +323,27 @@ export async function executePositionEvaluations(
   const manageEvaluations = normalizeSelectedManageExposureTargets(
     selectManageEvaluationsByBuyingPower(gatedManageEvaluations, spendableFunds),
   );
-  const actionableCloseEvaluations = actionableEvaluations.filter(
+  const closeCandidateEvaluations = actionableEvaluations.filter(
     (evaluation) => evaluation.strategy.action === "CLOSE_POSITION",
   );
 
-  const closeOrders = readOnly
+  // Close-instrument guard: the bot may only close what it is capable of
+  // opening. Suppressed groups stay in `actionableEvaluations` (and therefore in
+  // the exposure denominator that sizes option buys) — only the ORDER is
+  // withheld. See close-instrument-guard.ts for why this is not a do-not-touch.
+  const { dispatch: actionableCloseEvaluations, suppressed: instrumentBlockedCloses } =
+    partitionClosesByInstrumentGuard(closeCandidateEvaluations);
+
+  const instrumentBlockedCloseOrders: ClosePositionResult[] =
+    instrumentBlockedCloses.flatMap((evaluation) =>
+      suppressCloseForInstrumentGuard({
+        accountNumber,
+        dispatchSite: "cycle-close",
+        evaluation,
+      }),
+    );
+
+  const dispatchedCloseOrders = readOnly
     ? actionableCloseEvaluations.flatMap((evaluation) =>
         evaluation.positionSnapshots.map((snapshot) => ({
           accountNumber,
@@ -360,6 +380,11 @@ export async function executePositionEvaluations(
           }),
         )
       ).flat();
+
+  const closeOrders: ClosePositionResult[] = [
+    ...dispatchedCloseOrders,
+    ...instrumentBlockedCloseOrders,
+  ];
 
   // Alert on any close that actually placed. Urgent closes (stop-loss / EOD
   // liquidation) route to hard-risk-close; normal closes (take-profit, etc.)
