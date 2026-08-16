@@ -160,6 +160,57 @@ the bid*, not the midpoint — that's what you can actually exit into.
 `evaluate-position.ts` is also where the per-cycle stop-persistence streak (§6d) is
 read and written, keyed per account + group key.
 
+### 5a. Position provenance — bot vs owner — *added 2026-08-15, **default OFF***
+
+`src/bot/position-provenance.ts`. The owner hand-places conviction trades in the
+margin account from the tastytrade app — including **equity (shares)**, not only
+contracts. Until now the engine could not tell those from its own, so it managed
+them as its own (stopped them out, added to them, swept them in the 12:50
+liquidation) and mis-attributed their P&L to itself.
+
+**The tag comes from the broker, not from a local ledger.** tastytrade's order API
+takes a client-supplied `source` string on submission (`OrderRequest.source` is
+*required*) and echoes it back on every read (`TastytradeOrder.source`). This engine
+has always populated it (`src/bot/order-sources.ts`). Provenance is therefore already
+recorded on the order at the broker, and is read back rather than re-derived — which
+is why it survives restarts, redeploys and a wiped `data/`, none of which a local file
+would.
+
+Each live group is classified against one filled-order-history read
+(`BOT_MANUAL_PROVENANCE_LOOKBACK_DAYS`, default 90):
+
+| Provenance | Rule | Behaviour |
+| --- | --- | --- |
+| `manual` | any opening order's source is positively **not** ours | hands off |
+| `owner-directed` | any opening order carries `OWNER_DIRECTED_ORDER_SOURCE` | hands off |
+| `unknown` | no opener found, history read failed, or a blank source | **managed, as today** |
+| `bot` | every opener carries one of our strategy tags | managed |
+
+`manual` outranks `owner-directed` outranks `unknown` outranks `bot`: a group is one
+fungible pile, so a hand-added double-down on a bot position makes the whole group the
+owner's to exit, while a group is only called `bot` when *every* opener is positively ours.
+
+> **The safety invariant.** `unknown` is managed, never hands-off. If a missing or
+> failed history read resolved to `manual`, one unavailable API call would silently
+> disarm every stop in the account — strictly worse than the problem being solved.
+> Asserted directly in `src/bot/tests/position-provenance.test.ts`.
+
+Two details are load-bearing. The **pre-rename** source `tastytrade-golden-lion*`
+(commit efda628) still counts as ours, or genuinely-bot positions opened before
+2026-07-27 would classify `manual`. And `OWNER_DIRECTED_ORDER_SOURCE` is checked
+*before* the brand-prefix test, because it shares that prefix — otherwise an
+owner-directed order would classify `bot` and the margin EOD sweep would flatten a
+conviction trade the day it was opened.
+
+When armed via `BOT_MANUAL_PROVENANCE_AUTO_PROTECT`, hands-off groups are merged into
+the existing `BOT_DO_NOT_TOUCH_GROUPS` set rather than given a parallel path, so they
+inherit every existing suppression at once: stop-loss and take-profit closes, allocation
+adds, overnight reduction, the live-order cancel sweep, and the margin EOD liquidation
+(do-not-touch groups are filtered out of the actionable list before anything executes).
+Equity groups key as `TICKER::none` and are covered by the existing `::none`/`::stock`
+alias. While the flag is off, the classification is still computed and logged every
+cycle (`scope: "position-provenance"`) and the resolved set is unchanged.
+
 ---
 
 ## 6. Strategy state machine (circuit breakers)

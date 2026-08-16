@@ -107,10 +107,39 @@ Env vars are organized by the layer that owns them: `CORE_` for infrastructure, 
 - `BOT_RUN_INTERVAL_MS` — Scheduler interval in milliseconds while the market is open.
 - `BOT_RUN_INTERVAL_MINUTES` — Scheduler interval in minutes. Used when `BOT_RUN_INTERVAL_MS` is not set.
 - `BOT_DATA_DIR` — Override the root data directory. Defaults to `data/`; run history and the position registry live in `runs/` and day reports in `day-reports/` beneath it.
-- `BOT_DO_NOT_TOUCH_GROUPS` — Comma-separated group keys the bot should leave alone.
+- `BOT_DO_NOT_TOUCH_GROUPS` — Comma-separated group keys the bot should leave alone. Keys are `UNDERLYING::side` (double colon — a single colon silently no-ops); a bare `UNDERLYING` protects every side, and `::none`/`::stock` are aliases for the same equity leg.
 - `BOT_READ_ONLY_ACCOUNTS` — Comma-separated account numbers the bot can inspect but should not trade.
+- `BOT_MANUAL_PROVENANCE_AUTO_PROTECT` — Set to `true` to automatically add owner-placed position groups to the do-not-touch set. Defaults to `false`; while off the classification is still computed and logged every cycle (`scope: "position-provenance"`) so it can be observed before being armed. See [Position provenance](#position-provenance).
+- `BOT_MANUAL_PROVENANCE_LOOKBACK_DAYS` — How many days of broker order history to read when looking for a position's opening order. Defaults to `90`.
 - `BOT_CLOSE_ONLY_OPENABLE_INSTRUMENTS` — Kill switch for the close-instrument guard: **the bot may only close what it is capable of opening.** Defaults to `true`. Every buy path hard-codes `Equity Option` (`manage-allocation.ts`, `spray-buy.ts`, `seed-symbol.ts`), but `buildClosingOrderPayload` reads the instrument type off the *position*, so the bot could only ever open an option yet would faithfully sell whatever it found held — and the margin EOD sweep repeatedly liquidated hand-bought SHARES. Equity is not an edge case in the data model: a share lot has no C/P suffix, so `evaluate-position.ts` keys it as `TICKER::none` and every strategy branch treats it like an option group. The guard sits at order DISPATCH (`execute-position-evaluations.ts`, `overnight-position-reduction.ts`, `close-symbol-position.ts`), deliberately **not** as an implicit `BOT_DO_NOT_TOUCH_GROUPS` entry: do-not-touch groups are dropped from the execution-path exposure sums, so marking equity hands-off would make the bot size its option buys as though that capital were free. Guarding at dispatch keeps equity in the exposure denominator, which is correct — the capital is committed. Every withheld order logs one JSON line with `"token":"CLOSE_INSTRUMENT_SUPPRESSED"` carrying the ticker, group key, instrument type, dispatch site, requesting branch and quantity. Set to `false` to restore the previous behaviour. Note the guard is a blanket instrument rule, not a provenance rule; when the planned SMS path lets the owner direct the bot to buy shares, it must become provenance-aware (see `src/bot/position-provenance.ts`) rather than simply widening the openable set.
 - `BOT_BUY_ONLY_OPENABLE_INSTRUMENTS` — The ENTRY twin of the guard above, sharing its `isOpenableInstrument` predicate (`src/bot/close-instrument-guard.ts`). Only lets the allocator accumulate into groups holding an instrument the bot can itself open (`Equity Option`). Defaults to `true`. Hand-bought **shares** have no C/P suffix, so they group as `TICKER::none`, and `getCandidateSide` defaults a sideless group to `"call"` — which made an equity holding an accumulation target for option buys on the same underlying. Suppressions are logged on the `ALLOCATION_INSTRUMENT_SUPPRESSED` token and surface as ordinary `placedOrder: false` skips in run history, so the equity stays in the exposure denominator (unlike `BOT_DO_NOT_TOUCH_GROUPS`, which removes a group from the sizing sums entirely). Set to `false` to restore the previous behavior. **This changes sizing behavior**, not just exits.
+
+#### Position provenance
+
+The bot distinguishes positions it opened from positions the owner opened by hand,
+so the owner's trades can be left entirely alone (no stop-loss, no take-profit, no
+allocation adds, and exempt from the margin end-of-day sweep) and attributed to him
+rather than to the bot.
+
+Provenance comes from the broker, not from a local file: tastytrade accepts a
+client-supplied `source` string on every order and echoes it back on every read, and
+this bot has always tagged its orders (`src/bot/order-sources.ts`). Classification
+reads that tag back off the order history, so it survives restarts, redeploys and a
+wiped `data/` directory.
+
+Four provenance values map onto three behaviours:
+
+| Provenance | Meaning | Behaviour |
+| --- | --- | --- |
+| `bot` | Every opening order carries one of the bot's strategy tags | Managed normally |
+| `manual` | An opening order carries a source that is positively someone else's | Left alone (when armed) |
+| `owner-directed` | Placed by the bot on the owner's instruction | Left alone (when armed) |
+| `unknown` | The opener could not be identified | **Managed normally** |
+
+`unknown` is deliberately managed, never left alone. A missing, truncated or failed
+order-history read must not be able to silently disarm the account's stops — that
+failure mode would be worse than the problem being solved, so every "we don't know"
+path resolves to `unknown`.
 
 ### Strategy: Seed Thresholds
 
