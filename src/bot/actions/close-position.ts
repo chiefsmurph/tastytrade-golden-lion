@@ -12,7 +12,7 @@ import {
   EOD_FORCED_CLOSE_MINUTE,
   getMorningSpreadThresholdPct,
 } from "~/strategy/spread-thresholds";
-import { buildClosingOrderPayload, getMidpointPrice, waitForOrderFillById, type OrderPayload } from "./order-utils";
+import { buildClosingOrderPayload, getMidpointPrice, roundOrderPrice, tickSizesForInstrument, waitForOrderFillById, type OrderPayload } from "./order-utils";
 import { readEnvInt, toBooleanFlag } from "~/core/env-utils";
 import { getCachedSecretRegime } from "~/strategy/secret";
 
@@ -606,6 +606,7 @@ async function runCloseTickChase(
   let tickMoveCount = 0;
   let activeOrderId: string | undefined;
   let lastOrderResponse: TastytradePlacedOrderResponse | undefined;
+  const chaseTickSizes = tickSizesForInstrument(baseOrder.legs?.[0]?.["instrument-type"]);
 
   while (tickMoveCount <= maxTickMoves) {
     const mustCancelPrevious =
@@ -620,9 +621,12 @@ async function runCloseTickChase(
       break;
     }
 
+    // The chase walks in raw floats; this is the single point where a price
+    // becomes an order, so it is the single point that must sit on the tick grid.
+    // The grid depends on the leg's instrument — shares are pennies at any price.
     const order = {
       ...baseOrder,
-      price: (Math.round(currentPrice * 100) / 100).toFixed(2),
+      price: roundOrderPrice(currentPrice, chaseTickSizes),
     };
     const orderResponse = await placeCloseOrder(accountNumber, order, createOrder);
     if (!orderResponse) {
@@ -704,6 +708,11 @@ function hasStrategyRecoveredAtExecution(
       weightedAverageFill: snapshot.weightedAverageFill,
       currentTime: new Date(),
       lastActionTime: evaluation.metrics.lastActionTime,
+      // Logging only. This re-check deliberately runs WITHOUT a persistence
+      // context (§6d is inert here), so its exit-gate lines carry
+      // "persistenceActive": false — that is how you tell an execution-time
+      // re-check apart from the cycle evaluation in the log.
+      groupKey: evaluation.groupKey,
     },
     accountType,
     scaleOut,

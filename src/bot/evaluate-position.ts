@@ -204,14 +204,20 @@ export async function evaluatePositionGroup(
     return null;
   }
 
-  const positionSnapshots = await Promise.all(
-    positions.map((position) => createPositionQuoteSnapshot(position)),
-  );
-  const metrics = buildAggregateMetrics(positionSnapshots, currentTime);
   const groupKey = buildGroupKey(
     getUnderlyingSymbolForPosition(positions[0]),
     getGroupSideForPositions(positions),
   );
+  const positionSnapshots = await Promise.all(
+    positions.map((position) => createPositionQuoteSnapshot(position)),
+  );
+  // groupKey rides on the metrics for LOGGING only (see PositionMetrics): the
+  // exit-decision lines have to name the position they are about, and this is the
+  // one place that knows both the quote and the group. No gate reads it.
+  const metrics: PositionMetrics = {
+    ...buildAggregateMetrics(positionSnapshots, currentTime),
+    groupKey,
+  };
   // Partial take-profit runner state. Only touch the store when scale-out is
   // enabled for this account type (cash-only in v1) — otherwise this stays a
   // no-op and the strategy behaves exactly as before.

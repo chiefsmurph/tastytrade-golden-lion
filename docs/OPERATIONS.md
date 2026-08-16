@@ -20,9 +20,10 @@ Ordered by "if this is wrong, stop and fix before reading further" — same phil
 ### 3. What did we make or lose, and why? (3 min)
 
 - `node --import tsx src/tools/realized-pnl.ts <YYYY-MM-DD>` — **the authoritative window figure.** It is built from the broker transaction ledger, so it is the only source that sees expirations and commissions. Read its trailing lines before quoting any number:
+  - the **`ledger fetch` line is the first thing to read, before any P&L.** It must say `COMPLETE`. `INCOMPLETE` (or a `TRUNCATED LEDGER` banner) means the window was only partly read and **every figure above it is understated** — do not quote it, and note that the endpoint pages at 250 rows, so this bites hardest on the *longest* windows. Before 2026-08-15 the tool issued a single unpaged request and had no such line at all, which is how a materially wrong number was quoted from it.
   - the **NET** blended % is the headline; the **gross (pre-fee)** line beside it shows how much of the result is fees (opening ≈ $1/contract, closing ≈ $0.12 — material at this book's premium sizes).
   - the **reconciliation** line must balance. `still open` legs are positions the window has not resolved; `closes w/o open in window` means the cost basis predates the start date — widen the window before concluding anything. Neither is dropped silently any more; that is exactly what let an expired-worthless contract vanish from the report before 2026-08-08.
-  - equity rows appear in their own bucket and are excluded from the options P&L. This bot trades options only, so anything in that bucket is manual activity.
+  - the **EQUITY** section is a full FIFO P&L in its own bucket, never blended into the options number (a share and a contract carry different multipliers, so a combined return % would divide by a mixed cost basis). Read the per-trip `closed by` tag: **`BOT-EXECUTED`** means the bot's own sell — the EOD margin liquidation clears *every* instrument in the account, including shares bought by hand, so a bot-caused equity loss is entirely possible and used to be invisible here. `owner-placed` is a hand-placed close; `unattributed` means the order history could not be read and is **not** a claim that the owner did it. Do not read `net cash flow` as P&L — it mixes money spent on positions still held with money actually lost.
 - `node run bot:getPnlLedger <ACCOUNT> <today>` per account — the `byDecisionType` rollup is the day in one glance: how much came from take-profits vs. was given back to stops vs. EOD liquidations vs. overnight reductions. This is a *decision-attribution* view, not a complete P&L — it only sees closes the cycle observed.
 - Spot-check 1–2 ledger rows against broker fill history (the ledger misses closes that fill after the chase's final re-fetch — known gap until confirmed-fill tracking lands, v5 code #3). If a broker fill has no ledger row, note it; a pattern means the gap is material.
 - `node run bot:getDayTrend` — unrealized drift vs. yesterday's baseline for what's still held (cash overnights).
@@ -68,11 +69,12 @@ The point: nearly every open strategy item in [improvements/STATUS.md](improveme
 11. **Route performance**: fills per route; how often did resting bids fill vs. get cancelled by the next cycle's sweep? Quantifies what persistent resting orders (v5 strategy #1) would buy.
 12. **Weight fidelity**: executed-vs-configured splits — are small orders collapsing to bid/mid only (v6 #18 data)?
 13. **IV gate fit**: how much did rank<20 actually block, and are the seed fallback bars (50/70) ever reachable (v4 #3 follow-up)?
+14. **Preflight rejections**: `grep -c invalid_price_increment` (and `preflight checks failed` generally) across the window's logs. A rejected order is a fully-gated entry thrown away at the last step, and it reads downstream as an ordinary skipped seed — it will not show up in any fill-based metric. Limit prices are snapped to the instrument tick by `roundOrderPrice` (`src/bot/actions/order-utils.ts`), whose fallback bands are $0.01 below $3.00 and $0.05 at or above; a fresh `invalid_price_increment` means an instrument whose real `tick-sizes` differ from those defaults, and the chain's own bands should be threaded through.
 
 ### Process
 
-14. Re-read the daily one-liners from step 5 — recurring "weird" notes are the discovery backlog for the next improvements pass.
-15. Reconcile: STATUS.md AFTER-MONDAY items whose data question is now answered move to "build"; anything two weeks of data didn't touch probably wasn't worth tracking — cut or demote it.
+15. Re-read the daily one-liners from step 5 — recurring "weird" notes are the discovery backlog for the next improvements pass.
+16. Reconcile: STATUS.md AFTER-MONDAY items whose data question is now answered move to "build"; anything two weeks of data didn't touch probably wasn't worth tracking — cut or demote it.
 
 ## Deploy (sequence verified 2026-08-09)
 

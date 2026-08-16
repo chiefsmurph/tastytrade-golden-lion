@@ -268,6 +268,228 @@ test("manual equity round-trips never pollute the options P&L", () => {
   assert.ok(near(mixed.equity.netCashFlow, -1001));
 });
 
+// ── Equity round trips ──────────────────────────────────────────────────────
+// REGRESSION — 2026-08-15. Equity stopped at a row count and a `netCashFlow`
+// total, printed as "EXCLUDED from the options P&L". The bot's EOD margin
+// liquidation sells whatever equity is in the account — including shares the
+// owner bought by hand — and four such liquidations realized a loss that appeared
+// nowhere in the bot's own P&L. netCashFlow cannot stand in for that: it mixes
+// money SPENT (an open still held) with money LOST.
+//
+// Synthetic round numbers in the SHAPE of such a liquidation: shares bought, then
+// sold by the bot a day later at a loss.
+const SHARE_BUY: LedgerRow = {
+  symbol: "SNWV",
+  "underlying-symbol": "SNWV",
+  "instrument-type": "Equity",
+  "transaction-type": "Trade",
+  "transaction-sub-type": "Buy to Open",
+  action: "Buy to Open",
+  quantity: 200,
+  price: 4,
+  value: 800,
+  "value-effect": "Debit",
+  "net-value": 800,
+  "net-value-effect": "Debit",
+  "order-id": "900000001",
+  "executed-at": "2026-08-13T14:30:00Z",
+};
+
+const SHARE_SELL_BY_BOT: LedgerRow = {
+  ...SHARE_BUY,
+  "transaction-sub-type": "Sell to Close",
+  action: "Sell to Close",
+  price: 3.8,
+  value: 760,
+  "value-effect": "Credit",
+  "net-value": 760,
+  "net-value-effect": "Credit",
+  "order-id": "900000002",
+  "executed-at": "2026-08-14T19:50:48Z",
+};
+
+const BOT_SOURCES = { "900000002": "tastytrade-silver-lynx" };
+
+test("an equity round trip reports real FIFO P&L, not just a cash flow", () => {
+  const equity = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT]).equity;
+
+  assert.equal(equity.trips.length, 1, "the share round trip must be matched");
+  const trip = equity.trips[0]!;
+  assert.equal(trip.underlying, "SNWV");
+  assert.equal(trip.quantity, 200);
+  assert.ok(near(trip.netCost, 800));
+  assert.ok(near(trip.netProceeds, 760));
+  assert.ok(near(equity.totals.netPnl, -40), "a realized loss, now visible");
+  assert.ok(near(num(equity.totals.netReturnPct), -5));
+  assert.ok(num(equity.totals.netReturnPct) < 0);
+});
+
+test("equity P&L is NOT the net cash flow the report used to print", () => {
+  // One closed trip plus one still-held buy. netCashFlow counts the money spent
+  // on the open position; realized P&L must not.
+  const stillHeld: LedgerRow = {
+    ...SHARE_BUY,
+    symbol: "RUM",
+    "underlying-symbol": "RUM",
+    quantity: 100,
+    value: 320,
+    "net-value": 320,
+    "order-id": "900000003",
+    "executed-at": "2026-08-14T15:00:00Z",
+  };
+  const equity = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT, stillHeld]).equity;
+
+  assert.ok(near(equity.netCashFlow, -360), "cash flow still includes the open buy");
+  assert.ok(near(equity.totals.netPnl, -40), "realized P&L excludes it");
+  assert.notEqual(equity.netCashFlow.toFixed(2), equity.totals.netPnl.toFixed(2));
+  assert.equal(equity.stillOpen.length, 1);
+  assert.equal(equity.stillOpen[0]!.underlying, "RUM");
+});
+
+test("equity is priced at multiplier 1 — never the option ×100", () => {
+  const trip = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT]).equity.trips[0]!;
+  // 200 shares × 4.00 = 800. An accidental ×100 would read 80,000.
+  assert.ok(near(trip.netCost / trip.quantity, 4));
+  assert.ok(
+    trip.netCost < 10 * trip.quantity,
+    "cost basis must stay share-scaled; a ×100 inflation blows straight past this",
+  );
+});
+
+test("a bot-executed close is attributed to the bot, an owner-placed one is not", () => {
+  const botClosed = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT], {
+    orderSources: BOT_SOURCES,
+  }).equity;
+  assert.equal(botClosed.trips[0]!.closedBy, "bot");
+  assert.equal(botClosed.byCloser.bot.trips, 1);
+  assert.equal(botClosed.byCloser.owner.trips, 0);
+  assert.ok(near(botClosed.byCloser.bot.netPnl, -40), "the loss is charged to the bot");
+
+  // An order id present in the ledger but carrying no bot prefix is the owner's.
+  const handPlaced = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT], {
+    orderSources: new Map([["900000002", "tastytrade-web"]]),
+  }).equity;
+  assert.equal(handPlaced.trips[0]!.closedBy, "owner");
+  assert.equal(handPlaced.byCloser.owner.trips, 1);
+  assert.equal(handPlaced.byCloser.bot.trips, 0);
+
+  // A blank source is not evidence of the owner either — it stays unknown.
+  const blankSource = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT], {
+    orderSources: { "900000002": "   " },
+  }).equity;
+  assert.equal(blankSource.trips[0]!.closedBy, "unknown");
+});
+
+test("the legacy golden-lion order prefix still counts as bot-executed", () => {
+  // Orders placed before the 2026-07-27 rename (efda628) carry the old brand.
+  // Reading them as owner-placed would clear the bot of its own pre-rename fills.
+  const report = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT], {
+    orderSources: { "900000002": "tastytrade-golden-lion-overnight-reduction" },
+  });
+  assert.equal(report.equity.trips[0]!.closedBy, "bot");
+  assert.equal(report.equity.byCloser.bot.trips, 1);
+});
+
+test("a suffixed bot source still matches, and missing history reads unknown", () => {
+  const suffixed = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT], {
+    orderSources: { "900000002": "tastytrade-silver-lynx-secret-auto-seed" },
+  });
+  assert.equal(suffixed.equity.trips[0]!.closedBy, "bot");
+
+  // No order history supplied: "unknown", never "owner". Collapsing the two would
+  // clear the bot of a loss purely because a lookup was unavailable.
+  const noHistory = buildRealizedPnlReport([SHARE_BUY, SHARE_SELL_BY_BOT]);
+  assert.equal(noHistory.equity.trips[0]!.closedBy, "unknown");
+  assert.equal(noHistory.equity.byCloser.unknown.trips, 1);
+  assert.equal(noHistory.equity.byCloser.owner.trips, 0);
+});
+
+test("equity P&L never blends into the options P&L", () => {
+  const optionsOnly = buildRealizedPnlReport([OPEN_ROW, CLOSE_ROW]);
+  const mixed = buildRealizedPnlReport([OPEN_ROW, CLOSE_ROW, SHARE_BUY, SHARE_SELL_BY_BOT]);
+
+  assert.equal(mixed.trips.length, 1, "only the option trip is in the options bucket");
+  assert.equal(mixed.totals.netCost, optionsOnly.totals.netCost);
+  assert.equal(mixed.totals.netPnl, optionsOnly.totals.netPnl);
+  assert.equal(mixed.totals.netReturnPct, optionsOnly.totals.netReturnPct);
+  assert.equal(mixed.reconciliation.trips, 1);
+  // …and the equity side carries its own, separately.
+  assert.equal(mixed.equity.trips.length, 1);
+  assert.notEqual(mixed.equity.totals.netPnl, mixed.totals.netPnl);
+});
+
+test("a zero-share equity row is a dividend, not a close of the whole position", () => {
+  // The options matcher treats a quantity-less terminal row as "remove the rest
+  // of the position at $0". Applied to equity that invents a −100% round trip out
+  // of a cash event.
+  const dividend: LedgerRow = {
+    symbol: "SNWV",
+    "underlying-symbol": "SNWV",
+    "instrument-type": "Equity",
+    "transaction-type": "Money Movement",
+    "transaction-sub-type": "Dividend",
+    quantity: 0,
+    value: 4.3,
+    "value-effect": "Credit",
+    "net-value": 4.3,
+    "net-value-effect": "Credit",
+    "executed-at": "2026-08-14T13:00:00Z",
+  };
+  const equity = buildRealizedPnlReport([SHARE_BUY, dividend]).equity;
+
+  assert.equal(equity.trips.length, 0, "a dividend closes nothing");
+  assert.equal(equity.stillOpen.length, 1, "the shares are still held");
+  assert.equal(equity.stillOpen[0]!.quantity, 200);
+  assert.equal(equity.nonShareRows, 1);
+  assert.equal(equity.rowCount, 2, "it is still counted and still in the cash flow");
+});
+
+test("equity FIFO handles a partial close and a pre-window sale", () => {
+  const partial = buildRealizedPnlReport([
+    SHARE_BUY,
+    { ...SHARE_SELL_BY_BOT, quantity: 50, value: 190, "net-value": 190 },
+  ]).equity;
+  assert.equal(partial.trips.length, 1);
+  assert.equal(partial.trips[0]!.quantity, 50);
+  assert.ok(near(partial.trips[0]!.netCost, 200), "50 of 200 shares at a 4.00 basis");
+  assert.equal(partial.stillOpen[0]!.quantity, 150);
+
+  const preWindow = buildRealizedPnlReport([SHARE_SELL_BY_BOT]).equity;
+  assert.equal(preWindow.trips.length, 0);
+  assert.equal(preWindow.closesWithoutOpen.length, 1, "cost basis predates the window");
+  assert.equal(preWindow.closesWithoutOpen[0]!.quantity, 200);
+});
+
+test("the printed report shows equity P&L and who executed the close", () => {
+  const lines = formatRealizedPnlReport(
+    buildRealizedPnlReport([OPEN_ROW, CLOSE_ROW, SHARE_BUY, SHARE_SELL_BY_BOT], {
+      orderSources: BOT_SOURCES,
+    }),
+  ).join("\n");
+
+  assert.match(lines, /EQUITY \(shares, multiplier 1/);
+  assert.match(lines, /SNWV\s+200 sh/);
+  assert.match(lines, /equity blended NET/);
+  assert.match(lines, /BOT-EXECUTED/);
+  assert.doesNotMatch(lines, /EXCLUDED from the options P&L/);
+  // The options half is untouched.
+  assert.match(lines, /---- blended NET/);
+  assert.match(lines, /reconciliation: rows 4 \| opens 1 \| closes 1/);
+});
+
+test("the options printout is byte-identical when equity rows are present", () => {
+  // The equity section is appended; it must not perturb a single options line.
+  const withoutEquity = formatRealizedPnlReport(buildRealizedPnlReport([OPEN_ROW, CLOSE_ROW]));
+  const withEquity = formatRealizedPnlReport(
+    buildRealizedPnlReport([OPEN_ROW, CLOSE_ROW, SHARE_BUY, SHARE_SELL_BY_BOT]),
+  );
+  // Same rows-examined count aside, every options line is reproduced verbatim.
+  const optionLines = withoutEquity.filter((line) => !line.includes("reconciliation"));
+  for (const line of optionLines) {
+    assert.ok(withEquity.includes(line), `options line changed: ${line}`);
+  }
+});
+
 test("money-movement rows are skipped rather than treated as trades", () => {
   const report = buildRealizedPnlReport([
     { "transaction-type": "Money Movement", "transaction-sub-type": "Credit Interest", value: 3, "value-effect": "Credit" },
