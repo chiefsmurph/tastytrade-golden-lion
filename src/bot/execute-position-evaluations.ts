@@ -47,6 +47,17 @@ import {
   partitionClosesByInstrumentGuard,
   suppressCloseForInstrumentGuard,
 } from "./close-instrument-guard";
+import { getOccExpirationDate } from "./actions/order-utils";
+import { readEnvInt } from "~/core/env-utils";
+
+// Days to expiration for an OCC symbol. On expiration day the expiration date
+// (midnight) is earlier than currentTime, so the fraction is negative and
+// Math.ceil returns 0 — correctly signalling a same-day expiry across all TZs.
+function getDaysToExpiration(symbol: string, currentTime: Date): number | null {
+  const expirationDate = getOccExpirationDate(symbol);
+  if (!expirationDate) return null;
+  return Math.ceil((expirationDate.getTime() - currentTime.getTime()) / (24 * 60 * 60 * 1000));
+}
 
 // Total option contracts across a group's snapshots — used to turn a scale-out
 // closeFraction into an absolute maxQuantityToClose (and to decide whether a
@@ -326,6 +337,46 @@ export async function executePositionEvaluations(
   const closeCandidateEvaluations = actionableEvaluations.filter(
     (evaluation) => evaluation.strategy.action === "CLOSE_POSITION",
   );
+
+  // Zero-DTE cash circuit breaker: force-close any cash-account option group
+  // that holds a position expiring today, but ONLY after a configurable time gate
+  // (default 12:00 PM PT). Options expire at 1:00 PM PT — arming at noon gives
+  // the full morning for take-profit and normal stop circuits to close at a better
+  // price. Firing at open would widen spreads unnecessarily and leave no room for
+  // the position to recover. The gate is intentionally independent of
+  // evaluateTradingStrategy so the strategy cannot suppress it once armed.
+  const zeroDteArmedMinute = readEnvInt("STRATEGY_ZERO_DTE_CASH_CLOSE_MINUTE", 12 * 60, (n) => n >= 0);
+  const timeInMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+  if (accountMarginOrCash === "cash" && timeInMinutes >= zeroDteArmedMinute) {
+    const closeGroupKeys = new Set(closeCandidateEvaluations.map((e) => e.groupKey));
+    for (const evaluation of actionableEvaluations) {
+      if (closeGroupKeys.has(evaluation.groupKey)) continue;
+      const hasZeroDte = evaluation.positions.some((position) => {
+        const dte = getDaysToExpiration(position.symbol, currentTime);
+        return dte !== null && dte <= 0;
+      });
+      if (!hasZeroDte) continue;
+      console.warn(JSON.stringify({
+        scope: "zero-dte-cash-close",
+        accountNumber,
+        underlyingSymbol: evaluation.underlyingSymbol,
+        groupKey: evaluation.groupKey,
+        originalStrategy: evaluation.strategy.action,
+        zeroDteArmedMinute,
+        timeInMinutes,
+        message: "cash account option group has 0-DTE position — forcing close to prevent auto-exercise",
+      }));
+      closeCandidateEvaluations.push({
+        ...evaluation,
+        strategy: {
+          action: "CLOSE_POSITION",
+          reason: "0-DTE option in cash account — closing to prevent auto-exercise",
+          isUrgentClose: true,
+        },
+      });
+      closeGroupKeys.add(evaluation.groupKey);
+    }
+  }
 
   // Close-instrument guard: the bot may only close what it is capable of
   // opening. Suppressed groups stay in `actionableEvaluations` (and therefore in

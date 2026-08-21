@@ -41,7 +41,7 @@ import {
   isAllocationBlockedByInstrumentGuard,
   logSuppressedAllocation,
 } from "../allocation-instrument-guard";
-import { readEnvPct, toBooleanFlag } from "~/core/env-utils";
+import { readEnvInt, readEnvPct, toBooleanFlag } from "~/core/env-utils";
 
 // Budget helpers live in a leaf module to keep this file out of the
 // effective-buying-power import cycle; re-exported for existing consumers.
@@ -1103,6 +1103,23 @@ export async function manageAllocationForGroup(
     return skip({
       ...candidateDteResultFields(candidate),
       skippedReason: "no option candidate found",
+    });
+  }
+
+  // Minimum DTE guard: reject new entries on options that are too close to
+  // expiration. The held-contract fallback can surface an expiring contract
+  // the chain pick would have filtered, so this check runs after ALL fallbacks
+  // are resolved (chain pick → margin ITM → held-contract) but before any order
+  // is dispatched. The ITM-fallback branch is intentionally NOT exempt: it is a
+  // new-entry path for new positions on low-priced names, not an add to an
+  // existing expiring lot.
+  const minEntryDTE = readEnvInt("STRATEGY_MIN_ENTRY_DTE", 2, (n) => n >= 0);
+  if (typeof candidate.dte === "number" && candidate.dte < minEntryDTE) {
+    return skip({
+      skippedReason: `candidate DTE too short for new entry (${candidate.dte} DTE < ${minEntryDTE} minimum) — ${candidate.symbol ?? "unknown"}`,
+      candidateDTE: candidate.dte,
+      minDTE: minEntryDTE,
+      candidateSymbol: candidate.symbol,
     });
   }
 
