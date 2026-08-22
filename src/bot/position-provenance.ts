@@ -250,8 +250,7 @@ export async function buildProvenanceReport(
   try {
     orders = await fetchOrders(accountNumber, {
       "start-date": lookbackStartDate(now, lookbackDays),
-      "per-page": 1000,
-      "status[]": ["Filled"],
+      "per-page": 250,
     });
   } catch (error) {
     // History unreadable => we know nothing => everything stays `unknown` and
