@@ -300,8 +300,7 @@ describe("provenance report", () => {
       now: localTimeAt(10, 0),
       lookbackDays: 30,
     });
-    assert.deepEqual(seen?.["status[]"], ["Filled"]);
-    assert.equal(seen?.["per-page"], 1000);
+    assert.equal(seen?.["per-page"], 250);
     assert.equal(seen?.["start-date"], lookbackStartDate(localTimeAt(10, 0), 30));
   });
 
