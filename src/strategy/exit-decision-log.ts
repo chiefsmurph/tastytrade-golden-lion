@@ -40,7 +40,7 @@
  * The one greppable token. Every line this module emits carries it, for both
  * gates and for every verdict:
  *
- *   pm2 logs tastytrade-silver-lynx --lines 5000 --nostream | grep EXIT_GATE_DECISION
+ *   pm2 logs silver-lynx-tastytrade --lines 5000 --nostream | grep EXIT_GATE_DECISION
  */
 export const EXIT_GATE_DECISION_TOKEN = "EXIT_GATE_DECISION";
 
