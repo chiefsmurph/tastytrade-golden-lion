@@ -300,7 +300,11 @@ describe("provenance report", () => {
       now: localTimeAt(10, 0),
       lookbackDays: 30,
     });
-    assert.equal(seen?.["per-page"], 250);
+    // MUST be <= 100: the orders endpoint hard-caps per-page at 100 and returns a
+    // 400 (not a clamp) for anything larger. A prior value of 250 made every
+    // provenance read fail, silently disarming provenance for every position.
+    assert.equal(seen?.["per-page"], 100);
+    assert.ok((seen?.["per-page"] as number) <= 100, "per-page must not exceed the API's 100 cap");
     assert.equal(seen?.["start-date"], lookbackStartDate(localTimeAt(10, 0), 30));
   });
 
