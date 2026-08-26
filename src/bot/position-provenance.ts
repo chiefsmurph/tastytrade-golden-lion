@@ -250,7 +250,12 @@ export async function buildProvenanceReport(
   try {
     orders = await fetchOrders(accountNumber, {
       "start-date": lookbackStartDate(now, lookbackDays),
-      "per-page": 250,
+      // The orders endpoint hard-caps per-page at 100 and REJECTS anything larger
+      // with a 400 (it does not clamp). Requesting 250 made every provenance read
+      // fail, so every group fell back to `unknown` and nothing was ever protected.
+      // 100 is the max single page; older orders fall off and resolve to `unknown`
+      // (managed as today) — the deliberate single-call trade documented above.
+      "per-page": 100,
     });
   } catch (error) {
     // History unreadable => we know nothing => everything stays `unknown` and

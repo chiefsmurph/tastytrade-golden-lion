@@ -41,6 +41,7 @@ import {
   isSecretAutoSeedOrderSource,
   isSprayBuyOrderSource,
 } from "./order-sources";
+import { classifyOrderSource } from "./position-provenance";
 import { isOvernightPosition } from "./position-registry";
 import { isInOvernightReductionWindow } from "~/strategy/overnight-reduction";
 import {
@@ -112,6 +113,25 @@ function isTerminalOrderStatus(status: string | undefined): boolean {
   );
 }
 
+/**
+ * May the per-cycle cancel sweep cancel this working order?
+ *
+ * The sweep exists to clear THIS bot's own stale orders, so an order is sweep-
+ * eligible only when provenance positively identifies it as the bot's own
+ * (`classifyOrderSource === "bot"`). Everything else is left untouched: hand-placed
+ * orders (tastytrade UI, Copper Jaguar, any external tool) classify as `manual`,
+ * owner-directed conviction orders as `owner-directed`, and a blank/unattributable
+ * source as `unknown` — none of which are ours to cancel.
+ *
+ * This is the safety property behind the sweep. Before this gate the sweep cancelled
+ * every live order except a small source allowlist, so a hand-placed order resting
+ * in an account the bot also manages (the shared tastytrade margin account) was
+ * wiped at the very next cycle regardless of who placed it.
+ */
+export function isSweepEligibleSource(source: string | null | undefined): boolean {
+  return classifyOrderSource(source) === "bot";
+}
+
 // fallow-ignore-next-line complexity
 export async function cancelAllLiveOrders(
   accountNumber?: string,
@@ -148,6 +168,19 @@ export async function cancelAllLiveOrders(
         cancelled: false,
         orderId,
         skippedReason: "order is not cancellable",
+      });
+      continue;
+    }
+
+    // Only the bot's own orders are ever swept. Hand-placed (tastytrade UI /
+    // Copper Jaguar), owner-directed conviction, and unattributable orders are left
+    // alone — they are not ours to cancel. This gate is what keeps the sweep from
+    // wiping a hand-placed order resting in the shared margin account.
+    if (!isSweepEligibleSource(order.source)) {
+      results.push({
+        cancelled: false,
+        orderId,
+        skippedReason: `protected non-bot order (${classifyOrderSource(order.source)})`,
       });
       continue;
     }
