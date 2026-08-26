@@ -32,7 +32,7 @@ At a high level, each cycle follows this sequence:
 flowchart TD
     PM2["PM2 / supervisor"] -->|manages| Process
 
-    subgraph Process["tastytrade-silver-lynx process"]
+    subgraph Process["silver-lynx-tastytrade process"]
         direction TB
         IPC["IPC Server\n(Unix socket)"]
         Sched["Market-Open Scheduler\n(optional)"]
@@ -68,8 +68,8 @@ Dependencies flow one way: `strategy` → `core`, `bot` → `core`, `bot` → `s
 ### 1. Clone and Install
 
 ```bash
-git clone <repo-url> ~/code/tastytrade-silver-lynx
-cd ~/code/tastytrade-silver-lynx
+git clone <repo-url> ~/code/silver-lynx-tastytrade
+cd ~/code/silver-lynx-tastytrade
 npm install
 ```
 
@@ -421,7 +421,7 @@ pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
-The config registers the app as `tastytrade-silver-lynx`, runs `build/index.js` in fork mode with `autorestart: true`, and sets `BOT_RUN_ON_SCHEDULE=true` by default. Credentials and runtime overrides should be set in `.env` — PM2 inherits the process environment, so `.env` is still loaded via `dotenv` at startup.
+The config registers the app as `silver-lynx-tastytrade`, runs `build/index.js` in fork mode with `autorestart: true`, and sets `BOT_RUN_ON_SCHEDULE=true` by default. Credentials and runtime overrides should be set in `.env` — PM2 inherits the process environment, so `.env` is still loaded via `dotenv` at startup.
 
 To regenerate the startup hook so PM2 survives a reboot:
 
@@ -434,9 +434,9 @@ Common PM2 operations:
 
 ```bash
 pm2 status
-pm2 logs tastytrade-silver-lynx
-pm2 restart tastytrade-silver-lynx
-pm2 stop tastytrade-silver-lynx
+pm2 logs silver-lynx-tastytrade
+pm2 restart silver-lynx-tastytrade
+pm2 stop silver-lynx-tastytrade
 ```
 
 ## Reusable IPC Client

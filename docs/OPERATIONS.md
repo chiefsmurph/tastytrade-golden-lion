@@ -81,13 +81,21 @@ The point: nearly every open strategy item in [improvements/STATUS.md](improveme
 Markets closed is the right time — it buys a full session to watch the boot before the next open.
 Run from a shell where `node -v` says v24 (see the node-version gotcha below).
 
+> **One-time pm2 app rename (pending).** The ecosystem config now registers the app as
+> `silver-lynx-tastytrade` (was `tastytrade-silver-lynx`). The commands below already use the new
+> name, but the *running* server process is still `tastytrade-silver-lynx` until you cut it over
+> **once**: `pm2 delete tastytrade-silver-lynx && pm2 start ecosystem.config.cjs && pm2 save`.
+> The **deploy directory stays `~/tastytrade-silver-lynx`** and the socket filename stays
+> `.tastytrade-silver-lynx.sock` — golden-lion hardcodes that path, so those are intentionally
+> not renamed. After cutover, log filenames pick up the new app name (`silver-lynx-tastytrade-out-N.log`).
+
 ```bash
 ssh contabo-vps
 cd ~/tastytrade-silver-lynx
 git rev-parse HEAD          # WRITE THIS DOWN — it is the rollback point
 git pull --ff-only
 npm run build               # esbuild, ~80ms. NEVER `npm install` here.
-pm2 restart tastytrade-silver-lynx --update-env
+pm2 restart silver-lynx-tastytrade --update-env
 ```
 
 **Chain the steps so a failed build can never reach the restart** (`pull && build && restart`).
@@ -119,14 +127,14 @@ Then confirm it actually booted:
 
 ```bash
 cd ~/tastytrade-silver-lynx
-git reset --hard <pre-deploy-sha> && npm run build && pm2 restart tastytrade-silver-lynx
+git reset --hard <pre-deploy-sha> && npm run build && pm2 restart silver-lynx-tastytrade
 ```
 
 ## Server / pm2 gotchas (learned 2026-07-05, the hard way)
 
 The deploy box runs **multiple pm2 apps under one daemon** — silver-lynx is not alone. Rules that follow from that:
 
-- **Never `pm2 kill` casually** — it takes down *every* app the daemon manages, not just ours. Prefer `pm2 delete tastytrade-silver-lynx` + `pm2 start ecosystem.config.cjs` for our app alone.
+- **Never `pm2 kill` casually** — it takes down *every* app the daemon manages, not just ours. Prefer `pm2 delete silver-lynx-tastytrade` + `pm2 start ecosystem.config.cjs` for our app alone.
 - **If the roster is ever lost**: `pm2 resurrect` restores from `~/.pm2/dump.pm2`. If a bad `pm2 save` overwrote it, the previous roster is in `~/.pm2/dump.pm2.bak` — copy it back and resurrect. Last resort: `ls ~/.pm2/logs/` is a complete roster of every app name that ever ran.
 - **`pm2 save` snapshots the *current* list** — never save while apps are missing; you overwrite the good dump (`.bak` then holds the only copy).
 - **Node version**: the deploy shell's default node was v20 (no global `WebSocket` → the streamer throws `WebSocket is not defined`). The app needs v24; `ecosystem.config.cjs` pins `interpreter: process.execPath`, so **always run `pm2 start` from a shell where `node -v` says v24** (`nvm use 24`, or better `nvm alias default 24` once). The pm2 `startup` boot hook snapshots PATH at generation time — regenerate it after changing the default node.

@@ -457,7 +457,7 @@ token `EXIT_GATE_DECISION`
 ([exit-decision-log.ts](../src/strategy/exit-decision-log.ts)):
 
 ```
-pm2 logs tastytrade-silver-lynx --lines 5000 --nostream | grep EXIT_GATE_DECISION
+pm2 logs silver-lynx-tastytrade --lines 5000 --nostream | grep EXIT_GATE_DECISION
 ```
 
 **Observability only — no gate reads any of it, and no threshold moved.**
